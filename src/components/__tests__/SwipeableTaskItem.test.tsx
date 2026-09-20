@@ -1,0 +1,220 @@
+import React from 'react';
+import { render, fireEvent } from '@testing-library/react-native';
+import { SwipeableTaskItem } from '../SwipeableTaskItem';
+import { Task } from '../../types/vikunja';
+
+describe('SwipeableTaskItem', () => {
+  const mockTask: Task = {
+    id: 10,
+    title: 'Ship Vikunja Mobile UX',
+    done: false,
+    priority: 3, // High
+    project_id: 1,
+    due_date: '2026-09-20T12:00:00Z',
+    labels: [
+      { id: 1, title: 'Costco', hex_color: '#E02424' },
+      { id: 2, title: 'Produce', hex_color: '#057A55' },
+    ],
+  };
+
+  const mockOnToggle = jest.fn();
+  const mockOnMove = jest.fn();
+  const mockOnDelete = jest.fn();
+  const mockOnPress = jest.fn();
+  const mockOnSelectLabel = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('renders task title, labels, and priority indicator correctly', () => {
+    const { getByText, getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+        onSelectLabel={mockOnSelectLabel}
+      />
+    );
+
+    expect(getByText('Ship Vikunja Mobile UX')).toBeTruthy();
+    expect(getByTestId('task-label-10-Costco')).toBeTruthy();
+    expect(getByTestId('task-label-10-Produce')).toBeTruthy();
+  });
+
+  it('renders label with Vikunja un-prefixed hex color and accessible text color', () => {
+    const taskWithVikunjaHex: Task = {
+      ...mockTask,
+      labels: [
+        { id: 1, title: 'Costco', hex_color: 'ff5722' }, // Without #
+        { id: 2, title: 'BlackTag', hex_color: '000000' }, // Dark / black color
+      ],
+    };
+
+    const { getByTestId, getByText } = render(
+      <SwipeableTaskItem
+        task={taskWithVikunjaHex}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const costcoPill = getByTestId('task-label-10-Costco');
+    expect(costcoPill).toBeTruthy();
+
+    const costcoText = getByText('#Costco');
+    // Text color must be normalized #ff5722
+    expect(costcoText.props.style).toContainEqual({ color: '#ff5722' });
+
+    const blackTagText = getByText('#BlackTag');
+    // Text color for pure black must NOT be invisible black #000000
+    expect(blackTagText.props.style).not.toContainEqual({ color: '#000000' });
+  });
+
+  it('calls onSelectLabel when a label chip is tapped', () => {
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+        onSelectLabel={mockOnSelectLabel}
+      />
+    );
+
+    const labelChip = getByTestId('task-label-10-Costco');
+    fireEvent.press(labelChip);
+
+    expect(mockOnSelectLabel).toHaveBeenCalledWith('Costco');
+  });
+
+  it('calls onToggle when checkbox is pressed', () => {
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const checkbox = getByTestId(`task-checkbox-${mockTask.id}`);
+    fireEvent.press(checkbox);
+
+    expect(mockOnToggle).toHaveBeenCalledWith(mockTask.id);
+  });
+
+  it('renders completed tasks with strike-through styling indicator', () => {
+    const completedTask: Task = { ...mockTask, done: true };
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={completedTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const titleText = getByTestId(`task-title-${completedTask.id}`);
+    expect(titleText.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ textDecorationLine: 'line-through' })])
+    );
+  });
+
+  it('calls onPress when task body is tapped', () => {
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const body = getByTestId(`task-item-${mockTask.id}`);
+    fireEvent.press(body);
+
+    expect(mockOnPress).toHaveBeenCalledWith(mockTask);
+  });
+
+  it('calls onMove when Move action button is pressed', () => {
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const moveBtn = getByTestId(`task-move-action-${mockTask.id}`);
+    fireEvent.press(moveBtn);
+
+    expect(mockOnMove).toHaveBeenCalledWith(mockTask.id);
+  });
+
+  it('calls onDelete when Delete action button is pressed', () => {
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const deleteBtn = getByTestId(`task-delete-action-${mockTask.id}`);
+    fireEvent.press(deleteBtn);
+
+    expect(mockOnDelete).toHaveBeenCalledWith(mockTask.id);
+  });
+
+  it('calls onEditLabels when tag icon/button is pressed', () => {
+    const mockOnEditLabels = jest.fn();
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+        onEditLabels={mockOnEditLabels}
+      />
+    );
+
+    const editLabelsBtn = getByTestId(`task-edit-labels-${mockTask.id}`);
+    fireEvent.press(editLabelsBtn);
+
+    expect(mockOnEditLabels).toHaveBeenCalledWith(mockTask);
+  });
+
+  // --- Regression Test: Issue 4 (Web platform safety) ---
+  it('renders safely without crashing when Platform.OS is web (Regression #4)', () => {
+    const originalOS = require('react-native').Platform.OS;
+    try {
+      require('react-native').Platform.OS = 'web';
+      const { getByText } = render(
+        <SwipeableTaskItem
+          task={mockTask}
+          onToggle={mockOnToggle}
+          onMove={mockOnMove}
+          onDelete={mockOnDelete}
+          onPress={mockOnPress}
+        />
+      );
+      expect(getByText('Ship Vikunja Mobile UX')).toBeTruthy();
+    } finally {
+      require('react-native').Platform.OS = originalOS;
+    }
+  });
+});

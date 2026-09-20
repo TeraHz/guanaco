@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Vikunja",
+    "slug": "vikunja-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0D0D0E"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "io.vikunja.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0D0D0E"
+      },
+      "package": "io.vikunja.mobile"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
