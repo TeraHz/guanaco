@@ -10,6 +10,7 @@ import {
   TouchableWithoutFeedback,
   Switch,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useTaskStore } from '../store/taskStore';
@@ -40,9 +41,40 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     setSelectedProjectId,
     reenableStaples,
     setReenableStaples,
+    resetAndSyncFromServer,
   } = useTaskStore();
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricActive, setBiometricActive] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
+
+  const resetTimerRef = React.useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleResetAndSync = async () => {
+    if (isResetting) return;
+    setIsResetting(true);
+    setResetSuccess(false);
+    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      await resetAndSyncFromServer();
+      setResetSuccess(true);
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+      resetTimerRef.current = setTimeout(() => setResetSuccess(false), 2500);
+    } catch (_) {
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -227,6 +259,38 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
               </View>
             )}
 
+            {/* Sync & Overwrite from Server Action */}
+            <TouchableOpacity
+              testID="drawer-reset-sync-btn"
+              style={[
+                styles.resetSyncBtn,
+                isResetting && styles.resetSyncBtnDisabled,
+                resetSuccess && styles.resetSyncBtnSuccess,
+              ]}
+              onPress={handleResetAndSync}
+              disabled={isResetting}
+              activeOpacity={0.7}
+            >
+              {isResetting ? (
+                <View style={styles.resetSyncContent}>
+                  <ActivityIndicator size="small" color="#0A84FF" />
+                  <Text style={styles.resetSyncText}>Resetting & syncing...</Text>
+                </View>
+              ) : resetSuccess ? (
+                <View style={styles.resetSyncContent}>
+                  <Text style={styles.resetSyncSuccessText}>✓ Overwrite Complete!</Text>
+                </View>
+              ) : (
+                <View style={styles.resetSyncContent}>
+                  <Text style={styles.resetSyncIcon}>🔄</Text>
+                  <View style={styles.resetSyncTextContainer}>
+                    <Text style={styles.resetSyncTitle}>Sync & Overwrite from Server</Text>
+                    <Text style={styles.resetSyncSubtitle}>Clear cache and download fresh data</Text>
+                  </View>
+                </View>
+              )}
+            </TouchableOpacity>
+
             {onLogout && (
               <TouchableOpacity
                 testID="drawer-logout-btn"
@@ -377,6 +441,54 @@ const styles = StyleSheet.create({
     color: '#E5E5EA',
     fontSize: 14,
     fontWeight: '500',
+  },
+  resetSyncBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#2C2C2E',
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+    marginVertical: 4,
+  },
+  resetSyncBtnDisabled: {
+    opacity: 0.6,
+  },
+  resetSyncBtnSuccess: {
+    backgroundColor: 'rgba(48, 209, 88, 0.15)',
+    borderColor: '#30D158',
+  },
+  resetSyncContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  resetSyncIcon: {
+    fontSize: 18,
+  },
+  resetSyncTextContainer: {
+    flex: 1,
+  },
+  resetSyncTitle: {
+    color: '#F2F2F7',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  resetSyncSubtitle: {
+    color: '#8E8E93',
+    fontSize: 11,
+    marginTop: 1,
+  },
+  resetSyncText: {
+    color: '#0A84FF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  resetSyncSuccessText: {
+    color: '#30D158',
+    fontSize: 13,
+    fontWeight: '700',
   },
   logoutBtn: {
     paddingVertical: 10,

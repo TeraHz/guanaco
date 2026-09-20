@@ -111,15 +111,65 @@ export function getLabelColor(title: string, serverHex?: string): string {
   return getDeterministicColor(title);
 }
 
+import { Label } from '../types/vikunja';
+
 /**
- * Computes complete badge styling for a label pill on dark theme
+ * Resolves the canonical color for a label:
+ * 1. Checks canonical definitions library for matching ID or case-insensitive title.
+ * 2. Checks definition's `color` or `hex_color`.
+ * 3. Falls back to label's own `color` or `hex_color`.
+ * 4. Falls back to deterministic palette color based on title.
  */
-export function getLabelBadgeStyles(title: string, serverHex?: string): {
+export function resolveCanonicalLabelColor(
+  label: Label,
+  labelDefinitions?: Label[]
+): string {
+  if (Array.isArray(labelDefinitions) && labelDefinitions.length > 0) {
+    const matched =
+      label.id > 0
+        ? labelDefinitions.find((def) => def.id === label.id)
+        : null;
+
+    const matchedByTitle =
+      matched ||
+      labelDefinitions.find(
+        (def) => def.title.toLowerCase() === label.title.toLowerCase()
+      );
+
+    if (matchedByTitle) {
+      const defColor = matchedByTitle.color || matchedByTitle.hex_color;
+      if (defColor && !isTooDarkForDarkTheme(defColor)) {
+        return normalizeHexColor(defColor) || getDeterministicColor(label.title);
+      }
+    }
+  }
+
+  const directColor = label.color || label.hex_color;
+  return getLabelColor(label.title, directColor);
+}
+
+/**
+ * Computes complete badge styling for a label pill on dark theme.
+ * Supports both:
+ * - getLabelBadgeStyles(title, hexColor)
+ * - getLabelBadgeStyles(labelObject, canonicalDefinitions)
+ */
+export function getLabelBadgeStyles(
+  titleOrLabel: string | Label,
+  serverHexOrDefs?: string | Label[]
+): {
   backgroundColor: string;
   borderColor: string;
   textColor: string;
 } {
-  const color = getLabelColor(title, serverHex);
+  let color: string;
+  if (typeof titleOrLabel === 'object' && titleOrLabel !== null) {
+    const defs = Array.isArray(serverHexOrDefs) ? serverHexOrDefs : undefined;
+    color = resolveCanonicalLabelColor(titleOrLabel, defs);
+  } else {
+    const serverHex = typeof serverHexOrDefs === 'string' ? serverHexOrDefs : undefined;
+    color = getLabelColor(titleOrLabel, serverHex);
+  }
 
   return {
     backgroundColor: hexToRgba(color, 0.22),
@@ -127,3 +177,4 @@ export function getLabelBadgeStyles(title: string, serverHex?: string): {
     textColor: color,
   };
 }
+

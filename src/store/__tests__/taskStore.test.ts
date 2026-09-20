@@ -385,8 +385,8 @@ describe('useTaskStore', () => {
 
       expect(labels).toHaveLength(2);
       expect(useTaskStore.getState().labels).toEqual([
-        { id: 1, title: 'Costco', hex_color: 'ff5722' },
-        { id: 2, title: 'Groceries', hex_color: '3498db' },
+        { id: 1, title: 'Costco', hex_color: 'ff5722', color: 'ff5722' },
+        { id: 2, title: 'Groceries', hex_color: '3498db', color: '3498db' },
       ]);
     });
 
@@ -483,10 +483,75 @@ describe('useTaskStore', () => {
       const task20 = tasks.find((t) => t.id === 20);
 
       // Task 10's label is enriched with hex_color
-      expect(task10?.labels).toEqual([{ id: 1, title: 'Costco', hex_color: 'ff5722' }]);
+      expect(task10?.labels).toEqual([{ id: 1, title: 'Costco', hex_color: 'ff5722', color: 'ff5722' }]);
 
       // Task 20's old label is NOT resurrected
       expect(task20?.labels).toEqual([]);
     });
+
+    it('resetAndSyncFromServer() should clear local cache and reload authoritative server state', async () => {
+      const mockClient = {
+        getLabels: jest.fn().mockResolvedValue([
+          { id: 1, title: 'Costco', color: 'ef4444' },
+          { id: 2, title: 'Caraluzzi', color: '22c55e' },
+        ]),
+        getProjects: jest.fn().mockResolvedValue([
+          { id: 1, title: 'Groceries' },
+        ]),
+        getAllTasks: jest.fn().mockResolvedValue([
+          {
+            id: 10,
+            title: 'Water',
+            done: false,
+            priority: 1,
+            project_id: 1,
+            // Task has stale/blank color snapshot from server
+            labels: [{ id: 1, title: 'Costco', color: '' }],
+          },
+          {
+            id: 11,
+            title: 'Milk',
+            done: false,
+            priority: 1,
+            project_id: 1,
+            // Task has outdated blue snapshot from server
+            labels: [{ id: 2, title: 'Caraluzzi', color: '3b82f6' }],
+          },
+        ]),
+        getTasks: jest.fn().mockResolvedValue([]),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        syncQueue: { hasPendingForTask: () => false } as any,
+        tasks: [
+          { id: 999, title: 'Stale Local Task', done: false, priority: 0, project_id: 1 },
+        ],
+      });
+
+      const { resetAndSyncFromServer } = useTaskStore.getState();
+      await resetAndSyncFromServer();
+
+      expect(mockClient.getLabels).toHaveBeenCalled();
+      expect(mockClient.getProjects).toHaveBeenCalled();
+      expect(mockClient.getAllTasks).toHaveBeenCalled();
+
+      const state = useTaskStore.getState();
+      expect(state.syncStatus).toBe('synced');
+      // Stale task 999 was wiped
+      expect(state.tasks.find((t) => t.id === 999)).toBeUndefined();
+
+      // Labels are normalized with canonical server colors
+      const waterTask = state.tasks.find((t) => t.id === 10);
+      const milkTask = state.tasks.find((t) => t.id === 11);
+
+      expect(waterTask?.labels?.[0].color).toBe('ef4444');
+      expect(waterTask?.labels?.[0].hex_color).toBe('ef4444');
+
+      // Milk's Caraluzzi label was overwritten with canonical green (22c55e), not old blue (3b82f6)
+      expect(milkTask?.labels?.[0].color).toBe('22c55e');
+      expect(milkTask?.labels?.[0].hex_color).toBe('22c55e');
+    });
   });
 });
+

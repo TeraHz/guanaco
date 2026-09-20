@@ -40,6 +40,7 @@ export interface TaskState {
   fetchTasks: (projectId: number) => Promise<void>;
   fetchAllTasks: () => Promise<void>;
   syncAll: () => Promise<void>;
+  resetAndSyncFromServer: () => Promise<void>;
   toggleTask: (taskId: number) => void;
   reenableTask: (taskId: number, newLabels?: Label[]) => void;
   updateTaskLabels: (taskId: number, labels: Label[]) => void;
@@ -162,7 +163,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     try {
       const labels = await client.getLabels();
-      const safeLabels = Array.isArray(labels) ? labels : [];
+      const rawLabels = Array.isArray(labels) ? labels : [];
+      const safeLabels: Label[] = rawLabels.map((l) => {
+        const c = l.hex_color || l.color;
+        return {
+          ...l,
+          hex_color: c,
+          color: c,
+        };
+      });
       set({ labels: safeLabels });
       AsyncStorage.setItem(CACHE_KEY_LABELS, JSON.stringify(safeLabels)).catch(() => {});
       return safeLabels;
@@ -205,10 +214,37 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const rawTasks = await client.getTasks(projectId);
       const tasks = Array.isArray(rawTasks) ? rawTasks : [];
 
+      const serverLabelsMap = new Map<string, string>();
+      (get().labels || []).forEach((l) => {
+        const c = l.hex_color || l.color;
+        if (c) {
+          serverLabelsMap.set(l.title.toLowerCase(), c);
+          if (l.id > 0) {
+            serverLabelsMap.set(`id:${l.id}`, c);
+          }
+        }
+      });
+
+      const enrichedTasks = tasks.map((t) => ({
+        ...t,
+        labels: (t.labels || []).map((l) => {
+          const canonicalColor =
+            (l.id > 0 ? serverLabelsMap.get(`id:${l.id}`) : undefined) ||
+            serverLabelsMap.get(l.title.toLowerCase()) ||
+            l.hex_color ||
+            l.color;
+          return {
+            ...l,
+            hex_color: canonicalColor,
+            color: canonicalColor,
+          };
+        }),
+      }));
+
       const currentTasks = get().tasks || [];
       // Keep tasks for other projects and any local optimistic tasks
       const otherTasks = currentTasks.filter((t) => t.project_id !== projectId || t.id < 0);
-      const merged = [...tasks, ...otherTasks];
+      const merged = [...enrichedTasks, ...otherTasks];
 
       set({ tasks: merged, isLoading: false });
 
@@ -249,11 +285,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const currentTaskMap = new Map<number, Task>(currentTasks.map((t) => [t.id, t]));
       const syncQueue = get().syncQueue;
 
-      // Server labels map for enriching hex_colors
+      // Server labels map for enriching canonical colors
       const serverLabelsMap = new Map<string, string>();
       (get().labels || []).forEach((l) => {
-        if (l.hex_color) {
-          serverLabelsMap.set(l.title.toLowerCase(), l.hex_color);
+        const c = l.hex_color || l.color;
+        if (c) {
+          serverLabelsMap.set(l.title.toLowerCase(), c);
+          if (l.id > 0) {
+            serverLabelsMap.set(`id:${l.id}`, c);
+          }
         }
       });
 
@@ -269,10 +309,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
         const remoteLabels = remoteTask.labels;
         const base = Array.isArray(remoteLabels) ? remoteLabels : [];
-        return base.map((l) => ({
-          ...l,
-          hex_color: l.hex_color || serverLabelsMap.get(l.title.toLowerCase()),
-        }));
+        return base.map((l) => {
+          const canonicalColor =
+            (l.id > 0 ? serverLabelsMap.get(`id:${l.id}`) : undefined) ||
+            serverLabelsMap.get(l.title.toLowerCase()) ||
+            l.hex_color ||
+            l.color;
+          return {
+            ...l,
+            hex_color: canonicalColor,
+            color: canonicalColor,
+          };
+        });
       };
 
       (allTasksRes || []).forEach((t) => {
@@ -321,6 +369,38 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       set({ syncStatus: 'synced' });
     } catch (err) {
       set({ syncStatus: 'offline' });
+    }
+  },
+
+  resetAndSyncFromServer: async () => {
+    const { client } = get();
+    if (!client) return;
+
+    set({ isLoading: true, syncStatus: 'syncing', error: null });
+    try {
+      // 1. Clear cached storage to eliminate any stale data
+      await AsyncStorage.multiRemove([
+        CACHE_KEY_TASKS,
+        CACHE_KEY_LABELS,
+        CACHE_KEY_PROJECTS,
+      ]);
+
+      // 2. Clear in-memory tasks
+      set({ tasks: [] });
+
+      // 3. Sequentially fetch fresh labels, projects, and all tasks
+      await get().fetchLabels();
+      await get().fetchProjects();
+      await get().fetchAllTasks();
+
+      set({ syncStatus: 'synced', isLoading: false });
+    } catch (err: any) {
+      set({
+        error: err.message || 'Failed to reset and sync from server',
+        isLoading: false,
+        syncStatus: 'offline',
+      });
+      throw err;
     }
   },
 

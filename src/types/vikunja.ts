@@ -25,6 +25,7 @@ export interface Label {
   id: number;
   title: string;
   hex_color?: string;
+  color?: string;
   description?: string;
 }
 

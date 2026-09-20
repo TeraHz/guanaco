@@ -75,6 +75,32 @@ describe('SwipeableTaskItem', () => {
     expect(blackTagText.props.style).not.toContainEqual({ color: '#000000' });
   });
 
+  it('uses canonical label color from labelDefinitions when task has stale color', () => {
+    const taskWithStaleColor: Task = {
+      ...mockTask,
+      labels: [{ id: 2, title: 'Caraluzzi', color: '3b82f6' }], // Task has stale blue
+    };
+
+    const definitions = [
+      { id: 2, title: 'Caraluzzi', color: '22c55e' }, // Canonical is green
+    ];
+
+    const { getByText } = render(
+      <SwipeableTaskItem
+        task={taskWithStaleColor}
+        labelDefinitions={definitions}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const caraluzziText = getByText('#Caraluzzi');
+    // Must be canonical green (#22c55e), NOT stale blue (#3b82f6)
+    expect(caraluzziText.props.style).toContainEqual({ color: '#22c55e' });
+  });
+
   it('calls onSelectLabel when a label chip is tapped', () => {
     const { getByTestId } = render(
       <SwipeableTaskItem

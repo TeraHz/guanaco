@@ -3,6 +3,7 @@ import {
   getLabelColor,
   getLabelBadgeStyles,
   isTooDarkForDarkTheme,
+  resolveCanonicalLabelColor,
 } from '../colors';
 
 describe('colors utility', () => {
@@ -79,4 +80,39 @@ describe('colors utility', () => {
       expect(darkColorStyles.textColor).toBeDefined();
     });
   });
+
+  describe('resolveCanonicalLabelColor', () => {
+    const definitions = [
+      { id: 1, title: 'Costco', color: 'ef4444' }, // Red
+      { id: 2, title: 'Caraluzzi', hex_color: '22c55e' }, // Green
+      { id: 3, title: 'WF', color: '#eab308' }, // Yellow
+    ];
+
+    it('uses canonical color from definitions over stale color on task label', () => {
+      // Task had stale blue color on Caraluzzi, but canonical is green (22c55e)
+      const taskLabel = { id: 2, title: 'Caraluzzi', color: '3b82f6' };
+      const resolved = resolveCanonicalLabelColor(taskLabel, definitions);
+      expect(resolved).toBe('#22c55e');
+    });
+
+    it('matches canonical definitions by case-insensitive title when id is negative or missing', () => {
+      const taskLabel = { id: -99, title: 'costco' };
+      const resolved = resolveCanonicalLabelColor(taskLabel, definitions);
+      expect(resolved).toBe('#ef4444');
+    });
+
+    it('falls back to label own color when not in canonical definitions', () => {
+      const customLabel = { id: 999, title: 'LocalStore', color: 'a855f7' };
+      const resolved = resolveCanonicalLabelColor(customLabel, definitions);
+      expect(resolved).toBe('#a855f7');
+    });
+
+    it('falls back to deterministic color when neither definition nor label has a color', () => {
+      const uncoloredLabel = { id: 888, title: 'Uncolored' };
+      const resolved = resolveCanonicalLabelColor(uncoloredLabel, definitions);
+      expect(resolved.startsWith('#')).toBe(true);
+      expect(resolved).toBe(getLabelColor('Uncolored'));
+    });
+  });
 });
+

@@ -279,6 +279,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         renderItem={({ item }) => (
           <SwipeableTaskItem
             task={item}
+            labelDefinitions={storeLabels}
             onToggle={toggleTask}
             onMove={(taskId) => setMovingTaskId(taskId)}
             onDelete={deleteTask}

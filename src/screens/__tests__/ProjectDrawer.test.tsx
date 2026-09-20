@@ -108,4 +108,25 @@ describe('ProjectDrawer', () => {
     fireEvent(stapleSwitch, 'valueChange', false);
     expect(mockSetReenableStaples).toHaveBeenCalledWith(false);
   });
+
+  it('renders "Sync & Overwrite from Server" button and triggers resetAndSyncFromServer', async () => {
+    const mockResetAndSync = jest.fn().mockResolvedValue(undefined);
+    useTaskStore.setState({
+      resetAndSyncFromServer: mockResetAndSync,
+    });
+
+    const { getByTestId, findByText } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    const resetBtn = getByTestId('drawer-reset-sync-btn');
+    expect(resetBtn).toBeTruthy();
+
+    fireEvent.press(resetBtn);
+    expect(mockResetAndSync).toHaveBeenCalled();
+
+    // After success, it should display completion feedback
+    expect(await findByText('✓ Overwrite Complete!')).toBeTruthy();
+  });
 });
+

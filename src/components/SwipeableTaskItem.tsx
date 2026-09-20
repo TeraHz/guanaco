@@ -20,6 +20,7 @@ interface SwipeableTaskItemProps {
   onPress: (task: Task) => void;
   onSelectLabel?: (labelTitle: string) => void;
   onEditLabels?: (task: Task) => void;
+  labelDefinitions?: Label[];
 }
 
 const PRIORITY_COLORS: Record<number, string> = {
@@ -39,6 +40,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   onPress,
   onSelectLabel,
   onEditLabels,
+  labelDefinitions,
 }) => {
   const priorityColor = PRIORITY_COLORS[task.priority] || PRIORITY_COLORS[0];
 
@@ -175,7 +177,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           {/* Label Pills (Clickable for easy filtering) */}
           {task.labels &&
             task.labels.map((label) => {
-              const badgeStyle = getLabelBadgeStyles(label.title, label.hex_color);
+              const badgeStyle = getLabelBadgeStyles(label, labelDefinitions);
               return (
                 <TouchableOpacity
                   key={label.id || label.title}
