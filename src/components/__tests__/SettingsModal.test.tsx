@@ -84,4 +84,47 @@ describe('SettingsModal', () => {
       expect(mockReset).toHaveBeenCalled();
     });
   });
+
+  describe('On-Device AI (AICore) Section', () => {
+    const { __setMockAICoreSupportedForTesting } = require('../../utils/aiCore');
+
+    afterEach(() => {
+      __setMockAICoreSupportedForTesting(null);
+    });
+
+    it('renders on-device intelligence section when device supports AICore', async () => {
+      __setMockAICoreSupportedForTesting(true);
+
+      const { getByTestId, getByText } = render(
+        <SettingsModal
+          visible={true}
+          onClose={mockOnClose}
+        />
+      );
+
+      expect(getByTestId('settings-aicore-section')).toBeTruthy();
+      expect(getByText(/Android AICore \(Gemini Nano\)/)).toBeTruthy();
+      expect(getByTestId('settings-clear-ai-cache-btn')).toBeTruthy();
+
+      // Press clear cache button
+      fireEvent.press(getByTestId('settings-clear-ai-cache-btn'));
+      await waitFor(() => {
+        expect(getByText('✓ AI Cache Cleared')).toBeTruthy();
+      });
+    });
+
+    it('does NOT render on-device intelligence section when device does not support it', () => {
+      __setMockAICoreSupportedForTesting(false);
+
+      const { queryByTestId } = render(
+        <SettingsModal
+          visible={true}
+          onClose={mockOnClose}
+        />
+      );
+
+      // Ensures unsupported devices are not bothered with AICore options
+      expect(queryByTestId('settings-aicore-section')).toBeNull();
+    });
+  });
 });

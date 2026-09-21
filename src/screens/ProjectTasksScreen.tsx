@@ -23,6 +23,7 @@ import { TaskDetailModal } from '../components/TaskDetailModal';
 import { LabelManagementModal } from '../components/LabelManagementModal';
 import { sortTasks, SortOption } from '../utils/sorting';
 import { isShoppingList } from '../utils/smartClassifier';
+import { isAICoreSupported, classifyTaskWithAI, classifyTasksWithAIAsync } from '../utils/aiCore';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
@@ -39,6 +40,7 @@ type FilterType = 'all' | 'active' | 'done';
 const SORT_LABELS: Record<SortOption, string> = {
   default: 'Default Order',
   manual: 'Custom Order',
+  aiSmart: '✨ Smart AI Grouping',
   department: 'Department / Aisle',
   name: 'Name (A-Z)',
   label: 'Label / Store',
@@ -142,6 +144,14 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     }
     return true;
   });
+
+  const hasAICore = isAICoreSupported();
+
+  useEffect(() => {
+    if (sortBy === 'aiSmart' && filteredTasks.length > 0) {
+      classifyTasksWithAIAsync(filteredTasks, activeProject?.title).catch(() => {});
+    }
+  }, [sortBy, filteredTasks, activeProject?.title]);
 
   // Apply intelligent sorting with priority preserved
   const sortedTasks = sortTasks(filteredTasks, sortBy, activeProject?.title);
@@ -395,35 +405,63 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             tintColor="#007AFF"
           />
         }
-        renderItem={({ item, drag, isActive }: RenderItemParams<Task>) => (
-          <ScaleDecorator activeScale={1.03}>
-            <SwipeableTaskItem
-              task={item}
-              labelDefinitions={storeLabels}
-              onToggle={toggleTask}
-              onMove={(taskId) => setMovingTaskId(taskId)}
-              onDelete={deleteTask}
-              onPress={(task) => {
-                if (isReordering) return;
-                setSelectedTask(task);
-                onSelectTask?.(task);
-              }}
-              onLongPress={() => {
-                safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-                setIsReordering(true);
-                if (sortBy !== 'manual') {
-                  setSortBy('manual');
-                }
-                drag();
-              }}
-              drag={drag}
-              isDragging={isActive}
-              isReordering={isReordering}
-              onSelectLabel={(label) => setSelectedLabel(label)}
-              onEditLabels={(task) => setEditingLabelsTask(task)}
-            />
-          </ScaleDecorator>
-        )}
+        renderItem={({ item, getIndex, drag, isActive }: RenderItemParams<Task>) => {
+          const index = getIndex ? getIndex() : 0;
+          const isAiGrouped = sortBy === 'aiSmart' || sortBy === 'department';
+          const currentCategory = isAiGrouped ? classifyTaskWithAI(item, activeProject?.title) : null;
+          const prevCategory =
+            index !== undefined && index > 0 && isAiGrouped
+              ? classifyTaskWithAI(sortedTasks[index - 1], activeProject?.title)
+              : null;
+          const showCategoryHeader = currentCategory && currentCategory !== prevCategory;
+
+          return (
+            <View>
+              {showCategoryHeader ? (
+                <View
+                  style={styles.categorySectionHeader}
+                  testID={`category-header-${currentCategory}`}
+                >
+                  <Text
+                    style={[
+                      styles.categorySectionText,
+                      { color: theme.colors.textSecondary },
+                    ]}
+                  >
+                    {currentCategory.toUpperCase()}
+                  </Text>
+                </View>
+              ) : null}
+              <ScaleDecorator activeScale={1.03}>
+                <SwipeableTaskItem
+                  task={item}
+                  labelDefinitions={storeLabels}
+                  onToggle={toggleTask}
+                  onMove={(taskId) => setMovingTaskId(taskId)}
+                  onDelete={deleteTask}
+                  onPress={(task) => {
+                    if (isReordering) return;
+                    setSelectedTask(task);
+                    onSelectTask?.(task);
+                  }}
+                  onLongPress={() => {
+                    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                    setIsReordering(true);
+                    if (sortBy !== 'manual') {
+                      setSortBy('manual');
+                    }
+                    drag();
+                  }}
+                  drag={drag}
+                  isDragging={isActive}
+                  isReordering={isReordering}
+                  onSelectLabel={(label) => setSelectedLabel(label)}
+                  onEditLabels={(task) => setEditingLabelsTask(task)}
+                />
+              </ScaleDecorator>
+            </View>
+          );
+        }}
         contentContainerStyle={
           sortedTasks.length === 0 ? styles.emptyContainer : styles.listContent
         }
@@ -551,7 +589,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             {([
               'default',
               'manual',
-              ...(isShopping ? (['department'] as SortOption[]) : []),
+              ...(hasAICore ? (['aiSmart'] as SortOption[]) : []),
+              ...(isShopping && !hasAICore ? (['department'] as SortOption[]) : []),
               'name',
               'label',
               'dueDate',
@@ -900,5 +939,15 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
+  },
+  categorySectionHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 4,
+  },
+  categorySectionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.8,
   },
 });

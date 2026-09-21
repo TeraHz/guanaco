@@ -1,7 +1,8 @@
 import { Task } from '../types/vikunja';
 import { classifyTaskContextually } from './smartClassifier';
+import { classifyTaskWithAI } from './aiCore';
 
-export type SortOption = 'default' | 'manual' | 'department' | 'name' | 'label' | 'dueDate' | 'priority';
+export type SortOption = 'default' | 'manual' | 'aiSmart' | 'department' | 'name' | 'label' | 'dueDate' | 'priority';
 
 export function sortTasks(tasks: Task[], sortBy: SortOption, contextTitle?: string): Task[] {
   const list = [...tasks];
@@ -16,6 +17,16 @@ export function sortTasks(tasks: Task[], sortBy: SortOption, contextTitle?: stri
       case 'manual': {
         const posDiff = (a.position || 0) - (b.position || 0);
         if (posDiff !== 0) return posDiff;
+        return a.title.localeCompare(b.title);
+      }
+
+      case 'aiSmart': {
+        const catA = classifyTaskWithAI(a, contextTitle);
+        const catB = classifyTaskWithAI(b, contextTitle);
+        const catCompare = catA.localeCompare(catB, undefined, { sensitivity: 'base' });
+        if (catCompare !== 0) return catCompare;
+        const prioDiff = (b.priority || 0) - (a.priority || 0);
+        if (prioDiff !== 0) return prioDiff;
         return a.title.localeCompare(b.title);
       }
 

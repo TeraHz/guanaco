@@ -21,6 +21,7 @@ import {
   isBiometricEnabled,
   setBiometricEnabled,
 } from '../utils/biometrics';
+import { isAICoreSupported, clearAICoreCache } from '../utils/aiCore';
 
 interface SettingsModalProps {
   visible: boolean;
@@ -55,10 +56,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const serverUrl = client ? client.getBaseApiUrl().replace(/\/api\/v1$/, '') : 'https://vikunja.example.com';
   const currentUser = cachedUsers?.[0]?.username || 'Connected';
 
+  const hasAICore = isAICoreSupported();
+  const [clearedAiCache, setClearedAiCache] = useState(false);
+  const aiCacheTimerRef = React.useRef<any>(null);
+
   useEffect(() => {
     return () => {
       if (resetTimerRef.current) {
         clearTimeout(resetTimerRef.current);
+      }
+      if (aiCacheTimerRef.current) {
+        clearTimeout(aiCacheTimerRef.current);
       }
     };
   }, []);
@@ -264,6 +272,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </View>
           )}
 
+          {/* On-Device Intelligence (Pixel AICore) - only shown when supported */}
+          {hasAICore && (
+            <View
+              testID="settings-aicore-section"
+              style={[
+                styles.sectionCard,
+                {
+                  backgroundColor: theme.colors.cardBackground,
+                  borderColor: theme.colors.cardBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                ON-DEVICE INTELLIGENCE
+              </Text>
+              <View style={styles.infoRow}>
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Engine</Text>
+                <Text style={[styles.infoValue, { color: '#30D158' }]}>
+                  ● Android AICore (Gemini Nano)
+                </Text>
+              </View>
+              <Text style={[styles.aicoreDesc, { color: theme.colors.textSecondary }]}>
+                On-device contextual task grouping runs locally on your Pixel device. Zero data is shared with external cloud servers.
+              </Text>
+              <TouchableOpacity
+                testID="settings-clear-ai-cache-btn"
+                style={styles.clearAiCacheBtn}
+                onPress={async () => {
+                  safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                  await clearAICoreCache();
+                  setClearedAiCache(true);
+                  aiCacheTimerRef.current = setTimeout(() => setClearedAiCache(false), 2000);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.clearAiCacheText}>
+                  {clearedAiCache ? '✓ AI Cache Cleared' : 'Clear AI Category Cache'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Sync & Server Actions */}
           <View
             style={[
@@ -465,5 +515,24 @@ const styles = StyleSheet.create({
     color: '#FF453A',
     fontSize: 15,
     fontWeight: '700',
+  },
+  aicoreDesc: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  clearAiCacheBtn: {
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(48, 209, 88, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(48, 209, 88, 0.3)',
+    alignItems: 'center',
+  },
+  clearAiCacheText: {
+    color: '#30D158',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

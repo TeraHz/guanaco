@@ -301,4 +301,61 @@ describe('ProjectTasksScreen', () => {
     fireEvent.press(getByTestId('sort-trigger-btn'));
     expect(queryByTestId('sort-option-department')).toBeNull();
   });
+
+  // --- On-Device AI Grouping & Sort ---
+  describe('On-Device AI Sort (AICore)', () => {
+    const { __setMockAICoreSupportedForTesting } = require('../../utils/aiCore');
+
+    afterEach(() => {
+      __setMockAICoreSupportedForTesting(null);
+    });
+
+    it('exposes aiSmart sort option on any project when AICore is supported', () => {
+      __setMockAICoreSupportedForTesting(true);
+
+      useTaskStore.setState({
+        projects: [{ id: 8, title: 'Trip to Japan', hex_color: '#9b59b6' }],
+        tasks: [
+          { id: 801, title: 'Passport', done: false, priority: 1, project_id: 8 },
+          { id: 802, title: 'Warm Jacket', done: false, priority: 1, project_id: 8 },
+        ],
+        selectedProjectId: 8,
+      });
+
+      const { getByTestId, queryByTestId } = render(
+        <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+      );
+
+      fireEvent.press(getByTestId('sort-trigger-btn'));
+
+      // aiSmart option is present
+      expect(getByTestId('sort-option-aiSmart')).toBeTruthy();
+
+      // Select aiSmart sort
+      fireEvent.press(getByTestId('sort-option-aiSmart'));
+
+      // Category headers should be rendered
+      expect(queryByTestId('category-header-📄 Travel & Documents')).toBeTruthy();
+      expect(queryByTestId('category-header-🧳 Clothes & Wearables')).toBeTruthy();
+    });
+
+    it('does NOT expose aiSmart sort option when AICore is NOT supported', () => {
+      __setMockAICoreSupportedForTesting(false);
+
+      useTaskStore.setState({
+        projects: [{ id: 8, title: 'Trip to Japan', hex_color: '#9b59b6' }],
+        tasks: [{ id: 801, title: 'Passport', done: false, priority: 1, project_id: 8 }],
+        selectedProjectId: 8,
+      });
+
+      const { getByTestId, queryByTestId } = render(
+        <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+      );
+
+      fireEvent.press(getByTestId('sort-trigger-btn'));
+
+      // aiSmart option must NOT be present on unsupported devices
+      expect(queryByTestId('sort-option-aiSmart')).toBeNull();
+    });
+  });
 });
