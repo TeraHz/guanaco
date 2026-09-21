@@ -10,6 +10,8 @@ import {
   RefreshControl,
   Modal,
   TouchableWithoutFeedback,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useTaskStore } from '../store/taskStore';
 import { SwipeableTaskItem } from '../components/SwipeableTaskItem';
@@ -141,24 +143,28 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         backgroundColor={theme.colors.background}
       />
 
-      {/* Header Bar with Live Sync Status Indicator */}
-      <View
-        style={[
-          styles.header,
-          {
-            backgroundColor: theme.colors.cardBackground,
-            borderBottomColor: theme.colors.cardBorder,
-          },
-        ]}
+      <KeyboardAvoidingView
+        style={styles.keyboardContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <TouchableOpacity
-          testID="drawer-toggle-btn"
-          style={styles.drawerBtn}
-          onPress={onOpenDrawer}
-          activeOpacity={0.7}
+        {/* Header Bar with Live Sync Status Indicator */}
+        <View
+          style={[
+            styles.header,
+            {
+              backgroundColor: theme.colors.cardBackground,
+              borderBottomColor: theme.colors.cardBorder,
+            },
+          ]}
         >
-          <Text style={[styles.drawerIcon, { color: theme.colors.text }]}>☰</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            testID="drawer-toggle-btn"
+            style={styles.drawerBtn}
+            onPress={onOpenDrawer}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.drawerIcon, { color: theme.colors.text }]}>☰</Text>
+          </TouchableOpacity>
 
         <View style={styles.projectInfo}>
           <View style={styles.projectTitleRow}>
@@ -282,6 +288,19 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         );
       })()}
 
+      {/* Quick Add Bar with Suggestions at TOP */}
+      <QuickAddBar
+        activeProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
+        availableProjects={safeProjects}
+        availableUsers={cachedUsers}
+        doneTasks={doneTasks}
+        availableLabels={availableLabels}
+        reenableStaples={reenableStaples}
+        onAddTask={addTask}
+        onReenableTask={(taskId) => reenableTask(taskId)}
+        placeholder={`Add a task to ${activeProject.title}...`}
+      />
+
       {/* Tasks List */}
       <FlatList
         data={sortedTasks}
@@ -320,24 +339,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             <Text style={styles.emptySubtitle}>
               {filter === 'active'
                 ? 'Enjoy your free time or add a new task below.'
-                : 'Tap below to quickly capture what is on your mind.'}
+                : 'Tap above to quickly capture what is on your mind.'}
             </Text>
           </View>
         }
       />
-
-      {/* Docked TickTick-style Quick Add Bar with Suggestions & Staple Re-enabling */}
-      <QuickAddBar
-        activeProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
-        availableProjects={safeProjects}
-        availableUsers={cachedUsers}
-        doneTasks={doneTasks}
-        availableLabels={availableLabels}
-        reenableStaples={reenableStaples}
-        onAddTask={addTask}
-        onReenableTask={(taskId) => reenableTask(taskId)}
-        placeholder={`Add a task to ${activeProject.title}...`}
-      />
+      </KeyboardAvoidingView>
 
       {/* Move Task Modal */}
       <MoveListModal
@@ -448,20 +455,23 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0D0D0E',
   },
+  keyboardContainer: {
+    flex: 1,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#1C1C1E',
   },
   drawerBtn: {
-    padding: 8,
-    marginRight: 10,
+    padding: 6,
+    marginRight: 8,
   },
   drawerIcon: {
-    fontSize: 22,
+    fontSize: 20,
     color: '#FFFFFF',
   },
   projectInfo: {
@@ -472,25 +482,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   colorDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
   },
   projectTitle: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '700',
     color: '#FFFFFF',
   },
   taskCountSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#8E8E93',
-    marginTop: 2,
+    marginTop: 1,
   },
   syncIndicatorPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
     backgroundColor: 'rgba(48, 209, 88, 0.15)',
     borderWidth: 1,
     borderColor: 'rgba(48, 209, 88, 0.3)',
@@ -504,7 +514,7 @@ const styles = StyleSheet.create({
     borderColor: '#FF9500',
   },
   syncIndicatorText: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#30D158',
     fontWeight: '700',
   },
@@ -518,24 +528,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
   filterPillsGroup: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
   filterPill: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 16,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
     backgroundColor: '#1C1C1E',
   },
   filterPillActive: {
     backgroundColor: '#007AFF',
   },
   filterPillText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#8E8E93',
   },
@@ -543,9 +553,9 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   sortBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 16,
+    paddingVertical: 4,
+    paddingHorizontal: 9,
+    borderRadius: 12,
     backgroundColor: '#1C1C1E',
     borderWidth: 1,
     borderColor: '#2C2C2E',
@@ -555,13 +565,13 @@ const styles = StyleSheet.create({
     borderColor: '#0A84FF',
   },
   sortBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#E5E5EA',
     fontWeight: '600',
   },
   activeLabelRow: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
+    paddingHorizontal: 12,
+    paddingBottom: 4,
   },
   activeLabelChip: {
     flexDirection: 'row',
@@ -570,14 +580,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A84FF20',
     borderWidth: 1,
     borderColor: '#0A84FF',
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 16,
-    gap: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    gap: 4,
   },
   activeLabelText: {
     color: '#0A84FF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   clearLabelBtn: {
@@ -585,11 +595,11 @@ const styles = StyleSheet.create({
   },
   clearLabelText: {
     color: '#0A84FF',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
   },
   listContent: {
-    paddingVertical: 8,
+    paddingVertical: 4,
   },
   emptyContainer: {
     flexGrow: 1,
