@@ -129,11 +129,14 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         styles.card,
         {
           backgroundColor: task.done
-            ? (theme.isDark ? '#161618' : '#F2F2F7')
+            ? (theme.isDark ? '#161618' : '#FFFFFF')
             : theme.colors.cardBackground,
-          borderColor: theme.colors.cardBorder,
+          borderColor: task.done
+            ? (theme.isDark ? '#2C2C2E' : '#E5E5EA')
+            : theme.colors.cardBorder,
+          borderWidth: 1,
+          opacity: task.done ? (theme.isDark ? 0.7 : 0.88) : 1,
         },
-        task.done && styles.cardDone,
       ]}
       onPress={() => onPress(task)}
       activeOpacity={0.7}
@@ -163,7 +166,11 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           testID={`task-title-${task.id}`}
           style={[
             styles.title,
-            { color: theme.colors.text },
+            {
+              color: task.done
+                ? (theme.isDark ? '#8E8E93' : '#636366')
+                : theme.colors.text,
+            },
             task.done && styles.titleDone,
           ]}
           numberOfLines={2}
@@ -381,7 +388,6 @@ const styles = StyleSheet.create({
   },
   titleDone: {
     textDecorationLine: 'line-through',
-    color: '#8E8E93',
   },
   metaRow: {
     flexDirection: 'row',

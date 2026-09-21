@@ -154,6 +154,27 @@ describe('SwipeableTaskItem', () => {
     );
   });
 
+  it('renders completed tasks with distinct card and legible text in light theme', () => {
+    jest.spyOn(require('react-native'), 'useColorScheme').mockReturnValue('light');
+    const completedTask: Task = { ...mockTask, done: true };
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={completedTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const card = getByTestId(`task-item-${completedTask.id}`);
+    expect(card.props.style).toEqual(
+      expect.objectContaining({
+        backgroundColor: '#FFFFFF',
+      })
+    );
+  });
+
   it('calls onPress when task body is tapped', () => {
     const { getByTestId } = render(
       <SwipeableTaskItem
