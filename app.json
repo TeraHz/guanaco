@@ -8,10 +8,10 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "io.vikunja.mobile"
+      "bundleIdentifier": "com.geodar.vikunja"
     },
     "android": {
-      "package": "io.vikunja.mobile",
+      "package": "com.geodar.vikunja",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
