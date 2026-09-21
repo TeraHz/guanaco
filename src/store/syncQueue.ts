@@ -8,7 +8,8 @@ export type MutationType =
   | 'MOVE_TASK'
   | 'REORDER_TASK'
   | 'DELETE_TASK'
-  | 'SET_TASK_LABELS';
+  | 'SET_TASK_LABELS'
+  | 'SET_TASK_ASSIGNEES';
 
 export interface Mutation {
   id: string;
@@ -109,6 +110,7 @@ export class SyncQueue {
             case 'CREATE_TASK': {
               const { projectId, taskData } = item.payload;
               const labels = item.payload.labels || taskData?.labels;
+              const assignees = item.payload.assignees || taskData?.assignees;
               result = await this.client.createTask(projectId, taskData);
 
               // If task had labels attached at creation, sync them via setTaskLabels
@@ -119,6 +121,16 @@ export class SyncQueue {
                 } catch (_) {
                   // Keep optimistic labels if server label association fails
                   result.labels = labels;
+                }
+              }
+
+              // If task had assignees attached at creation, sync them via setTaskAssignees
+              if (assignees && assignees.length > 0 && result && result.id > 0) {
+                try {
+                  const attachedAssignees = await this.client.setTaskAssignees(result.id, assignees);
+                  result.assignees = attachedAssignees;
+                } catch (_) {
+                  result.assignees = assignees;
                 }
               }
               break;
@@ -150,6 +162,15 @@ export class SyncQueue {
                   ? await this.client.setTaskLabels(taskId, labels, previousLabels)
                   : await this.client.setTaskLabels(taskId, labels);
               result = { taskId, labels: syncedLabels };
+              break;
+            }
+            case 'SET_TASK_ASSIGNEES': {
+              const { taskId, assignees, previousAssignees } = item.payload;
+              const syncedAssignees =
+                previousAssignees !== undefined
+                  ? await this.client.setTaskAssignees(taskId, assignees, previousAssignees)
+                  : await this.client.setTaskAssignees(taskId, assignees);
+              result = { taskId, assignees: syncedAssignees };
               break;
             }
             case 'DELETE_TASK': {

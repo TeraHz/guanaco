@@ -45,6 +45,7 @@ export interface Task {
   percent_done?: number;
   color?: string;
   labels?: Label[];
+  assignees?: User[];
   created?: string;
   updated?: string;
 }
@@ -53,9 +54,15 @@ export interface CreateTaskInput {
   title: string;
   description?: string;
   due_date?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
   priority?: number;
   project_id: number;
   labels?: Label[];
+  assignees?: User[];
+  percent_done?: number;
+  color?: string;
+  repeat_after?: number;
 }
 
 export interface UpdateTaskInput {
@@ -64,10 +71,16 @@ export interface UpdateTaskInput {
   done?: boolean;
   done_at?: string | null;
   due_date?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
   priority?: number;
   project_id?: number;
   position?: number;
   percent_done?: number;
+  color?: string;
+  repeat_after?: number;
+  labels?: Label[];
+  assignees?: User[];
 }
 
 export interface CreateProjectInput {

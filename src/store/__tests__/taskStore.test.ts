@@ -553,5 +553,62 @@ describe('useTaskStore', () => {
       expect(milkTask?.labels?.[0].hex_color).toBe('22c55e');
     });
   });
+
+  describe('User Caching & Assignee Sync (CUJ 1 & 4)', () => {
+    it('should cache and retrieve known users for typing suggestions', async () => {
+      const { setCachedUsers } = useTaskStore.getState();
+      const testUsers = [
+        { id: 1, username: 'terahz', name: 'Georgi' },
+        { id: 2, username: 'alex' },
+      ];
+
+      setCachedUsers(testUsers);
+      expect(useTaskStore.getState().cachedUsers).toEqual(testUsers);
+    });
+
+    it('updateTaskAssignees() should enqueue SET_TASK_ASSIGNEES mutation with previous assignees', () => {
+      const mockEnqueue = jest.fn();
+      const mockSyncQueue = {
+        enqueue: mockEnqueue,
+        processQueue: jest.fn(),
+      };
+
+      useTaskStore.setState({
+        syncQueue: mockSyncQueue as any,
+        tasks: [
+          {
+            id: 10,
+            title: 'Task With Assignees',
+            done: false,
+            priority: 1,
+            project_id: 1,
+            assignees: [
+              { id: 1, username: 'terahz' },
+              { id: 2, username: 'alex' },
+            ],
+          },
+        ],
+      });
+
+      const { updateTaskAssignees } = useTaskStore.getState();
+      updateTaskAssignees(10, [{ id: 1, username: 'terahz' }, { id: 3, username: 'bob' }]);
+
+      expect(mockEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'SET_TASK_ASSIGNEES',
+          payload: {
+            taskId: 10,
+            assignees: [{ id: 1, username: 'terahz' }, { id: 3, username: 'bob' }],
+            previousAssignees: [{ id: 1, username: 'terahz' }, { id: 2, username: 'alex' }],
+          },
+        })
+      );
+      expect(useTaskStore.getState().tasks[0].assignees).toEqual([
+        { id: 1, username: 'terahz' },
+        { id: 3, username: 'bob' },
+      ]);
+    });
+  });
 });
+
 

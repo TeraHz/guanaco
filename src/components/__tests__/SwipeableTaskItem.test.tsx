@@ -243,4 +243,46 @@ describe('SwipeableTaskItem', () => {
       require('react-native').Platform.OS = originalOS;
     }
   });
+
+  // --- Assignee and Progress Display (CUJ 1 & 2) ---
+  it('renders assignee badge when task has assignees', () => {
+    const taskWithAssignee: Task = {
+      ...mockTask,
+      assignees: [{ id: 5, username: 'terahz', name: 'Georgi' }],
+    };
+
+    const { getByTestId, getByText } = render(
+      <SwipeableTaskItem
+        task={taskWithAssignee}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    expect(getByTestId(`task-assignee-${mockTask.id}-terahz`)).toBeTruthy();
+    expect(getByText('@terahz')).toBeTruthy();
+  });
+
+  it('renders progress bar indicator when task has percent_done > 0', () => {
+    const taskWithProgress: Task = {
+      ...mockTask,
+      percent_done: 60,
+    };
+
+    const { getByTestId, getByText } = render(
+      <SwipeableTaskItem
+        task={taskWithProgress}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    expect(getByTestId(`task-progress-${mockTask.id}`)).toBeTruthy();
+    expect(getByText('60%')).toBeTruthy();
+  });
 });
+

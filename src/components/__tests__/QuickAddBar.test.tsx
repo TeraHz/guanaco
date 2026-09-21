@@ -75,13 +75,15 @@ describe('QuickAddBar', () => {
     fireEvent.changeText(input, 'High priority bug');
     fireEvent.press(getByTestId('quick-add-submit'));
 
-    expect(mockOnAddTask).toHaveBeenCalledWith({
-      title: 'High priority bug',
-      priority: 3,
-      project_id: 1,
-      labels: [],
-      due_date: null,
-    });
+    expect(mockOnAddTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'High priority bug',
+        priority: 3,
+        project_id: 1,
+        labels: [],
+        due_date: null,
+      })
+    );
   });
 
   // --- Quick Add Magic Tests ---
@@ -187,4 +189,53 @@ describe('QuickAddBar', () => {
     // Input should now have *Pharmacy applied
     expect(input.props.value).toBe('Buy vitamins *Pharmacy ');
   });
+
+  // --- Assignee (@user) Suggestions & Preview (CUJ 1) ---
+  it('suggests users when typing @ and applies selected user to input', () => {
+    const availableUsers = [
+      { id: 1, username: 'terahz', name: 'Georgi Todorov' },
+      { id: 2, username: 'alex', name: 'Alex Johnson' },
+    ];
+
+    const { getByTestId, getByText } = render(
+      <QuickAddBar
+        activeProjectId={1}
+        onAddTask={mockOnAddTask}
+        availableUsers={availableUsers}
+      />
+    );
+
+    const input = getByTestId('quick-add-input');
+    fireEvent.changeText(input, 'Task for @al');
+
+    const userChip = getByText('👤 @alex');
+    expect(userChip).toBeTruthy();
+
+    fireEvent.press(userChip);
+    expect(input.props.value).toBe('Task for @alex ');
+  });
+
+  it('renders @user preview chip and passes assignees to onAddTask on submission', () => {
+    const { getByTestId, getByText } = render(
+      <QuickAddBar activeProjectId={1} onAddTask={mockOnAddTask} />
+    );
+
+    const input = getByTestId('quick-add-input');
+    fireEvent.changeText(input, 'Design review @terahz !2');
+
+    // Shows preview chip
+    expect(getByText('@terahz')).toBeTruthy();
+
+    const submitBtn = getByTestId('quick-add-submit');
+    fireEvent.press(submitBtn);
+
+    expect(mockOnAddTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Design review',
+        priority: 2,
+        assignees: [expect.objectContaining({ username: 'terahz' })],
+      })
+    );
+  });
 });
+

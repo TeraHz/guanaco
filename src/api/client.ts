@@ -358,4 +358,88 @@ export class VikunjaClient {
 
     return resolvedLabels;
   }
+
+  // --- Assignees Endpoints ---
+  public async searchUsers(query: string): Promise<User[]> {
+    const res = await this.request<any>(`/users/search?s=${encodeURIComponent(query)}`, {
+      method: 'GET',
+    });
+    return this.normalizeListResponse<User>(res);
+  }
+
+  public async addAssigneeToTask(taskId: number, userId: number): Promise<any> {
+    return this.request<any>(`/tasks/${taskId}/assignees`, {
+      method: 'PUT',
+      body: JSON.stringify({ user_id: userId }),
+    });
+  }
+
+  public async removeAssigneeFromTask(taskId: number, userId: number): Promise<any> {
+    return this.request<any>(`/tasks/${taskId}/assignees/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  public async setTaskAssignees(
+    taskId: number,
+    nextAssignees: User[],
+    previousAssignees?: User[]
+  ): Promise<User[]> {
+    let currentAssignees = previousAssignees;
+    if (!currentAssignees) {
+      try {
+        const task = await this.getTask(taskId);
+        currentAssignees = task.assignees || [];
+      } catch (_) {
+        currentAssignees = [];
+      }
+    }
+
+    const nextIds = new Set(
+      nextAssignees.filter((u) => u.id > 0).map((u) => u.id)
+    );
+    const nextUsernames = new Set(
+      nextAssignees.map((u) => u.username.toLowerCase())
+    );
+
+    // 1. Remove assignees present in previous but not in next
+    for (const prev of currentAssignees) {
+      const kept =
+        (prev.id > 0 && nextIds.has(prev.id)) ||
+        nextUsernames.has(prev.username.toLowerCase());
+      if (!kept && prev.id > 0) {
+        try {
+          await this.removeAssigneeFromTask(taskId, prev.id);
+        } catch (_) {}
+      }
+    }
+
+    // 2. Add new assignees
+    const resolvedAssignees: User[] = [];
+    for (const u of nextAssignees) {
+      let finalUser = u;
+      if (finalUser.id <= 0) {
+        // Try to search user by username
+        try {
+          const found = await this.searchUsers(u.username);
+          const matched = found.find(
+            (f) => f.username.toLowerCase() === u.username.toLowerCase()
+          );
+          if (matched) {
+            finalUser = matched;
+          }
+        } catch (_) {}
+      }
+
+      if (finalUser.id > 0) {
+        try {
+          await this.addAssigneeToTask(taskId, finalUser.id);
+        } catch (_) {}
+      }
+      resolvedAssignees.push(finalUser);
+    }
+
+    return resolvedAssignees;
+  }
 }
+

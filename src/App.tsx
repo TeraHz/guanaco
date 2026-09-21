@@ -7,6 +7,7 @@ import { LoginScreen } from './screens/LoginScreen';
 import { ProjectTasksScreen } from './screens/ProjectTasksScreen';
 import { ProjectDrawer } from './screens/ProjectDrawer';
 import { VikunjaClient } from './api/client';
+import { useAppTheme } from './utils/theme';
 import {
   getStoredAuth,
   setStoredAuth,
@@ -16,6 +17,7 @@ import {
 } from './utils/biometrics';
 
 export default function App() {
+  const theme = useAppTheme();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
@@ -107,8 +109,10 @@ export default function App() {
   };
 
   return (
-    <GestureHandlerRootView style={styles.root}>
-      <StatusBar style="light" />
+    <GestureHandlerRootView
+      style={[styles.root, { backgroundColor: theme.colors.background }]}
+    >
+      <StatusBar style={theme.isDark ? 'light' : 'dark'} />
       {!isAuthenticated ? (
         <LoginScreen onConnect={handleConnect} />
       ) : (

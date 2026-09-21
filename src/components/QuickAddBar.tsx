@@ -16,13 +16,20 @@ import {
   getLabelSuggestions,
   applyLabelSuggestion,
 } from '../utils/suggestions';
-import { CreateTaskInput, Label, Project, Task } from '../types/vikunja';
+import {
+  extractMentionQuery,
+  getUserSuggestions,
+  replaceMentionQuery,
+} from '../utils/userSuggestions';
+import { CreateTaskInput, Label, Project, Task, User } from '../types/vikunja';
+import { useAppTheme } from '../utils/theme';
 
 interface QuickAddBarProps {
   activeProjectId: number;
   availableProjects?: { id: number; title: string; hex_color?: string }[];
   doneTasks?: Task[];
   availableLabels?: string[];
+  availableUsers?: User[];
   reenableStaples?: boolean;
   onAddTask: (input: CreateTaskInput) => void;
   onReenableTask?: (taskId: number) => void;
@@ -43,11 +50,13 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   availableProjects = [],
   doneTasks = [],
   availableLabels = [],
+  availableUsers = [],
   reenableStaples = true,
   onAddTask,
   onReenableTask,
   placeholder = 'Add a task...',
 }) => {
+  const theme = useAppTheme();
   const [rawText, setRawText] = useState('');
   const [manualPriority, setManualPriority] = useState<number>(0);
 
@@ -73,12 +82,26 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
     }
   }
 
+  // Assignee Suggestions (when typing @user)
+  const mentionQuery = extractMentionQuery(rawText);
+  const userSuggestions =
+    mentionQuery !== null ? getUserSuggestions(mentionQuery, availableUsers) : [];
+
   // Label Suggestions (when typing *label)
-  const labelSuggestions = getLabelSuggestions(rawText, availableLabels);
+  const labelSuggestions =
+    userSuggestions.length === 0 ? getLabelSuggestions(rawText, availableLabels) : [];
 
   // Task Suggestions (from completed / done tasks)
   const taskSuggestions =
-    labelSuggestions.length === 0 ? getTaskSuggestions(rawText, doneTasks) : [];
+    userSuggestions.length === 0 && labelSuggestions.length === 0
+      ? getTaskSuggestions(rawText, doneTasks)
+      : [];
+
+  const handleSelectUserSuggestion = (user: User) => {
+    const updated = replaceMentionQuery(rawText, user.username);
+    setRawText(updated);
+    safeHaptics.selection();
+  };
 
   const handleSelectLabelSuggestion = (label: string) => {
     const updated = applyLabelSuggestion(rawText, label);
@@ -110,12 +133,21 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
       title: name,
     }));
 
+    const formattedAssignees: User[] = (parsed.assignees || []).map((username, idx) => {
+      const matched = availableUsers.find(
+        (u) => u.username.toLowerCase() === username.toLowerCase()
+      );
+      return matched || { id: -Math.floor(Date.now() + idx), username };
+    });
+
     onAddTask({
       title: parsed.title,
       priority: effectivePriority,
       project_id: targetProjectId,
       labels: formattedLabels,
+      assignees: formattedAssignees,
       due_date: parsed.dueDate || null,
+      repeat_after: parsed.repeatAfter,
     });
 
     setRawText('');
@@ -126,13 +158,35 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   const curPriority = PRIORITY_LABELS[effectivePriority] || PRIORITY_LABELS[0];
   const hasMagicAttributes =
     parsed.labels.length > 0 ||
+    parsed.assignees.length > 0 ||
     parsed.dueDate ||
     parsed.projectName ||
     parsed.priority !== undefined;
 
   return (
-    <View style={styles.container}>
-      {/* Suggestions Row: Label Suggestions or Done Task Suggestions */}
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      {/* Suggestions Row: User Suggestions, Label Suggestions, or Done Task Suggestions */}
+      {userSuggestions.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.suggestionScroll}
+          contentContainerStyle={styles.suggestionRow}
+        >
+          {userSuggestions.map((user) => (
+            <TouchableOpacity
+              key={user.id || user.username}
+              testID={`user-suggestion-${user.username}`}
+              style={[styles.taskSuggestionChip, styles.userSuggestionChip]}
+              onPress={() => handleSelectUserSuggestion(user)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.userSuggestionText}>👤 @{user.username}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+
       {labelSuggestions.length > 0 && (
         <ScrollView
           horizontal
@@ -143,7 +197,6 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           {labelSuggestions.map((label) => (
             <TouchableOpacity
               key={label}
-              testID={`suggest-label-${label}`}
               style={styles.labelSuggestionChip}
               onPress={() => handleSelectLabelSuggestion(label)}
               activeOpacity={0.7}
@@ -164,7 +217,6 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           {taskSuggestions.map((task) => (
             <TouchableOpacity
               key={task.id}
-              testID={`suggest-task-${task.id}`}
               style={styles.taskSuggestionChip}
               onPress={() => handleSelectTaskSuggestion(task)}
               activeOpacity={0.7}
@@ -183,6 +235,11 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
               <Text style={styles.magicBadgeText}>📁 {targetProjectTitle}</Text>
             </View>
           )}
+          {parsed.assignees.map((u) => (
+            <View key={u} style={[styles.magicBadge, styles.magicAssigneeBadge]}>
+              <Text style={styles.magicAssigneeBadgeText}>@{u}</Text>
+            </View>
+          ))}
           {parsed.labels.map((lbl) => (
             <View key={lbl} style={[styles.magicBadge, styles.magicLabelBadge]}>
               <Text style={styles.magicLabelBadgeText}>#{lbl}</Text>
@@ -205,12 +262,12 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         </View>
       )}
 
-      <View style={styles.inputCard}>
+      <View style={[styles.inputCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
         <TextInput
           testID="quick-add-input"
-          style={styles.input}
+          style={[styles.input, { color: theme.colors.text }]}
           placeholder={placeholder}
-          placeholderTextColor="#8E8E93"
+          placeholderTextColor={theme.colors.textSecondary || '#8E8E93'}
           value={rawText}
           onChangeText={setRawText}
           onSubmitEditing={handleSubmit}
@@ -285,6 +342,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  userSuggestionChip: {
+    borderColor: 'rgba(191, 90, 242, 0.4)',
+    backgroundColor: 'rgba(191, 90, 242, 0.15)',
+  },
+  userSuggestionText: {
+    color: '#BF5AF2',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   magicPreviewRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -302,6 +368,15 @@ const styles = StyleSheet.create({
   },
   magicBadgeText: {
     color: '#0A84FF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  magicAssigneeBadge: {
+    borderColor: 'rgba(191, 90, 242, 0.4)',
+    backgroundColor: 'rgba(191, 90, 242, 0.15)',
+  },
+  magicAssigneeBadgeText: {
+    color: '#BF5AF2',
     fontSize: 12,
     fontWeight: '600',
   },

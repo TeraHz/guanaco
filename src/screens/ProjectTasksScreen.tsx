@@ -16,9 +16,11 @@ import { SwipeableTaskItem } from '../components/SwipeableTaskItem';
 import { QuickAddBar } from '../components/QuickAddBar';
 import { MoveListModal } from '../components/MoveListModal';
 import { QuickLabelModal } from '../components/QuickLabelModal';
+import { TaskDetailModal } from '../components/TaskDetailModal';
 import { sortTasks, SortOption } from '../utils/sorting';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
+import { useAppTheme } from '../utils/theme';
 import { Task } from '../types/vikunja';
 
 interface ProjectTasksScreenProps {
@@ -40,10 +42,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   onOpenDrawer,
   onSelectTask,
 }) => {
+  const theme = useAppTheme();
   const {
     projects,
     tasks,
     labels: storeLabels,
+    cachedUsers,
     selectedProjectId,
     syncStatus,
     pendingSyncCount,
@@ -51,6 +55,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     toggleTask,
     reenableTask,
     updateTaskLabels,
+    updateTaskDetails,
     addTask,
     moveTask,
     deleteTask,
@@ -67,6 +72,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const [showSortModal, setShowSortModal] = useState(false);
   const [movingTaskId, setMovingTaskId] = useState<number | null>(null);
   const [editingLabelsTask, setEditingLabelsTask] = useState<Task | null>(null);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const safeProjects = Array.isArray(projects) ? projects.filter((p) => p.id > 0) : [];
@@ -129,18 +135,29 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const activeCount = projectTasks.filter((t) => !t.done).length;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#0D0D0E" />
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]}>
+      <StatusBar
+        barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={theme.colors.background}
+      />
 
       {/* Header Bar with Live Sync Status Indicator */}
-      <View style={styles.header}>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: theme.colors.cardBackground,
+            borderBottomColor: theme.colors.cardBorder,
+          },
+        ]}
+      >
         <TouchableOpacity
           testID="drawer-toggle-btn"
           style={styles.drawerBtn}
           onPress={onOpenDrawer}
           activeOpacity={0.7}
         >
-          <Text style={styles.drawerIcon}>☰</Text>
+          <Text style={[styles.drawerIcon, { color: theme.colors.text }]}>☰</Text>
         </TouchableOpacity>
 
         <View style={styles.projectInfo}>
@@ -153,11 +170,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 ]}
               />
             ) : null}
-            <Text style={styles.projectTitle} numberOfLines={1}>
+            <Text style={[styles.projectTitle, { color: theme.colors.text }]} numberOfLines={1}>
               {activeProject?.title || 'Tasks'}
             </Text>
           </View>
-          <Text style={styles.taskCountSubtitle}>
+          <Text style={[styles.taskCountSubtitle, { color: theme.colors.textSecondary }]}>
             {activeCount} active {activeCount === 1 ? 'task' : 'tasks'}
           </Text>
         </View>
@@ -283,7 +300,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             onToggle={toggleTask}
             onMove={(taskId) => setMovingTaskId(taskId)}
             onDelete={deleteTask}
-            onPress={(task) => onSelectTask?.(task)}
+            onPress={(task) => {
+              setSelectedTask(task);
+              onSelectTask?.(task);
+            }}
             onSelectLabel={(label) => setSelectedLabel(label)}
             onEditLabels={(task) => setEditingLabelsTask(task)}
           />
@@ -309,13 +329,14 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       {/* Docked TickTick-style Quick Add Bar with Suggestions & Staple Re-enabling */}
       <QuickAddBar
         activeProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
-          availableProjects={safeProjects}
-          doneTasks={doneTasks}
-          availableLabels={availableLabels}
-          reenableStaples={reenableStaples}
-          onAddTask={addTask}
-          onReenableTask={(taskId) => reenableTask(taskId)}
-          placeholder={`Add a task to ${activeProject.title}...`}
+        availableProjects={safeProjects}
+        availableUsers={cachedUsers}
+        doneTasks={doneTasks}
+        availableLabels={availableLabels}
+        reenableStaples={reenableStaples}
+        onAddTask={addTask}
+        onReenableTask={(taskId) => reenableTask(taskId)}
+        placeholder={`Add a task to ${activeProject.title}...`}
       />
 
       {/* Move Task Modal */}
@@ -343,6 +364,22 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           setEditingLabelsTask(null);
         }}
         onClose={() => setEditingLabelsTask(null)}
+      />
+
+      {/* Rich Task Detail / Editor Modal */}
+      <TaskDetailModal
+        visible={selectedTask !== null}
+        task={selectedTask}
+        availableLabels={availableLabels}
+        labelDefinitions={storeLabels}
+        availableUsers={cachedUsers}
+        onClose={() => setSelectedTask(null)}
+        onSave={(taskId, updates) => {
+          updateTaskDetails(taskId, updates);
+        }}
+        onDelete={(taskId) => {
+          deleteTask(taskId);
+        }}
       />
 
       {/* Sort Options Modal */}

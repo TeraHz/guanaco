@@ -573,4 +573,98 @@ describe('VikunjaClient', () => {
       await expect(client.getCurrentUser()).rejects.toThrow('Invalid token or credentials');
     });
   });
+
+  describe('Assignees API', () => {
+    beforeEach(() => {
+      client.setToken('token');
+    });
+
+    it('searchUsers should query GET /users/search?s={query}', async () => {
+      const mockUsers = [{ id: 1, username: 'terahz' }];
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => mockUsers,
+      } as Response);
+
+      const users = await client.searchUsers('tera');
+      expect(users).toEqual(mockUsers);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/users/search?s=tera',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('addAssigneeToTask should call PUT /tasks/{id}/assignees with user_id', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'added' }),
+      } as Response);
+
+      await client.addAssigneeToTask(10, 5);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/tasks/10/assignees',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ user_id: 5 }),
+        })
+      );
+    });
+
+    it('removeAssigneeFromTask should call DELETE /tasks/{id}/assignees/{userId}', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'removed' }),
+      } as Response);
+
+      await client.removeAssigneeFromTask(10, 5);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/tasks/10/assignees/5',
+        expect.objectContaining({ method: 'DELETE' })
+      );
+    });
+
+    it('setTaskAssignees should remove unselected assignees and add new assignees', async () => {
+      global.fetch = jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ message: 'removed' }),
+        } as Response) // DELETE /tasks/10/assignees/2
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ message: 'added' }),
+        } as Response); // PUT /tasks/10/assignees with user_id: 3
+
+      const previous = [
+        { id: 1, username: 'terahz' },
+        { id: 2, username: 'alex' },
+      ];
+      const next = [
+        { id: 1, username: 'terahz' },
+        { id: 3, username: 'bob' },
+      ];
+
+      const result = await client.setTaskAssignees(10, next, previous);
+
+      // Removed alex (id: 2)
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/tasks/10/assignees/2',
+        expect.objectContaining({ method: 'DELETE' })
+      );
+      // Added bob (id: 3)
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/tasks/10/assignees',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ user_id: 3 }),
+        })
+      );
+      expect(result).toHaveLength(2);
+    });
+  });
 });
+

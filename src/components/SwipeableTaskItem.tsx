@@ -10,6 +10,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
+import { useAppTheme } from '../utils/theme';
 import { Label, Task } from '../types/vikunja';
 
 interface SwipeableTaskItemProps {
@@ -42,7 +43,11 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   onEditLabels,
   labelDefinitions,
 }) => {
-  const priorityColor = PRIORITY_COLORS[task.priority] || PRIORITY_COLORS[0];
+  const theme = useAppTheme();
+  const priorityColor =
+    task.color && task.color !== ''
+      ? `#${task.color.replace(/^#/, '')}`
+      : PRIORITY_COLORS[task.priority] || PRIORITY_COLORS[0];
 
   const handleToggle = () => {
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
@@ -120,7 +125,16 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   const cardContent = (
     <TouchableOpacity
       testID={`task-item-${task.id}`}
-      style={[styles.card, task.done && styles.cardDone]}
+      style={[
+        styles.card,
+        {
+          backgroundColor: task.done
+            ? (theme.isDark ? '#161618' : '#F2F2F7')
+            : theme.colors.cardBackground,
+          borderColor: theme.colors.cardBorder,
+        },
+        task.done && styles.cardDone,
+      ]}
       onPress={() => onPress(task)}
       activeOpacity={0.7}
     >
@@ -147,13 +161,52 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
       <View style={styles.content}>
         <Text
           testID={`task-title-${task.id}`}
-          style={[styles.title, task.done && styles.titleDone]}
+          style={[
+            styles.title,
+            { color: theme.colors.text },
+            task.done && styles.titleDone,
+          ]}
           numberOfLines={2}
         >
           {task.title}
         </Text>
 
-        {/* Labels & Dates metadata row */}
+        {/* Progress Bar (if percent_done > 0) */}
+        {task.percent_done !== undefined && task.percent_done > 0 && (
+          <View testID={`task-progress-${task.id}`} style={styles.progressContainer}>
+            <View
+              style={[
+                styles.progressBarTrack,
+                { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
+              ]}
+            >
+              <View
+                style={[
+                  styles.progressBarFill,
+                  {
+                    width: `${Math.min(
+                      100,
+                      Math.max(
+                        0,
+                        task.percent_done <= 1 && task.percent_done > 0
+                          ? Math.round(task.percent_done * 100)
+                          : Math.round(task.percent_done)
+                      )
+                    )}%`,
+                    backgroundColor: task.color ? `#${task.color.replace(/^#/, '')}` : '#0A84FF',
+                  },
+                ]}
+              />
+            </View>
+            <Text style={[styles.progressText, { color: theme.colors.textSecondary }]}>
+              {task.percent_done <= 1 && task.percent_done > 0
+                ? Math.round(task.percent_done * 100)
+                : Math.round(task.percent_done)}%
+            </Text>
+          </View>
+        )}
+
+        {/* Labels, Assignees & Dates metadata row */}
         <View style={styles.metaRow}>
           {formattedDueDate && (
             <View
@@ -173,6 +226,27 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
               </Text>
             </View>
           )}
+
+          {/* Assignees */}
+          {task.assignees &&
+            task.assignees.map((user) => (
+              <View
+                key={user.id || user.username}
+                testID={`task-assignee-${task.id}-${user.username}`}
+                style={[
+                  styles.assigneeBadge,
+                  {
+                    backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                    borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                  },
+                ]}
+              >
+                <Text style={[styles.assigneeIcon, { color: theme.colors.textSecondary }]}>👤 </Text>
+                <Text style={[styles.assigneeText, { color: theme.colors.textSecondary }]}>
+                  @{user.username}
+                </Text>
+              </View>
+            ))}
 
           {/* Label Pills (Clickable for easy filtering) */}
           {task.labels &&
@@ -415,5 +489,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#8E8E93',
     fontWeight: '600',
+  },
+  assigneeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  assigneeIcon: {
+    fontSize: 11,
+  },
+  assigneeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  progressBarTrack: {
+    flex: 1,
+    height: 5,
+    borderRadius: 3,
+    overflow: 'hidden',
+    maxWidth: 120,
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  progressText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
 });

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CreateTaskInput, Label, Project, Task, UpdateTaskInput } from '../types/vikunja';
+import { CreateTaskInput, Label, Project, Task, UpdateTaskInput, User } from '../types/vikunja';
 import { VikunjaClient } from '../api/client';
 import { SyncQueue, SyncStatus } from './syncQueue';
 import { safeHaptics } from '../utils/haptics';
@@ -9,6 +9,7 @@ import { safeHaptics } from '../utils/haptics';
 const CACHE_KEY_PROJECTS = '@vikunja_cached_projects';
 const CACHE_KEY_TASKS = '@vikunja_cached_tasks';
 const CACHE_KEY_LABELS = '@vikunja_cached_labels';
+const CACHE_KEY_USERS = '@vikunja_cached_users';
 const CACHE_KEY_REENABLE_STAPLES = '@vikunja_reenable_staples';
 const CACHE_KEY_LAST_PROJECT = '@vikunja_last_project_id';
 
@@ -18,6 +19,7 @@ export interface TaskState {
   projects: Project[];
   tasks: Task[];
   labels: Label[];
+  cachedUsers: User[];
   selectedProjectId: number | null;
   isLoading: boolean;
   error: string | null;
@@ -37,6 +39,8 @@ export interface TaskState {
   setSelectedProjectId: (id: number | null) => void;
   fetchProjects: () => Promise<void>;
   fetchLabels: () => Promise<Label[]>;
+  fetchUsers: (query?: string) => Promise<User[]>;
+  setCachedUsers: (users: User[]) => void;
   fetchTasks: (projectId: number) => Promise<void>;
   fetchAllTasks: () => Promise<void>;
   syncAll: () => Promise<void>;
@@ -44,6 +48,7 @@ export interface TaskState {
   toggleTask: (taskId: number) => void;
   reenableTask: (taskId: number, newLabels?: Label[]) => void;
   updateTaskLabels: (taskId: number, labels: Label[]) => void;
+  updateTaskAssignees: (taskId: number, assignees: User[]) => void;
   addTask: (input: CreateTaskInput) => Task;
   updateTaskDetails: (taskId: number, updates: UpdateTaskInput) => void;
   moveTask: (taskId: number, targetProjectId: number) => void;
@@ -57,6 +62,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   projects: [],
   tasks: [],
   labels: [],
+  cachedUsers: [],
   selectedProjectId: null,
   isLoading: false,
   error: null,
@@ -82,12 +88,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         cachedProjectsRaw,
         cachedTasksRaw,
         cachedLabelsRaw,
+        cachedUsersRaw,
         reenableSettingRaw,
         lastProjectRaw,
       ] = await Promise.all([
         AsyncStorage.getItem(CACHE_KEY_PROJECTS),
         AsyncStorage.getItem(CACHE_KEY_TASKS),
         AsyncStorage.getItem(CACHE_KEY_LABELS),
+        AsyncStorage.getItem(CACHE_KEY_USERS),
         AsyncStorage.getItem(CACHE_KEY_REENABLE_STAPLES),
         AsyncStorage.getItem(CACHE_KEY_LAST_PROJECT),
       ]);
@@ -123,6 +131,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         }
       }
 
+      if (cachedUsersRaw) {
+        const cachedUsers = JSON.parse(cachedUsersRaw);
+        if (Array.isArray(cachedUsers)) {
+          updates.cachedUsers = cachedUsers;
+        }
+      }
+
       if (reenableSettingRaw !== null) {
         updates.reenableStaples = reenableSettingRaw === 'true';
       }
@@ -130,6 +145,32 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       set(updates);
     } catch (e) {
       // Ignore cache load errors gracefully
+    }
+  },
+
+  setCachedUsers: (users: User[]) => {
+    set({ cachedUsers: users });
+    AsyncStorage.setItem(CACHE_KEY_USERS, JSON.stringify(users)).catch(() => {});
+  },
+
+  fetchUsers: async (query?: string): Promise<User[]> => {
+    const { client, cachedUsers } = get();
+    if (!client || typeof client.searchUsers !== 'function') return cachedUsers;
+
+    try {
+      const users = await client.searchUsers(query || '');
+      const safe = Array.isArray(users) ? users : [];
+      if (safe.length > 0) {
+        const map = new Map<string, User>(cachedUsers.map((u) => [u.username.toLowerCase(), u]));
+        safe.forEach((u) => map.set(u.username.toLowerCase(), u));
+        const merged = Array.from(map.values());
+        set({ cachedUsers: merged });
+        AsyncStorage.setItem(CACHE_KEY_USERS, JSON.stringify(merged)).catch(() => {});
+        return merged;
+      }
+      return cachedUsers;
+    } catch (_) {
+      return cachedUsers;
     }
   },
 
@@ -498,6 +539,29 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
   },
 
+  updateTaskAssignees: (taskId: number, assignees: User[]) => {
+    const { tasks, syncQueue } = get();
+    const safeTasks = Array.isArray(tasks) ? tasks : [];
+    const currentTask = safeTasks.find((t) => t.id === taskId);
+    const previousAssignees = currentTask?.assignees || [];
+    const updatedTasks = safeTasks.map((t) => (t.id === taskId ? { ...t, assignees } : t));
+
+    set({ tasks: updatedTasks });
+    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+
+    safeHaptics.selection();
+
+    if (syncQueue) {
+      syncQueue.enqueue({
+        id: `assignee-${taskId}-${Date.now()}`,
+        type: 'SET_TASK_ASSIGNEES',
+        payload: { taskId, assignees, previousAssignees },
+        timestamp: Date.now(),
+      });
+      syncQueue.processQueue();
+    }
+  },
+
   addTask: (input: CreateTaskInput): Task => {
     const { tasks, syncQueue } = get();
     const currentTasks = Array.isArray(tasks) ? tasks : [];
@@ -524,7 +588,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       priority: input.priority ?? 0,
       project_id: input.project_id,
       due_date: input.due_date ?? null,
+      start_date: input.start_date ?? null,
+      end_date: input.end_date ?? null,
+      repeat_after: input.repeat_after,
+      percent_done: input.percent_done,
+      color: input.color,
       labels: optimisticLabels,
+      assignees: input.assignees || [],
       position: (currentTasks.length + 1) * 1000,
       created: new Date().toISOString(),
       updated: new Date().toISOString(),
@@ -550,11 +620,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
               if (t.id === tempId) {
                 return {
                   ...remoteTask,
-                  // Preserve optimistic labels if remote task returns null/empty
+                  // Preserve optimistic labels & assignees if remote task returns null/empty
                   labels:
                     remoteTask.labels && remoteTask.labels.length > 0
                       ? remoteTask.labels
                       : t.labels || [],
+                  assignees:
+                    remoteTask.assignees && remoteTask.assignees.length > 0
+                      ? remoteTask.assignees
+                      : t.assignees || [],
                 };
               }
               return t;
@@ -573,18 +647,47 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   updateTaskDetails: (taskId: number, updates: UpdateTaskInput) => {
     const { tasks, syncQueue } = get();
     const safeTasks = Array.isArray(tasks) ? tasks : [];
+    const task = safeTasks.find((t) => t.id === taskId);
     const updatedTasks = safeTasks.map((t) => (t.id === taskId ? { ...t, ...updates } : t));
 
     set({ tasks: updatedTasks });
     AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
 
     if (syncQueue) {
-      syncQueue.enqueue({
-        id: `update-${taskId}-${Date.now()}`,
-        type: 'UPDATE_TASK',
-        payload: { taskId, data: updates },
-        timestamp: Date.now(),
-      });
+      if (updates.assignees !== undefined && task) {
+        syncQueue.enqueue({
+          id: `assignees-${taskId}-${Date.now()}`,
+          type: 'SET_TASK_ASSIGNEES',
+          payload: {
+            taskId,
+            assignees: updates.assignees,
+            previousAssignees: task.assignees || [],
+          },
+          timestamp: Date.now(),
+        });
+      }
+      if (updates.labels !== undefined && task) {
+        syncQueue.enqueue({
+          id: `labels-${taskId}-${Date.now()}`,
+          type: 'SET_TASK_LABELS',
+          payload: {
+            taskId,
+            labels: updates.labels,
+            previousLabels: task.labels || [],
+          },
+          timestamp: Date.now(),
+        });
+      }
+
+      const { labels, assignees, ...taskData } = updates;
+      if (Object.keys(taskData).length > 0) {
+        syncQueue.enqueue({
+          id: `update-${taskId}-${Date.now()}`,
+          type: 'UPDATE_TASK',
+          payload: { taskId, data: taskData },
+          timestamp: Date.now(),
+        });
+      }
       syncQueue.processQueue();
     }
   },

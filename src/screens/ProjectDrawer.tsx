@@ -15,6 +15,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import { useTaskStore } from '../store/taskStore';
 import { safeHaptics } from '../utils/haptics';
+import { useAppTheme } from '../utils/theme';
 import {
   checkBiometricAvailable,
   isBiometricEnabled,
@@ -34,6 +35,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   onAddNewList,
   onLogout,
 }) => {
+  const theme = useAppTheme();
   const {
     projects,
     tasks,
@@ -122,21 +124,29 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           <View style={styles.backdrop} />
         </TouchableWithoutFeedback>
 
-        <SafeAreaView style={styles.drawerContainer}>
+        <SafeAreaView
+          style={[
+            styles.drawerContainer,
+            {
+              backgroundColor: theme.colors.cardBackground,
+              borderRightColor: theme.colors.cardBorder,
+            },
+          ]}
+        >
           {/* Drawer Header */}
-          <View style={styles.header}>
+          <View style={[styles.header, { borderBottomColor: theme.colors.cardBorder }]}>
             <View style={styles.brandRow}>
               <View style={styles.logoBadge}>
                 <Text style={styles.logoText}>V</Text>
               </View>
-              <Text style={styles.brandTitle}>Lists</Text>
+              <Text style={[styles.brandTitle, { color: theme.colors.text }]}>Lists</Text>
             </View>
             <TouchableOpacity
               testID="drawer-close-btn"
               style={styles.closeBtn}
               onPress={onClose}
             >
-              <Text style={styles.closeBtnText}>✕</Text>
+              <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
             </TouchableOpacity>
           </View>
 
@@ -147,7 +157,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
               testID="drawer-project-all"
               style={[
                 styles.projectItem,
-                selectedProjectId === null && styles.projectItemSelected,
+                selectedProjectId === null && {
+                  backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                },
               ]}
               onPress={() => handleSelect(null)}
               activeOpacity={0.7}
@@ -156,6 +168,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
               <Text
                 style={[
                   styles.projectTitle,
+                  { color: theme.colors.text },
                   selectedProjectId === null && styles.projectTitleSelected,
                 ]}
                 numberOfLines={1}
@@ -183,7 +196,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                   testID={`drawer-project-${proj.id}`}
                   style={[
                     styles.projectItem,
-                    isSelected && styles.projectItemSelected,
+                    isSelected && {
+                      backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                    },
                   ]}
                   onPress={() => handleSelect(proj.id)}
                   activeOpacity={0.7}
@@ -191,49 +206,52 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                   <View
                     style={[
                       styles.colorDot,
-                      { backgroundColor: proj.hex_color || '#007AFF' },
+                      { backgroundColor: proj.hex_color ? `#${proj.hex_color.replace(/^#/, '')}` : '#007AFF' },
                     ]}
                   />
                   <Text
                     style={[
                       styles.projectTitle,
+                      { color: theme.colors.text },
                       isSelected && styles.projectTitleSelected,
                     ]}
                     numberOfLines={1}
                   >
                     {proj.title}
                   </Text>
-                  <Text
-                    testID={`drawer-count-${proj.id}`}
-                    style={styles.badgeCount}
-                  >
-                    {activeTasks}
-                  </Text>
+                  {activeTasks > 0 && (
+                    <Text
+                      testID={`drawer-count-${proj.id}`}
+                      style={styles.badgeCount}
+                    >
+                      {activeTasks}
+                    </Text>
+                  )}
                 </TouchableOpacity>
               );
             })}
           </ScrollView>
 
-          {/* Add New List Action */}
+          {/* Quick Add List button */}
           {onAddNewList && (
             <TouchableOpacity
               testID="drawer-add-list-btn"
-              style={styles.addListBtn}
+              style={[styles.addListBtn, { borderTopColor: theme.colors.cardBorder }]}
               onPress={() => {
-                onClose();
+                safeHaptics.selection();
                 onAddNewList();
               }}
               activeOpacity={0.7}
             >
-              <Text style={styles.addListIcon}>+</Text>
+              <Text style={styles.addListIcon}>＋</Text>
               <Text style={styles.addListText}>New List</Text>
             </TouchableOpacity>
           )}
 
-          {/* Footer Controls: Settings, Biometrics & Logout */}
-          <View style={styles.footerSection}>
+          {/* Settings & Biometrics Section */}
+          <View style={[styles.footerSection, { borderTopColor: theme.colors.cardBorder }]}>
             <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>♻️ Re-enable staple tasks</Text>
+              <Text style={[styles.settingLabel, { color: theme.colors.text }]}>Re-enable Staple Tasks</Text>
               <Switch
                 testID="drawer-staples-switch"
                 value={reenableStaples}
