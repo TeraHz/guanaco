@@ -309,5 +309,75 @@ describe('SwipeableTaskItem', () => {
     expect(getByTestId(`task-progress-${mockTask.id}`)).toBeTruthy();
     expect(getByText('60%')).toBeTruthy();
   });
+
+  // --- Swipe Gesture Sensitivity & Safety (Wife's Feedback) ---
+  it('configures Swipeable with high friction and safe thresholds to avoid accidental triggers during vertical scroll', () => {
+    const { Swipeable } = require('react-native-gesture-handler');
+    const { UNSAFE_getByType } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const swipeableInstance = UNSAFE_getByType(Swipeable);
+    expect(swipeableInstance.props.friction).toBeGreaterThanOrEqual(2);
+    expect(swipeableInstance.props.leftThreshold).toBeGreaterThanOrEqual(60);
+    expect(swipeableInstance.props.rightThreshold).toBeGreaterThanOrEqual(100);
+    expect(swipeableInstance.props.rightThreshold).toBeGreaterThan(swipeableInstance.props.leftThreshold);
+  });
+
+  // --- Reordering & Long Press ---
+  it('calls onLongPress when user presses and holds task', () => {
+    const mockOnLongPress = jest.fn();
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+        onLongPress={mockOnLongPress}
+      />
+    );
+
+    fireEvent(getByTestId(`task-item-${mockTask.id}`), 'longPress');
+    expect(mockOnLongPress).toHaveBeenCalledWith(mockTask);
+  });
+
+  it('renders reorder controls when isReordering is true and handles up/down actions', () => {
+    const mockOnMoveUp = jest.fn();
+    const mockOnMoveDown = jest.fn();
+
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+        isReordering={true}
+        onMoveUp={mockOnMoveUp}
+        onMoveDown={mockOnMoveDown}
+        canMoveUp={true}
+        canMoveDown={true}
+      />
+    );
+
+    const upBtn = getByTestId(`move-up-task-${mockTask.id}`);
+    const downBtn = getByTestId(`move-down-task-${mockTask.id}`);
+
+    expect(upBtn).toBeTruthy();
+    expect(downBtn).toBeTruthy();
+
+    fireEvent.press(upBtn);
+    expect(mockOnMoveUp).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(downBtn);
+    expect(mockOnMoveDown).toHaveBeenCalledTimes(1);
+  });
 });
 

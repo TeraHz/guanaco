@@ -163,4 +163,45 @@ describe('Task Sorting Utility', () => {
       expect(sorted[1].title).toBe('Completed earlier');
     });
   });
+
+  describe('Manual Sort', () => {
+    it('sorts tasks strictly by position ascending', () => {
+      const tasks: Task[] = [
+        { id: 1, title: 'Task B', done: false, priority: 1, project_id: 1, position: 2000 },
+        { id: 2, title: 'Task C', done: false, priority: 1, project_id: 1, position: 3000 },
+        { id: 3, title: 'Task A', done: false, priority: 1, project_id: 1, position: 1000 },
+      ];
+
+      const sorted = sortTasks(tasks, 'manual');
+      expect(sorted.map((t) => t.title)).toEqual(['Task A', 'Task B', 'Task C']);
+    });
+
+    it('keeps completed tasks at the bottom even in manual sort', () => {
+      const tasks: Task[] = [
+        { id: 1, title: 'Done Task', done: true, priority: 1, project_id: 1, position: 500 },
+        { id: 2, title: 'Active Task', done: false, priority: 1, project_id: 1, position: 2000 },
+      ];
+
+      const sorted = sortTasks(tasks, 'manual');
+      expect(sorted.map((t) => t.title)).toEqual(['Active Task', 'Done Task']);
+    });
+  });
+
+  describe('Department / Contextual Sort', () => {
+    it('sorts tasks by contextual category', () => {
+      const tasks: Task[] = [
+        { id: 1, title: 'Milk', done: false, priority: 1, project_id: 1, labels: [{ id: 1, title: 'Dairy' }] },
+        { id: 2, title: 'Apples', done: false, priority: 1, project_id: 1, labels: [{ id: 2, title: 'Produce' }] },
+        { id: 3, title: '[Bakery] Bagels', done: false, priority: 1, project_id: 1 },
+      ];
+
+      const sorted = sortTasks(tasks, 'department', 'Weekly Groceries');
+      expect(sorted.map((t) => t.title)).toEqual([
+        '[Bakery] Bagels',
+        'Milk',
+        'Apples',
+      ]);
+    });
+  });
 });
+

@@ -138,4 +138,22 @@ describe('QuickLabelModal', () => {
     const costcoText = getByText(/#Costco/);
     expect(costcoText.props.style).toContainEqual({ color: '#ff5722', fontWeight: '700' });
   });
+
+  it('triggers onOpenManageLabels when manage button is pressed', () => {
+    const mockOnOpenManage = jest.fn();
+    const { getByTestId } = render(
+      <QuickLabelModal
+        visible={true}
+        task={mockTask}
+        availableLabels={availableLabels}
+        onSave={mockOnSave}
+        onClose={mockOnClose}
+        onOpenManageLabels={mockOnOpenManage}
+      />
+    );
+
+    fireEvent.press(getByTestId('quick-label-manage-btn'));
+    expect(mockOnClose).toHaveBeenCalled();
+    expect(mockOnOpenManage).toHaveBeenCalled();
+  });
 });

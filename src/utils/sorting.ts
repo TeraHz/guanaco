@@ -1,8 +1,9 @@
 import { Task } from '../types/vikunja';
+import { classifyTaskContextually } from './smartClassifier';
 
-export type SortOption = 'default' | 'name' | 'label' | 'dueDate' | 'priority';
+export type SortOption = 'default' | 'manual' | 'department' | 'name' | 'label' | 'dueDate' | 'priority';
 
-export function sortTasks(tasks: Task[], sortBy: SortOption): Task[] {
+export function sortTasks(tasks: Task[], sortBy: SortOption, contextTitle?: string): Task[] {
   const list = [...tasks];
 
   return list.sort((a, b) => {
@@ -12,6 +13,22 @@ export function sortTasks(tasks: Task[], sortBy: SortOption): Task[] {
     }
 
     switch (sortBy) {
+      case 'manual': {
+        const posDiff = (a.position || 0) - (b.position || 0);
+        if (posDiff !== 0) return posDiff;
+        return a.title.localeCompare(b.title);
+      }
+
+      case 'department': {
+        const catA = classifyTaskContextually(a, contextTitle);
+        const catB = classifyTaskContextually(b, contextTitle);
+        const catCompare = catA.localeCompare(catB, undefined, { sensitivity: 'base' });
+        if (catCompare !== 0) return catCompare;
+        const prioDiff = (b.priority || 0) - (a.priority || 0);
+        if (prioDiff !== 0) return prioDiff;
+        return a.title.localeCompare(b.title);
+      }
+
       case 'name': {
         const titleCompare = a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
         if (titleCompare !== 0) return titleCompare;

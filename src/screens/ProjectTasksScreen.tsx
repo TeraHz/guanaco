@@ -19,7 +19,10 @@ import { QuickAddBar } from '../components/QuickAddBar';
 import { MoveListModal } from '../components/MoveListModal';
 import { QuickLabelModal } from '../components/QuickLabelModal';
 import { TaskDetailModal } from '../components/TaskDetailModal';
+import { LabelManagementModal } from '../components/LabelManagementModal';
 import { sortTasks, SortOption } from '../utils/sorting';
+import { isShoppingList } from '../utils/smartClassifier';
+import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
 import { useAppTheme } from '../utils/theme';
@@ -34,6 +37,8 @@ type FilterType = 'all' | 'active' | 'done';
 
 const SORT_LABELS: Record<SortOption, string> = {
   default: 'Default Order',
+  manual: 'Custom Order',
+  department: 'Department / Aisle',
   name: 'Name (A-Z)',
   label: 'Label / Store',
   dueDate: 'Due Date',
@@ -60,6 +65,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     updateTaskDetails,
     addTask,
     moveTask,
+    reorderTasks,
     deleteTask,
     fetchTasks,
     fetchProjects,
@@ -68,13 +74,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     fetchAllTasks,
   } = useTaskStore();
 
-  const [filter, setFilter] = useState<FilterType>('all');
+  const [filter, setFilter] = useState<FilterType>('active');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('default');
   const [showSortModal, setShowSortModal] = useState(false);
+  const [isReordering, setIsReordering] = useState(false);
+  const [showLabelManagementModal, setShowLabelManagementModal] = useState(false);
   const [movingTaskId, setMovingTaskId] = useState<number | null>(null);
   const [editingLabelsTask, setEditingLabelsTask] = useState<Task | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const safeProjects = Array.isArray(projects) ? projects.filter((p) => p.id > 0) : [];
@@ -86,6 +95,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     : safeProjects.find((p) => p.id === selectedProjectId) ||
       safeProjects[0] ||
       { id: 0, title: 'All Tasks', hex_color: '#007AFF' };
+
+  const isShopping = isShoppingList(activeProject?.title);
 
   // Fetch tasks on mount & when active project changes (Regression Issue #1)
   useEffect(() => {
@@ -132,7 +143,35 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   });
 
   // Apply intelligent sorting with priority preserved
-  const sortedTasks = sortTasks(filteredTasks, sortBy);
+  const sortedTasks = sortTasks(filteredTasks, sortBy, activeProject?.title);
+
+  const handleMoveTaskPosition = (taskId: number, direction: 'up' | 'down') => {
+    safeHaptics.selection();
+    const currentList = [...sortedTasks];
+    const currentIndex = currentList.findIndex((t) => t.id === taskId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= currentList.length) return;
+
+    // Swap tasks
+    const [moved] = currentList.splice(currentIndex, 1);
+    currentList.splice(targetIndex, 0, moved);
+
+    const projectId = moved.project_id || activeProject.id;
+    reorderTasks(projectId, currentList.map((t) => t.id));
+    if (sortBy !== 'manual') {
+      setSortBy('manual');
+    }
+  };
+
+  const handleLongPressTask = (_task: Task) => {
+    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+    setIsReordering(true);
+    if (sortBy !== 'manual') {
+      setSortBy('manual');
+    }
+  };
 
   const activeCount = projectTasks.filter((t) => !t.done).length;
 
@@ -219,12 +258,15 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       {/* Filter Selector Pills, Label Filter & Sort Button */}
       <View style={styles.filterBar}>
         <View style={styles.filterPillsGroup}>
-          {(['all', 'active', 'done'] as FilterType[]).map((f) => (
+          {(['active', 'done', 'all'] as FilterType[]).map((f) => (
             <TouchableOpacity
               key={f}
               testID={`filter-${f}`}
               style={[styles.filterPill, filter === f && styles.filterPillActive]}
-              onPress={() => setFilter(f)}
+              onPress={() => {
+                safeHaptics.selection();
+                setFilter(filter === f && (f === 'done' || f === 'all') ? 'active' : f);
+              }}
               activeOpacity={0.7}
             >
               <Text
@@ -288,6 +330,34 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         );
       })()}
 
+      {/* Reorder Mode Banner */}
+      {isReordering && (
+        <View
+          style={[
+            styles.reorderBanner,
+            {
+              backgroundColor: theme.isDark ? '#1C1C1E' : '#F2F2F7',
+              borderColor: '#007AFF',
+            },
+          ]}
+        >
+          <Text style={[styles.reorderBannerText, { color: theme.colors.text }]}>
+            ↕ Reorder Mode (Tap ▲ ▼ to move items)
+          </Text>
+          <TouchableOpacity
+            testID="reorder-done-btn"
+            style={styles.reorderDoneBtn}
+            onPress={() => {
+              safeHaptics.selection();
+              setIsReordering(false);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.reorderDoneBtnText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Quick Add Bar with Suggestions at TOP */}
       <QuickAddBar
         activeProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
@@ -312,7 +382,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             tintColor="#007AFF"
           />
         }
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           <SwipeableTaskItem
             task={item}
             labelDefinitions={storeLabels}
@@ -320,9 +390,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             onMove={(taskId) => setMovingTaskId(taskId)}
             onDelete={deleteTask}
             onPress={(task) => {
+              if (isReordering) return;
               setSelectedTask(task);
               onSelectTask?.(task);
             }}
+            onLongPress={handleLongPressTask}
+            isReordering={isReordering}
+            canMoveUp={index > 0}
+            canMoveDown={index < sortedTasks.length - 1}
+            onMoveUp={() => handleMoveTaskPosition(item.id, 'up')}
+            onMoveDown={() => handleMoveTaskPosition(item.id, 'down')}
             onSelectLabel={(label) => setSelectedLabel(label)}
             onEditLabels={(task) => setEditingLabelsTask(task)}
           />
@@ -345,6 +422,19 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         }
       />
       </KeyboardAvoidingView>
+
+      {/* Green Floating Action Button (+) for Detailed Task Add */}
+      <TouchableOpacity
+        testID="green-add-task-fab"
+        style={[styles.fabBtn, { backgroundColor: '#30D158' }]}
+        onPress={() => {
+          safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+          setShowCreateTaskModal(true);
+        }}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.fabIcon}>＋</Text>
+      </TouchableOpacity>
 
       {/* Move Task Modal */}
       <MoveListModal
@@ -371,22 +461,48 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           setEditingLabelsTask(null);
         }}
         onClose={() => setEditingLabelsTask(null)}
+        onOpenManageLabels={() => setShowLabelManagementModal(true)}
       />
 
       {/* Rich Task Detail / Editor Modal */}
       <TaskDetailModal
-        visible={selectedTask !== null}
+        visible={selectedTask !== null || showCreateTaskModal}
         task={selectedTask}
         availableLabels={availableLabels}
         labelDefinitions={storeLabels}
         availableUsers={cachedUsers}
-        onClose={() => setSelectedTask(null)}
+        availableProjects={safeProjects}
+        defaultProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
+        onClose={() => {
+          setSelectedTask(null);
+          setShowCreateTaskModal(false);
+        }}
         onSave={(taskId, updates) => {
           updateTaskDetails(taskId, updates);
         }}
         onDelete={(taskId) => {
           deleteTask(taskId);
         }}
+        onCreateTask={(newTaskData) => {
+          addTask({
+            title: newTaskData.title || '',
+            description: newTaskData.description,
+            due_date: newTaskData.due_date,
+            priority: newTaskData.priority,
+            project_id:
+              newTaskData.project_id ||
+              (activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)),
+          });
+        }}
+        onMoveTask={(taskId, newProjectId) => {
+          moveTask(taskId, newProjectId);
+        }}
+      />
+
+      {/* Global Label Management Modal */}
+      <LabelManagementModal
+        visible={showLabelManagementModal}
+        onClose={() => setShowLabelManagementModal(false)}
       />
 
       {/* Sort Options Modal */}
@@ -412,37 +528,62 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               </TouchableOpacity>
             </View>
 
-            {(['default', 'name', 'label', 'dueDate', 'priority'] as SortOption[]).map(
-              (option) => {
-                const isSelected = sortBy === option;
-                return (
-                  <TouchableOpacity
-                    key={option}
-                    testID={`sort-option-${option}`}
+            {([
+              'default',
+              'manual',
+              ...(isShopping ? (['department'] as SortOption[]) : []),
+              'name',
+              'label',
+              'dueDate',
+              'priority',
+            ] as SortOption[]).map((option) => {
+              const isSelected = sortBy === option;
+              return (
+                <TouchableOpacity
+                  key={option}
+                  testID={`sort-option-${option}`}
+                  style={[
+                    styles.sortOptionItem,
+                    isSelected && styles.sortOptionItemSelected,
+                  ]}
+                  onPress={() => {
+                    safeHaptics.selection();
+                    setSortBy(option);
+                    setShowSortModal(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text
                     style={[
-                      styles.sortOptionItem,
-                      isSelected && styles.sortOptionItemSelected,
+                      styles.sortOptionText,
+                      isSelected && styles.sortOptionTextSelected,
                     ]}
-                    onPress={() => {
-                      safeHaptics.selection();
-                      setSortBy(option);
-                      setShowSortModal(false);
-                    }}
-                    activeOpacity={0.7}
                   >
-                    <Text
-                      style={[
-                        styles.sortOptionText,
-                        isSelected && styles.sortOptionTextSelected,
-                      ]}
-                    >
-                      {SORT_LABELS[option]}
-                    </Text>
-                    {isSelected ? <Text style={styles.sortOptionCheckmark}>✓</Text> : null}
-                  </TouchableOpacity>
-                );
-              }
-            )}
+                    {SORT_LABELS[option]}
+                  </Text>
+                  {isSelected ? <Text style={styles.sortOptionCheckmark}>✓</Text> : null}
+                </TouchableOpacity>
+              );
+            })}
+
+            <TouchableOpacity
+              testID="sort-option-reorder"
+              style={[
+                styles.sortOptionItem,
+                { borderTopWidth: 1, borderTopColor: '#3A3A3C', marginTop: 8 },
+              ]}
+              onPress={() => {
+                safeHaptics.selection();
+                setSortBy('manual');
+                setIsReordering(true);
+                setShowSortModal(false);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.sortOptionText, { color: '#007AFF', fontWeight: '700' }]}>
+                ↕ Reorder Tasks Manually
+              </Text>
+            </TouchableOpacity>
           </SafeAreaView>
         </View>
       </Modal>
@@ -689,5 +830,55 @@ const styles = StyleSheet.create({
     color: '#0A84FF',
     fontSize: 16,
     fontWeight: '800',
+  },
+  fabBtn: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#30D158',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 5,
+    elevation: 8,
+    zIndex: 100,
+  },
+  fabIcon: {
+    fontSize: 32,
+    color: '#FFFFFF',
+    fontWeight: '300',
+    lineHeight: 34,
+  },
+  reorderBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  reorderBannerText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  reorderDoneBtn: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  reorderDoneBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
 });

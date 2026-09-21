@@ -49,6 +49,9 @@ export interface TaskState {
   reenableTask: (taskId: number, newLabels?: Label[]) => void;
   updateTaskLabels: (taskId: number, labels: Label[]) => void;
   updateTaskAssignees: (taskId: number, assignees: User[]) => void;
+  createGlobalLabel: (title: string, hex_color?: string) => Promise<Label>;
+  updateGlobalLabel: (labelId: number, title: string, hex_color?: string) => Promise<void>;
+  deleteGlobalLabel: (labelId: number) => Promise<void>;
   addTask: (input: CreateTaskInput) => Task;
   updateTaskDetails: (taskId: number, updates: UpdateTaskInput) => void;
   moveTask: (taskId: number, targetProjectId: number) => void;
@@ -565,6 +568,77 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         timestamp: Date.now(),
       });
       syncQueue.processQueue();
+    }
+  },
+
+  createGlobalLabel: async (title: string, hex_color?: string): Promise<Label> => {
+    const { client, labels } = get();
+    const safeLabels = Array.isArray(labels) ? labels : [];
+    if (!title.trim()) throw new Error('Label title cannot be empty');
+
+    let createdLabel: Label;
+    if (client) {
+      createdLabel = await client.createLabel(title.trim(), hex_color);
+    } else {
+      createdLabel = {
+        id: -Date.now(),
+        title: title.trim(),
+        hex_color,
+      };
+    }
+    const nextLabels = [...safeLabels.filter((l) => l.id !== createdLabel.id), createdLabel];
+    set({ labels: nextLabels });
+    AsyncStorage.setItem(CACHE_KEY_LABELS, JSON.stringify(nextLabels)).catch(() => {});
+    return createdLabel;
+  },
+
+  updateGlobalLabel: async (labelId: number, title: string, hex_color?: string) => {
+    const { client, labels, tasks } = get();
+    const safeLabels = Array.isArray(labels) ? labels : [];
+    const safeTasks = Array.isArray(tasks) ? tasks : [];
+
+    const updatedLabels = safeLabels.map((l) =>
+      l.id === labelId ? { ...l, title: title.trim(), hex_color } : l
+    );
+    const updatedTasks = safeTasks.map((t) => {
+      if (!t.labels || !t.labels.some((l) => l.id === labelId)) return t;
+      return {
+        ...t,
+        labels: t.labels.map((l) =>
+          l.id === labelId ? { ...l, title: title.trim(), hex_color } : l
+        ),
+      };
+    });
+
+    set({ labels: updatedLabels, tasks: updatedTasks });
+    AsyncStorage.setItem(CACHE_KEY_LABELS, JSON.stringify(updatedLabels)).catch(() => {});
+    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+
+    if (client && labelId > 0) {
+      await client.updateLabel(labelId, { title: title.trim(), hex_color });
+    }
+  },
+
+  deleteGlobalLabel: async (labelId: number) => {
+    const { client, labels, tasks } = get();
+    const safeLabels = Array.isArray(labels) ? labels : [];
+    const safeTasks = Array.isArray(tasks) ? tasks : [];
+
+    const updatedLabels = safeLabels.filter((l) => l.id !== labelId);
+    const updatedTasks = safeTasks.map((t) => {
+      if (!t.labels || !t.labels.some((l) => l.id === labelId)) return t;
+      return {
+        ...t,
+        labels: t.labels.filter((l) => l.id !== labelId),
+      };
+    });
+
+    set({ labels: updatedLabels, tasks: updatedTasks });
+    AsyncStorage.setItem(CACHE_KEY_LABELS, JSON.stringify(updatedLabels)).catch(() => {});
+    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+
+    if (client && labelId > 0) {
+      await client.deleteLabel(labelId);
     }
   },
 

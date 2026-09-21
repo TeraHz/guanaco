@@ -10,13 +10,14 @@ import {
   SafeAreaView,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { useAppTheme } from '../utils/theme';
 import { getLabelBadgeStyles } from '../utils/colors';
 import { getUserSuggestions } from '../utils/userSuggestions';
-import { Label, Task, User } from '../types/vikunja';
+import { Label, Project, Task, User } from '../types/vikunja';
 
 interface TaskDetailModalProps {
   visible: boolean;
@@ -24,9 +25,13 @@ interface TaskDetailModalProps {
   availableLabels?: string[];
   labelDefinitions?: Label[];
   availableUsers?: User[];
+  availableProjects?: Project[];
+  defaultProjectId?: number;
   onClose: () => void;
   onSave: (taskId: number, updates: Partial<Task>) => void;
   onDelete: (taskId: number) => void;
+  onCreateTask?: (taskData: Partial<Task>) => void;
+  onMoveTask?: (taskId: number, newProjectId: number) => void;
 }
 
 const PRIORITY_LEVELS = [
@@ -63,9 +68,13 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   availableLabels = [],
   labelDefinitions = [],
   availableUsers = [],
+  availableProjects = [],
+  defaultProjectId,
   onClose,
   onSave,
   onDelete,
+  onCreateTask,
+  onMoveTask,
 }) => {
   const theme = useAppTheme();
 
@@ -79,50 +88,94 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [labels, setLabels] = useState<Label[]>([]);
   const [assignees, setAssignees] = useState<User[]>([]);
+  const [projectId, setProjectId] = useState<number>(
+    task?.project_id || defaultProjectId || availableProjects[0]?.id || 1
+  );
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
 
   const [newAssigneeText, setNewAssigneeText] = useState('');
   const [newLabelText, setNewLabelText] = useState('');
 
   useEffect(() => {
-    if (task && visible) {
-      setTitle(task.title || '');
-      setDescription(task.description || '');
-      setDone(Boolean(task.done));
-      setPriority(task.priority || 0);
+    if (visible) {
+      if (task) {
+        setTitle(task.title || '');
+        setDescription(task.description || '');
+        setDone(Boolean(task.done));
+        setPriority(task.priority || 0);
 
-      // Handle percent_done normalized to 0-100
-      let normalizedPct = 0;
-      if (task.percent_done !== undefined && task.percent_done !== null) {
-        normalizedPct =
-          task.percent_done <= 1 && task.percent_done > 0
-            ? Math.round(task.percent_done * 100)
-            : Math.round(task.percent_done);
+        // Handle percent_done normalized to 0-100
+        let normalizedPct = 0;
+        if (task.percent_done !== undefined && task.percent_done !== null) {
+          normalizedPct =
+            task.percent_done <= 1 && task.percent_done > 0
+              ? Math.round(task.percent_done * 100)
+              : Math.round(task.percent_done);
+        }
+        setPercentDone(normalizedPct);
+
+        setColor(task.color || '');
+        setRepeatAfter(task.repeat_after || 0);
+        setDueDate(task.due_date || null);
+        setLabels(task.labels ? [...task.labels] : []);
+        setAssignees(task.assignees ? [...task.assignees] : []);
+        setProjectId(task.project_id);
+      } else {
+        // Create Mode
+        setTitle('');
+        setDescription('');
+        setDone(false);
+        setPriority(0);
+        setPercentDone(0);
+        setColor('');
+        setRepeatAfter(undefined);
+        setDueDate(null);
+        setLabels([]);
+        setAssignees([]);
+        setProjectId(defaultProjectId || availableProjects[0]?.id || 1);
       }
-      setPercentDone(normalizedPct);
-
-      setColor(task.color || '');
-      setRepeatAfter(task.repeat_after || 0);
-      setDueDate(task.due_date || null);
-      setLabels(task.labels ? [...task.labels] : []);
-      setAssignees(task.assignees ? [...task.assignees] : []);
       setNewAssigneeText('');
       setNewLabelText('');
+      setShowProjectPicker(false);
     }
-  }, [task?.id, visible]);
-
-  if (!task) return null;
+  }, [task?.id, visible, defaultProjectId]);
 
   const handleSave = () => {
+    if (!title.trim()) return;
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+
+    if (!task) {
+      onCreateTask?.({
+        title: title.trim(),
+        description: description.trim() || undefined,
+        done,
+        priority,
+        percent_done: percentDone,
+        color: color || undefined,
+        repeat_after: repeatAfter,
+        due_date: dueDate,
+        project_id: projectId,
+        labels,
+        assignees,
+      });
+      onClose();
+      return;
+    }
+
+    if (onMoveTask && task.project_id !== projectId) {
+      onMoveTask(task.id, projectId);
+    }
+
     onSave(task.id, {
-      title,
-      description,
+      title: title.trim(),
+      description: description.trim() || undefined,
       done,
       priority,
       percent_done: percentDone,
-      color,
+      color: color || undefined,
       repeat_after: repeatAfter,
       due_date: dueDate,
+      project_id: projectId,
       labels,
       assignees,
     });
@@ -130,6 +183,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleDelete = () => {
+    if (!task) return;
     safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
     onDelete(task.id);
     onClose();
@@ -201,7 +255,14 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       onRequestClose={onClose}
     >
       <SafeAreaView
-        style={[styles.modalRoot, { backgroundColor: theme.colors.background }]}
+        testID="task-detail-modal-root"
+        style={[
+          styles.modalRoot,
+          {
+            backgroundColor: theme.colors.background,
+            paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
+          },
+        ]}
       >
         <KeyboardAvoidingView
           style={styles.keyboardView}
@@ -228,7 +289,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               </Text>
             </TouchableOpacity>
             <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
-              Task Details
+              {task ? 'Task Details' : 'New Task'}
             </Text>
             <TouchableOpacity
               testID="task-detail-save-btn"
@@ -245,6 +306,103 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
           >
+            {/* List / Project Picker */}
+            {availableProjects && availableProjects.length > 0 && (
+              <View
+                style={[
+                  styles.sectionCard,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                  LIST / PROJECT
+                </Text>
+                <TouchableOpacity
+                  testID="task-project-picker-btn"
+                  style={[
+                    styles.projectPickerBtn,
+                    {
+                      backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                      borderColor: theme.colors.cardBorder,
+                    },
+                  ]}
+                  onPress={() => setShowProjectPicker(!showProjectPicker)}
+                  activeOpacity={0.7}
+                >
+                  <View
+                    style={[
+                      styles.projectColorDot,
+                      {
+                        backgroundColor:
+                          availableProjects.find((p) => p.id === projectId)?.hex_color ||
+                          '#007AFF',
+                      },
+                    ]}
+                  />
+                  <Text style={[styles.projectPickerText, { color: theme.colors.text }]}>
+                    {availableProjects.find((p) => p.id === projectId)?.title || 'Select List'}
+                  </Text>
+                  <Text style={[styles.projectPickerArrow, { color: theme.colors.textSecondary }]}>
+                    {showProjectPicker ? '▲' : '▼'}
+                  </Text>
+                </TouchableOpacity>
+
+                {showProjectPicker && (
+                  <View
+                    style={[
+                      styles.projectDropdown,
+                      {
+                        backgroundColor: theme.isDark ? '#252528' : '#F2F2F7',
+                        borderColor: theme.colors.cardBorder,
+                      },
+                    ]}
+                  >
+                    {availableProjects.map((proj) => {
+                      const isSelected = proj.id === projectId;
+                      return (
+                        <TouchableOpacity
+                          key={proj.id}
+                          testID={`project-option-${proj.id}`}
+                          style={[
+                            styles.projectOption,
+                            isSelected && {
+                              backgroundColor: theme.isDark ? '#3A3A3C' : '#E5E5EA',
+                            },
+                          ]}
+                          onPress={() => {
+                            safeHaptics.selection();
+                            setProjectId(proj.id);
+                            setShowProjectPicker(false);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View
+                            style={[
+                              styles.projectColorDot,
+                              { backgroundColor: proj.hex_color || '#007AFF' },
+                            ]}
+                          />
+                          <Text
+                            style={[
+                              styles.projectOptionText,
+                              { color: theme.colors.text },
+                              isSelected && { fontWeight: '700' },
+                            ]}
+                          >
+                            {proj.title}
+                          </Text>
+                          {isSelected && <Text style={styles.projectCheckmark}>✓</Text>}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Title & Done Checkbox */}
             <View
               style={[
@@ -724,15 +882,17 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               </View>
             </View>
 
-            {/* Delete Button */}
-            <TouchableOpacity
-              testID="task-detail-delete-btn"
-              style={styles.deleteBtn}
-              onPress={handleDelete}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.deleteBtnText}>Delete Task</Text>
-            </TouchableOpacity>
+            {/* Delete Button (Only for existing tasks) */}
+            {task && (
+              <TouchableOpacity
+                testID="task-detail-delete-btn"
+                style={styles.deleteBtn}
+                onPress={handleDelete}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.deleteBtnText}>Delete Task</Text>
+              </TouchableOpacity>
+            )}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -961,5 +1121,49 @@ const styles = StyleSheet.create({
     color: '#FF453A',
     fontWeight: '700',
     fontSize: 16,
+  },
+  projectPickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 8,
+  },
+  projectColorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  projectPickerText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  projectPickerArrow: {
+    fontSize: 12,
+  },
+  projectDropdown: {
+    marginTop: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  projectOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  projectOptionText: {
+    flex: 1,
+    fontSize: 13,
+  },
+  projectCheckmark: {
+    fontSize: 14,
+    color: '#30D158',
+    fontWeight: '700',
   },
 });

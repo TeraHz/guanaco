@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Modal,
   View,
@@ -8,20 +8,14 @@ import {
   StyleSheet,
   SafeAreaView,
   TouchableWithoutFeedback,
-  Switch,
   Platform,
-  ActivityIndicator,
   StatusBar,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
 import { useTaskStore } from '../store/taskStore';
 import { safeHaptics } from '../utils/haptics';
 import { useAppTheme } from '../utils/theme';
-import {
-  checkBiometricAvailable,
-  isBiometricEnabled,
-  setBiometricEnabled,
-} from '../utils/biometrics';
+import { SettingsModal } from '../components/SettingsModal';
+import { LabelManagementModal } from '../components/LabelManagementModal';
 
 interface ProjectDrawerProps {
   visible: boolean;
@@ -42,67 +36,10 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     tasks,
     selectedProjectId,
     setSelectedProjectId,
-    reenableStaples,
-    setReenableStaples,
-    resetAndSyncFromServer,
   } = useTaskStore();
-  const [biometricAvailable, setBiometricAvailable] = useState(false);
-  const [biometricActive, setBiometricActive] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
-  const [resetSuccess, setResetSuccess] = useState(false);
 
-  const resetTimerRef = React.useRef<any>(null);
-
-  useEffect(() => {
-    return () => {
-      if (resetTimerRef.current) {
-        clearTimeout(resetTimerRef.current);
-      }
-    };
-  }, []);
-
-  const handleResetAndSync = async () => {
-    if (isResetting) return;
-    setIsResetting(true);
-    setResetSuccess(false);
-    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-
-    try {
-      await resetAndSyncFromServer();
-      setResetSuccess(true);
-      safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
-      resetTimerRef.current = setTimeout(() => setResetSuccess(false), 2500);
-    } catch (_) {
-      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setIsResetting(false);
-    }
-  };
-
-  useEffect(() => {
-    let mounted = true;
-    async function loadBiometricState() {
-      const available = await checkBiometricAvailable();
-      if (!mounted) return;
-      setBiometricAvailable(available);
-      if (available) {
-        const enabled = await isBiometricEnabled();
-        if (mounted) setBiometricActive(enabled);
-      }
-    }
-    if (visible) {
-      loadBiometricState();
-    }
-    return () => {
-      mounted = false;
-    };
-  }, [visible]);
-
-  const handleToggleBiometric = async (value: boolean) => {
-    setBiometricActive(value);
-    await setBiometricEnabled(value);
-    safeHaptics.selection();
-  };
+  const [showSettings, setShowSettings] = useState(false);
+  const [showLabels, setShowLabels] = useState(false);
 
   const handleSelect = (id: number | null) => {
     safeHaptics.selection();
@@ -250,82 +187,40 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           )}
 
           {/* Settings & Biometrics Section */}
+          {/* Settings Section at bottom */}
           <View style={[styles.footerSection, { borderTopColor: theme.colors.cardBorder }]}>
-            <View style={styles.settingRow}>
-              <Text style={[styles.settingLabel, { color: theme.colors.text }]}>Re-enable Staple Tasks</Text>
-              <Switch
-                testID="drawer-staples-switch"
-                value={reenableStaples}
-                onValueChange={(val) => {
-                  setReenableStaples(val);
-                  safeHaptics.selection();
-                }}
-                trackColor={{ false: '#3A3A3C', true: '#30D158' }}
-                thumbColor="#FFFFFF"
-              />
-            </View>
-
-            {biometricAvailable && (
-              <View style={styles.settingRow}>
-                <Text style={styles.settingLabel}>🔒 Biometric Unlock</Text>
-                <Switch
-                  testID="drawer-biometric-switch"
-                  value={biometricActive}
-                  onValueChange={handleToggleBiometric}
-                  trackColor={{ false: '#3A3A3C', true: '#30D158' }}
-                  thumbColor="#FFFFFF"
-                />
-              </View>
-            )}
-
-            {/* Sync & Overwrite from Server Action */}
             <TouchableOpacity
-              testID="drawer-reset-sync-btn"
+              testID="drawer-settings-btn"
               style={[
-                styles.resetSyncBtn,
-                isResetting && styles.resetSyncBtnDisabled,
-                resetSuccess && styles.resetSyncBtnSuccess,
+                styles.settingsBtn,
+                { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
               ]}
-              onPress={handleResetAndSync}
-              disabled={isResetting}
+              onPress={() => {
+                safeHaptics.selection();
+                setShowSettings(true);
+              }}
               activeOpacity={0.7}
             >
-              {isResetting ? (
-                <View style={styles.resetSyncContent}>
-                  <ActivityIndicator size="small" color="#0A84FF" />
-                  <Text style={styles.resetSyncText}>Resetting & syncing...</Text>
-                </View>
-              ) : resetSuccess ? (
-                <View style={styles.resetSyncContent}>
-                  <Text style={styles.resetSyncSuccessText}>✓ Overwrite Complete!</Text>
-                </View>
-              ) : (
-                <View style={styles.resetSyncContent}>
-                  <Text style={styles.resetSyncIcon}>🔄</Text>
-                  <View style={styles.resetSyncTextContainer}>
-                    <Text style={styles.resetSyncTitle}>Sync & Overwrite from Server</Text>
-                    <Text style={styles.resetSyncSubtitle}>Clear cache and download fresh data</Text>
-                  </View>
-                </View>
-              )}
+              <Text style={styles.settingsIcon}>⚙️</Text>
+              <Text style={[styles.settingsText, { color: theme.colors.text }]}>Settings</Text>
             </TouchableOpacity>
-
-            {onLogout && (
-              <TouchableOpacity
-                testID="drawer-logout-btn"
-                style={styles.logoutBtn}
-                onPress={() => {
-                  onClose();
-                  onLogout();
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.logoutText}>Log Out</Text>
-              </TouchableOpacity>
-            )}
           </View>
         </SafeAreaView>
       </View>
+
+      {/* Dedicated Settings Modal */}
+      <SettingsModal
+        visible={showSettings}
+        onClose={() => setShowSettings(false)}
+        onLogout={onLogout}
+        onOpenLabelManagement={() => setShowLabels(true)}
+      />
+
+      {/* Global Label Management Modal */}
+      <LabelManagementModal
+        visible={showLabels}
+        onClose={() => setShowLabels(false)}
+      />
     </Modal>
   );
 };
@@ -510,15 +405,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  logoutBtn: {
-    paddingVertical: 10,
+  settingsBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 10,
-    backgroundColor: 'rgba(255, 69, 58, 0.1)',
+    gap: 10,
   },
-  logoutText: {
-    color: '#FF453A',
-    fontSize: 14,
+  settingsIcon: {
+    fontSize: 18,
+  },
+  settingsText: {
+    fontSize: 15,
     fontWeight: '600',
   },
 });

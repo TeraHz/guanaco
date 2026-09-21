@@ -665,6 +665,38 @@ describe('VikunjaClient', () => {
       );
       expect(result).toHaveLength(2);
     });
+
+    it('updateLabel should send POST request with updated label payload', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 4, title: 'Organic', hex_color: '22c55e' }),
+      } as Response);
+
+      const updated = await client.updateLabel(4, { title: 'Organic', hex_color: '22c55e' });
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/labels/4',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ title: 'Organic', hex_color: '22c55e' }),
+        })
+      );
+      expect(updated.title).toBe('Organic');
+    });
+
+    it('deleteLabel should send DELETE request to /labels/{id}', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'Label deleted' }),
+      } as Response);
+
+      await client.deleteLabel(4);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/labels/4',
+        expect.objectContaining({ method: 'DELETE' })
+      );
+    });
   });
 });
 

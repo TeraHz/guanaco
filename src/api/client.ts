@@ -271,6 +271,22 @@ export class VikunjaClient {
     });
   }
 
+  public async updateLabel(
+    id: number,
+    input: { title?: string; hex_color?: string; description?: string }
+  ): Promise<Label> {
+    return this.request<Label>(`/labels/${id}`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  public async deleteLabel(id: number): Promise<any> {
+    return this.request<any>(`/labels/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   public async setTaskLabels(
     taskId: number,
     labels: Label[],

@@ -27,29 +27,27 @@ describe('ProjectTasksScreen', () => {
     jest.clearAllMocks();
   });
 
-  it('renders active project title and active tasks for that project', () => {
+  it('renders active project title and active tasks for that project by default (Active filter)', () => {
     const { getByText, queryByText } = render(
       <ProjectTasksScreen onOpenDrawer={jest.fn()} />
     );
 
     expect(getByText('Inbox')).toBeTruthy();
     expect(getByText('Task in Inbox')).toBeTruthy();
-    expect(getByText('Completed Inbox Task')).toBeTruthy();
+    // Default filter is 'active', so completed task should NOT be visible initially
+    expect(queryByText('Completed Inbox Task')).toBeNull();
     // Task belonging to Project 2 should not appear in Project 1 view
     expect(queryByText('Work task')).toBeNull();
   });
 
-  it('filters tasks when Active / Done filter pills are tapped', () => {
-    const { getByText, getByTestId, queryByText } = render(
+  it('filters tasks with pills ordered as Active, Done, All, and allows toggling back to Active', () => {
+    const { getByText, getByTestId, queryByText, getAllByTestId } = render(
       <ProjectTasksScreen onOpenDrawer={jest.fn()} />
     );
 
-    // Tap "Active" filter pill
-    const activeFilter = getByTestId('filter-active');
-    fireEvent.press(activeFilter);
-
-    expect(getByText('Task in Inbox')).toBeTruthy();
-    expect(queryByText('Completed Inbox Task')).toBeNull();
+    // Verify filter pills order: active, done, all
+    const filterPills = getAllByTestId(/^filter-/).map((el) => el.props.testID);
+    expect(filterPills).toEqual(['filter-active', 'filter-done', 'filter-all']);
 
     // Tap "Done" filter pill
     const doneFilter = getByTestId('filter-done');
@@ -57,6 +55,37 @@ describe('ProjectTasksScreen', () => {
 
     expect(queryByText('Task in Inbox')).toBeNull();
     expect(getByText('Completed Inbox Task')).toBeTruthy();
+
+    // Tapping already active "Done" pill toggles back to "Active"
+    fireEvent.press(doneFilter);
+    expect(getByText('Task in Inbox')).toBeTruthy();
+    expect(queryByText('Completed Inbox Task')).toBeNull();
+
+    // Tap "All" filter pill
+    const allFilter = getByTestId('filter-all');
+    fireEvent.press(allFilter);
+    expect(getByText('Task in Inbox')).toBeTruthy();
+    expect(getByText('Completed Inbox Task')).toBeTruthy();
+
+    // Tapping already active "All" pill toggles back to "Active"
+    fireEvent.press(allFilter);
+    expect(getByText('Task in Inbox')).toBeTruthy();
+    expect(queryByText('Completed Inbox Task')).toBeNull();
+  });
+
+  it('renders green floating action button (+) and opens TaskDetailModal in create mode on press', () => {
+    const { getByTestId, getByText, queryByText } = render(
+      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+    );
+
+    const fab = getByTestId('green-add-task-fab');
+    expect(fab).toBeTruthy();
+
+    // Tap FAB
+    fireEvent.press(fab);
+
+    // TaskDetailModal should open in create mode with "New Task"
+    expect(getByText('New Task')).toBeTruthy();
   });
 
   it('adds task rapidly via QuickAddBar and shows it immediately in the list', () => {
@@ -192,5 +221,89 @@ describe('ProjectTasksScreen', () => {
     fireEvent.press(indicator);
 
     expect(mockRetrySync).toHaveBeenCalled();
+  });
+
+  // --- Manual Reorder Tests ---
+  it('enters reorder mode on task long press, swaps items up/down, and exits on Done', () => {
+    useTaskStore.setState({
+      projects: [{ id: 1, title: 'Inbox', hex_color: '#3498db' }],
+      tasks: [
+        { id: 101, title: 'First Task', done: false, priority: 1, project_id: 1, position: 1000 },
+        { id: 102, title: 'Second Task', done: false, priority: 1, project_id: 1, position: 2000 },
+      ],
+      selectedProjectId: 1,
+    });
+
+    const { getByTestId, queryByTestId, getByText } = render(
+      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+    );
+
+    // Long press on first task item
+    fireEvent(getByTestId('task-item-101'), 'longPress');
+
+    // Reorder banner and controls should now be visible
+    expect(getByText(/Reorder Mode/)).toBeTruthy();
+    expect(getByTestId('reorder-done-btn')).toBeTruthy();
+    expect(getByTestId('move-down-task-101')).toBeTruthy();
+
+    // Tap move down on task 101
+    fireEvent.press(getByTestId('move-down-task-101'));
+
+    // Verify task positions updated in store
+    const updatedTasks = useTaskStore.getState().tasks;
+    const task101 = updatedTasks.find((t) => t.id === 101);
+    const task102 = updatedTasks.find((t) => t.id === 102);
+    expect(task101?.position).toBeGreaterThan(task102?.position || 0);
+
+    // Tap Done
+    fireEvent.press(getByTestId('reorder-done-btn'));
+    expect(queryByTestId('reorder-done-btn')).toBeNull();
+  });
+
+  // --- Contextual Shopping Department Sort ---
+  it('exposes department sort option when active project is shopping-related', () => {
+    useTaskStore.setState({
+      projects: [{ id: 5, title: 'Weekly Groceries', hex_color: '#3498db' }],
+      tasks: [
+        { id: 501, title: 'Milk', done: false, priority: 1, project_id: 5, labels: [{ id: 1, title: 'Dairy' }] },
+        { id: 502, title: 'Apples', done: false, priority: 1, project_id: 5, labels: [{ id: 2, title: 'Produce' }] },
+      ],
+      selectedProjectId: 5,
+    });
+
+    const { getByTestId, getAllByTestId } = render(
+      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+    );
+
+    // Open sort picker
+    fireEvent.press(getByTestId('sort-trigger-btn'));
+
+    // Department / Aisle sort option should be available!
+    expect(getByTestId('sort-option-department')).toBeTruthy();
+    expect(getByTestId('sort-option-manual')).toBeTruthy();
+    expect(getByTestId('sort-option-reorder')).toBeTruthy();
+
+    // Select Department sort
+    fireEvent.press(getByTestId('sort-option-department'));
+
+    // Verify tasks sorted by department (Dairy before Produce)
+    const taskTitles = getAllByTestId(/^task-title-/).map((el) => el.props.children);
+    expect(taskTitles[0]).toBe('Milk');
+    expect(taskTitles[1]).toBe('Apples');
+  });
+
+  it('does NOT expose department sort when project is generic (e.g. Work)', () => {
+    useTaskStore.setState({
+      projects: [{ id: 2, title: 'Work', hex_color: '#e74c3c' }],
+      tasks: [{ id: 201, title: 'Code review', done: false, priority: 1, project_id: 2 }],
+      selectedProjectId: 2,
+    });
+
+    const { getByTestId, queryByTestId } = render(
+      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+    );
+
+    fireEvent.press(getByTestId('sort-trigger-btn'));
+    expect(queryByTestId('sort-option-department')).toBeNull();
   });
 });

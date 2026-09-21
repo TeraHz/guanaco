@@ -155,4 +155,108 @@ describe('TaskDetailModal (CUJ 2)', () => {
 
     expect(mockOnDelete).toHaveBeenCalledWith(10);
   });
+
+  // --- CUJ: Create Mode (Green FAB integration) ---
+  it('renders in Create Mode when task is null and allows creating a new task with project selection', () => {
+    const mockOnCreateTask = jest.fn();
+    const availableProjects = [
+      { id: 1, title: 'Inbox', hex_color: '#3498db' },
+      { id: 2, title: 'Groceries', hex_color: '#2ecc71' },
+    ];
+
+    const { getByText, getByPlaceholderText, getByTestId } = render(
+      <TaskDetailModal
+        visible={true}
+        task={null}
+        availableProjects={availableProjects}
+        defaultProjectId={2}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+        onCreateTask={mockOnCreateTask}
+      />
+    );
+
+    expect(getByText('New Task')).toBeTruthy();
+
+    const titleInput = getByTestId('task-detail-title-input');
+    fireEvent.changeText(titleInput, 'Buy organic honey');
+
+    // List picker displays Groceries
+    expect(getByTestId('task-project-picker-btn')).toBeTruthy();
+    expect(getByText('Groceries')).toBeTruthy();
+
+    const saveBtn = getByTestId('task-detail-save-btn');
+    fireEvent.press(saveBtn);
+
+    expect(mockOnCreateTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Buy organic honey',
+        project_id: 2,
+      })
+    );
+  });
+
+  // --- CUJ: Move Task Between Lists ---
+  it('renders project list picker and calls onMoveTask when a different list is chosen', () => {
+    const mockOnMoveTask = jest.fn();
+    const availableProjects = [
+      { id: 1, title: 'Inbox', hex_color: '#3498db' },
+      { id: 2, title: 'Work', hex_color: '#e74c3c' },
+    ];
+
+    const { getByTestId, getByText } = render(
+      <TaskDetailModal
+        visible={true}
+        task={mockTask}
+        availableProjects={availableProjects}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+        onMoveTask={mockOnMoveTask}
+      />
+    );
+
+    // Initial project is Inbox (project_id = 1)
+    expect(getByText('Inbox')).toBeTruthy();
+
+    // Tap to open project picker
+    fireEvent.press(getByTestId('task-project-picker-btn'));
+
+    // Select 'Work'
+    fireEvent.press(getByTestId('project-option-2'));
+
+    // Save
+    fireEvent.press(getByTestId('task-detail-save-btn'));
+
+    expect(mockOnMoveTask).toHaveBeenCalledWith(10, 2);
+  });
+
+  // --- Regression: Android Status Bar Offset ---
+  it('applies top safe padding on Android to prevent status bar overlap', () => {
+    const originalOS = require('react-native').Platform.OS;
+    try {
+      require('react-native').Platform.OS = 'android';
+      const { getByTestId } = render(
+        <TaskDetailModal
+          visible={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+          onDelete={mockOnDelete}
+        />
+      );
+
+      const modalRoot = getByTestId('task-detail-modal-root');
+      expect(modalRoot.props.style).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            paddingTop: expect.any(Number),
+          }),
+        ])
+      );
+    } finally {
+      require('react-native').Platform.OS = originalOS;
+    }
+  });
 });

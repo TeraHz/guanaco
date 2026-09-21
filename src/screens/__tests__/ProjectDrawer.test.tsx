@@ -79,54 +79,18 @@ describe('ProjectDrawer', () => {
     expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it('calls onLogout when logout button is pressed', () => {
-    const mockOnLogout = jest.fn();
-    const { getByTestId } = render(
-      <ProjectDrawer visible={true} onClose={mockOnClose} onLogout={mockOnLogout} />
-    );
-
-    const logoutBtn = getByTestId('drawer-logout-btn');
-    fireEvent.press(logoutBtn);
-
-    expect(mockOnLogout).toHaveBeenCalled();
-  });
-
-  it('renders re-enable staple tasks setting toggle and toggles setting', () => {
-    const mockSetReenableStaples = jest.fn();
-    useTaskStore.setState({
-      reenableStaples: true,
-      setReenableStaples: mockSetReenableStaples,
-    });
-
-    const { getByTestId } = render(
+  it('renders settings button in footer and opens SettingsModal when pressed', () => {
+    const { getByTestId, getByText } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
-    const stapleSwitch = getByTestId('drawer-staples-switch');
-    expect(stapleSwitch.props.value).toBe(true);
+    const settingsBtn = getByTestId('drawer-settings-btn');
+    expect(settingsBtn).toBeTruthy();
 
-    fireEvent(stapleSwitch, 'valueChange', false);
-    expect(mockSetReenableStaples).toHaveBeenCalledWith(false);
-  });
+    fireEvent.press(settingsBtn);
 
-  it('renders "Sync & Overwrite from Server" button and triggers resetAndSyncFromServer', async () => {
-    const mockResetAndSync = jest.fn().mockResolvedValue(undefined);
-    useTaskStore.setState({
-      resetAndSyncFromServer: mockResetAndSync,
-    });
-
-    const { getByTestId, findByText } = render(
-      <ProjectDrawer visible={true} onClose={mockOnClose} />
-    );
-
-    const resetBtn = getByTestId('drawer-reset-sync-btn');
-    expect(resetBtn).toBeTruthy();
-
-    fireEvent.press(resetBtn);
-    expect(mockResetAndSync).toHaveBeenCalled();
-
-    // After success, it should display completion feedback
-    expect(await findByText('✓ Overwrite Complete!')).toBeTruthy();
+    // SettingsModal opens with close button
+    expect(getByTestId('close-settings-btn')).toBeTruthy();
   });
 });
 

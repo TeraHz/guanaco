@@ -21,6 +21,7 @@ interface QuickLabelModalProps {
   labelDefinitions?: Label[];
   onSave: (taskId: number, labels: Label[]) => void;
   onClose: () => void;
+  onOpenManageLabels?: () => void;
 }
 
 export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
@@ -30,6 +31,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
   labelDefinitions = [],
   onSave,
   onClose,
+  onOpenManageLabels,
 }) => {
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [allLabels, setAllLabels] = useState<string[]>([]);
@@ -195,6 +197,20 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
               );
             })}
           </ScrollView>
+
+          {onOpenManageLabels && (
+            <TouchableOpacity
+              testID="quick-label-manage-btn"
+              style={styles.manageLabelsBtn}
+              onPress={() => {
+                onClose();
+                onOpenManageLabels();
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.manageLabelsBtnText}>⚙️ Manage & Delete Global Labels</Text>
+            </TouchableOpacity>
+          )}
         </SafeAreaView>
       </View>
     </Modal>
@@ -318,5 +334,18 @@ const styles = StyleSheet.create({
   },
   chipTextUnselected: {
     color: '#E5E5EA',
+  },
+  manageLabelsBtn: {
+    marginTop: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#2C2C2E',
+  },
+  manageLabelsBtnText: {
+    color: '#0A84FF',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

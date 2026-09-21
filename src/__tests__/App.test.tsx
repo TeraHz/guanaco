@@ -85,8 +85,11 @@ describe('App Root Integration & Session Persistence', () => {
     // Open drawer
     fireEvent.press(getByTestId('drawer-toggle-btn'));
 
-    // Press logout
-    fireEvent.press(getByTestId('drawer-logout-btn'));
+    // Open settings from drawer
+    fireEvent.press(getByTestId('drawer-settings-btn'));
+
+    // Press logout in settings modal
+    fireEvent.press(getByTestId('settings-logout-btn'));
 
     // Should return to LoginScreen
     const loginTitle = await findByText('Vikunja Mobile');

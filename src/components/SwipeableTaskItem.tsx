@@ -20,9 +20,15 @@ interface SwipeableTaskItemProps {
   onMove: (taskId: number) => void;
   onDelete: (taskId: number) => void;
   onPress: (task: Task) => void;
+  onLongPress?: (task: Task) => void;
   onSelectLabel?: (labelTitle: string) => void;
   onEditLabels?: (task: Task) => void;
   labelDefinitions?: Label[];
+  isReordering?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }
 
 const PRIORITY_COLORS: Record<number, string> = {
@@ -40,9 +46,15 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   onMove,
   onDelete,
   onPress,
+  onLongPress,
   onSelectLabel,
   onEditLabels,
   labelDefinitions,
+  isReordering = false,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp = false,
+  canMoveDown = false,
 }) => {
   const theme = useAppTheme();
   const swipeableRef = React.useRef<Swipeable>(null);
@@ -185,6 +197,11 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         },
       ]}
       onPress={() => onPress(task)}
+      onLongPress={() => {
+        safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+        onLongPress?.(task);
+      }}
+      delayLongPress={280}
       activeOpacity={0.7}
     >
       {/* Priority indicator bar */}
@@ -198,45 +215,42 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         style={[
           styles.checkbox,
           task.done && styles.checkboxDone,
-          { borderColor: task.done ? '#30D158' : priorityColor },
+          { borderColor: task.done ? '#30D158' : theme.colors.cardBorder },
         ]}
         onPress={handleToggle}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        activeOpacity={0.7}
       >
         {task.done && <Text style={styles.checkmark}>✓</Text>}
       </TouchableOpacity>
 
-      {/* Single Row: Title & Metadata side-by-side */}
+      {/* Title & Metadata */}
       <View style={styles.singleRow}>
         <Text
           testID={`task-title-${task.id}`}
           style={[
             styles.title,
-            {
-              color: task.done
-                ? (theme.isDark ? '#8E8E93' : '#636366')
-                : theme.colors.text,
-            },
+            { color: theme.colors.text },
             task.done && styles.titleDone,
+            task.done && { color: theme.colors.textSecondary },
           ]}
           numberOfLines={1}
-          ellipsizeMode="tail"
         >
           {task.title}
         </Text>
 
-        {/* Metadata inline on the same row */}
+        {/* Metadata badges row */}
         <View style={styles.metaRow}>
-          {/* Progress (if percent_done > 0) */}
+          {/* Progress % */}
           {task.percent_done !== undefined && task.percent_done > 0 && (
             <View testID={`task-progress-${task.id}`} style={styles.progressBadge}>
               <Text
                 style={[
                   styles.progressText,
                   {
-                    color: task.color
-                      ? `#${task.color.replace(/^#/, '')}`
-                      : '#0A84FF',
+                    color:
+                      task.percent_done === 1 || task.percent_done === 100
+                        ? '#30D158'
+                        : '#007AFF',
                   },
                 ]}
               >
@@ -303,15 +317,10 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                       borderColor: badgeStyle.borderColor,
                     },
                   ]}
-                  onPress={() => onSelectLabel?.(label.title)}
+                  onPress={() => onSelectLabel && onSelectLabel(label.title)}
                   activeOpacity={0.7}
                 >
-                  <Text
-                    style={[
-                      styles.labelText,
-                      { color: badgeStyle.textColor },
-                    ]}
-                  >
+                  <Text style={[styles.labelText, { color: badgeStyle.textColor }]}>
                     #{label.title}
                   </Text>
                 </TouchableOpacity>
@@ -320,17 +329,42 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         </View>
       </View>
 
-      {/* Small subtle "+#" link on the right of the item */}
-      {onEditLabels && (
-        <TouchableOpacity
-          testID={`task-edit-labels-${task.id}`}
-          style={styles.addLabelLink}
-          onPress={() => onEditLabels(task)}
-          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.addLabelLinkText}>+#</Text>
-        </TouchableOpacity>
+      {/* Small subtle "+#" link or Reorder Controls on the right of the item */}
+      {isReordering ? (
+        <View style={styles.reorderControls}>
+          <TouchableOpacity
+            testID={`move-up-task-${task.id}`}
+            style={[styles.reorderBtn, !canMoveUp && styles.reorderBtnDisabled]}
+            onPress={onMoveUp}
+            disabled={!canMoveUp}
+            activeOpacity={0.6}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[styles.reorderBtnText, !canMoveUp && styles.reorderBtnTextDisabled]}>▲</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID={`move-down-task-${task.id}`}
+            style={[styles.reorderBtn, !canMoveDown && styles.reorderBtnDisabled]}
+            onPress={onMoveDown}
+            disabled={!canMoveDown}
+            activeOpacity={0.6}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[styles.reorderBtnText, !canMoveDown && styles.reorderBtnTextDisabled]}>▼</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        onEditLabels && (
+          <TouchableOpacity
+            testID={`task-edit-labels-${task.id}`}
+            style={styles.addLabelLink}
+            onPress={() => onEditLabels(task)}
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.addLabelLinkText}>+#</Text>
+          </TouchableOpacity>
+        )
       )}
 
       {/* Web & accessibility actions */}
@@ -353,17 +387,17 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     </TouchableOpacity>
   );
 
-  // On Web: avoid react-native-gesture-handler's Swipeable which relies on deprecated findNodeHandle
-  if (Platform.OS === 'web') {
+  // On Web or in Reorder Mode: avoid react-native-gesture-handler's Swipeable
+  if (Platform.OS === 'web' || isReordering) {
     return cardContent;
   }
 
   return (
     <Swipeable
       ref={swipeableRef}
-      friction={1}
-      leftThreshold={18}
-      rightThreshold={18}
+      friction={2.5}
+      leftThreshold={65}
+      rightThreshold={115}
       overshootLeft={false}
       overshootRight={false}
       animationOptions={{
@@ -576,5 +610,34 @@ const styles = StyleSheet.create({
   assigneeText: {
     fontSize: 10.5,
     fontWeight: '600',
+  },
+  reorderControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+    gap: 6,
+  },
+  reorderBtn: {
+    backgroundColor: '#007AFF20',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#007AFF50',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reorderBtnDisabled: {
+    backgroundColor: 'transparent',
+    borderColor: '#3A3A3C',
+    opacity: 0.3,
+  },
+  reorderBtnText: {
+    color: '#007AFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  reorderBtnTextDisabled: {
+    color: '#8E8E93',
   },
 });
