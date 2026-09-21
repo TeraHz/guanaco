@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  Animated,
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
@@ -101,26 +102,47 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     }
   }
 
-  const renderRightActions = () => (
-    <View style={styles.actionsContainer}>
-      <TouchableOpacity
-        testID={`task-move-action-${task.id}`}
-        style={[styles.actionBtn, styles.moveBtn]}
-        onPress={handleMove}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.actionText}>Move</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        testID={`task-delete-action-${task.id}`}
-        style={[styles.actionBtn, styles.deleteBtn]}
-        onPress={handleDelete}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.actionText}>Delete</Text>
-      </TouchableOpacity>
-    </View>
-  );
+  // Slide RIGHT reveals LEFT action: Delete (Red with Trash)
+  const renderLeftActions = (
+    _progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>
+  ) => {
+    const scale = dragX.interpolate({
+      inputRange: [0, 70],
+      outputRange: [0.6, 1],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View style={styles.leftSwipeAction}>
+        <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale }] }]}>
+          <Text style={styles.swipeActionIcon}>🗑️</Text>
+          <Text style={styles.swipeActionText}>Delete</Text>
+        </Animated.View>
+      </View>
+    );
+  };
+
+  // Slide LEFT reveals RIGHT action: Done (Green with Check)
+  const renderRightActions = (
+    _progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>
+  ) => {
+    const scale = dragX.interpolate({
+      inputRange: [-70, 0],
+      outputRange: [1, 0.6],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View style={styles.rightSwipeAction}>
+        <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale }] }]}>
+          <Text style={styles.swipeActionIcon}>✓</Text>
+          <Text style={styles.swipeActionText}>{task.done ? 'Undo' : 'Done'}</Text>
+        </Animated.View>
+      </View>
+    );
+  };
 
   const cardContent = (
     <TouchableOpacity
@@ -155,31 +177,54 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           { borderColor: task.done ? '#30D158' : priorityColor },
         ]}
         onPress={handleToggle}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
         {task.done && <Text style={styles.checkmark}>✓</Text>}
       </TouchableOpacity>
 
-      {/* Task Title & Details */}
-      <View style={styles.content}>
-        {/* Title row with Title on Left and Due Date on Right */}
-        <View style={styles.titleRow}>
-          <Text
-            testID={`task-title-${task.id}`}
-            style={[
-              styles.title,
-              {
-                color: task.done
-                  ? (theme.isDark ? '#8E8E93' : '#636366')
-                  : theme.colors.text,
-              },
-              task.done && styles.titleDone,
-            ]}
-            numberOfLines={2}
-          >
-            {task.title}
-          </Text>
+      {/* Single Row: Title & Metadata side-by-side */}
+      <View style={styles.singleRow}>
+        <Text
+          testID={`task-title-${task.id}`}
+          style={[
+            styles.title,
+            {
+              color: task.done
+                ? (theme.isDark ? '#8E8E93' : '#636366')
+                : theme.colors.text,
+            },
+            task.done && styles.titleDone,
+          ]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {task.title}
+        </Text>
 
+        {/* Metadata inline on the same row */}
+        <View style={styles.metaRow}>
+          {/* Progress (if percent_done > 0) */}
+          {task.percent_done !== undefined && task.percent_done > 0 && (
+            <View testID={`task-progress-${task.id}`} style={styles.progressBadge}>
+              <Text
+                style={[
+                  styles.progressText,
+                  {
+                    color: task.color
+                      ? `#${task.color.replace(/^#/, '')}`
+                      : '#0A84FF',
+                  },
+                ]}
+              >
+                {task.percent_done <= 1 && task.percent_done > 0
+                  ? Math.round(task.percent_done * 100)
+                  : Math.round(task.percent_done)}
+                %
+              </Text>
+            </View>
+          )}
+
+          {/* Due Date */}
           {formattedDueDate && (
             <View
               style={[
@@ -198,110 +243,71 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
               </Text>
             </View>
           )}
-        </View>
 
-        {/* Progress Bar (if percent_done > 0) */}
-        {task.percent_done !== undefined && task.percent_done > 0 && (
-          <View testID={`task-progress-${task.id}`} style={styles.progressContainer}>
-            <View
-              style={[
-                styles.progressBarTrack,
-                { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
-              ]}
-            >
+          {/* Assignees */}
+          {task.assignees &&
+            task.assignees.map((user) => (
               <View
+                key={user.id || user.username}
+                testID={`task-assignee-${task.id}-${user.username}`}
                 style={[
-                  styles.progressBarFill,
+                  styles.assigneeBadge,
                   {
-                    width: `${Math.min(
-                      100,
-                      Math.max(
-                        0,
-                        task.percent_done <= 1 && task.percent_done > 0
-                          ? Math.round(task.percent_done * 100)
-                          : Math.round(task.percent_done)
-                      )
-                    )}%`,
-                    backgroundColor: task.color ? `#${task.color.replace(/^#/, '')}` : '#0A84FF',
+                    backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                    borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
                   },
                 ]}
-              />
-            </View>
-            <Text style={[styles.progressText, { color: theme.colors.textSecondary }]}>
-              {task.percent_done <= 1 && task.percent_done > 0
-                ? Math.round(task.percent_done * 100)
-                : Math.round(task.percent_done)}%
-            </Text>
-          </View>
-        )}
+              >
+                <Text style={[styles.assigneeText, { color: theme.colors.textSecondary }]}>
+                  @{user.username}
+                </Text>
+              </View>
+            ))}
 
-        {/* Labels & Assignees metadata row */}
-        {((task.assignees && task.assignees.length > 0) || (task.labels && task.labels.length > 0) || onEditLabels) && (
-          <View style={styles.metaRow}>
-            {/* Assignees */}
-            {task.assignees &&
-              task.assignees.map((user) => (
-                <View
-                  key={user.id || user.username}
-                  testID={`task-assignee-${task.id}-${user.username}`}
+          {/* Label Pills (Clean without tag icon) */}
+          {task.labels &&
+            task.labels.map((label) => {
+              const badgeStyle = getLabelBadgeStyles(label, labelDefinitions);
+              return (
+                <TouchableOpacity
+                  key={label.id || label.title}
+                  testID={`task-label-${task.id}-${label.title}`}
                   style={[
-                    styles.assigneeBadge,
+                    styles.labelPill,
                     {
-                      backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                      borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                      backgroundColor: badgeStyle.backgroundColor,
+                      borderColor: badgeStyle.borderColor,
                     },
                   ]}
+                  onPress={() => onSelectLabel?.(label.title)}
+                  activeOpacity={0.7}
                 >
-                  <Text style={[styles.assigneeIcon, { color: theme.colors.textSecondary }]}>👤 </Text>
-                  <Text style={[styles.assigneeText, { color: theme.colors.textSecondary }]}>
-                    @{user.username}
-                  </Text>
-                </View>
-              ))}
-
-            {/* Label Pills (Clickable for easy filtering) */}
-            {task.labels &&
-              task.labels.map((label) => {
-                const badgeStyle = getLabelBadgeStyles(label, labelDefinitions);
-                return (
-                  <TouchableOpacity
-                    key={label.id || label.title}
-                    testID={`task-label-${task.id}-${label.title}`}
+                  <Text
                     style={[
-                      styles.labelPill,
-                      {
-                        backgroundColor: badgeStyle.backgroundColor,
-                        borderColor: badgeStyle.borderColor,
-                      },
+                      styles.labelText,
+                      { color: badgeStyle.textColor },
                     ]}
-                    onPress={() => onSelectLabel?.(label.title)}
-                    activeOpacity={0.7}
                   >
-                    <Text
-                      style={[
-                        styles.labelText,
-                        { color: badgeStyle.textColor },
-                      ]}
-                    >
-                      #{label.title}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-
-            {/* Quick Tag Edit button */}
-            <TouchableOpacity
-              testID={`task-edit-labels-${task.id}`}
-              style={styles.editLabelBtn}
-              onPress={() => onEditLabels?.(task)}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.editLabelBtnText}>🏷️+</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+                    #{label.title}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+        </View>
       </View>
+
+      {/* Small subtle "+#" link on the right of the item */}
+      {onEditLabels && (
+        <TouchableOpacity
+          testID={`task-edit-labels-${task.id}`}
+          style={styles.addLabelLink}
+          onPress={() => onEditLabels(task)}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.addLabelLinkText}>+#</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Web & accessibility actions */}
       <View style={Platform.OS === 'web' ? styles.webActions : styles.embeddedActions}>
@@ -330,9 +336,14 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
 
   return (
     <Swipeable
+      renderLeftActions={renderLeftActions}
       renderRightActions={renderRightActions}
       onSwipeableOpen={(direction) => {
         if (direction === 'left') {
+          // Slide right reveals left action -> Delete
+          handleDelete();
+        } else if (direction === 'right') {
+          // Slide left reveals right action -> Done
           handleToggle();
         }
       }}
@@ -347,12 +358,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1E1E22',
-    borderRadius: 8,
+    borderRadius: 7,
     marginHorizontal: 8,
-    marginVertical: 2.5,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
+    marginVertical: 1.5,
+    paddingVertical: 5.5,
+    paddingHorizontal: 8,
     overflow: 'hidden',
+    minHeight: 35,
   },
   cardDone: {
     opacity: 0.65,
@@ -366,34 +378,33 @@ const styles = StyleSheet.create({
     width: 3.5,
   },
   checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 19,
+    height: 19,
+    borderRadius: 9.5,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 9,
+    marginRight: 8,
+    flexShrink: 0,
   },
   checkboxDone: {
     backgroundColor: '#30D158',
   },
   checkmark: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '900',
   },
-  content: {
+  singleRow: {
     flex: 1,
-    justifyContent: 'center',
-  },
-  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    overflow: 'hidden',
   },
   title: {
-    flex: 1,
-    fontSize: 14.5,
+    flexShrink: 1,
+    fontSize: 13.5,
     color: '#F2F2F7',
     fontWeight: '500',
     marginRight: 6,
@@ -404,27 +415,36 @@ const styles = StyleSheet.create({
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    marginTop: 4,
     gap: 4,
+    flexShrink: 0,
+  },
+  progressBadge: {
+    backgroundColor: 'rgba(10, 132, 255, 0.12)',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  progressText: {
+    fontSize: 10,
+    fontWeight: '700',
   },
   dateBadge: {
     backgroundColor: '#2C2C2E',
     paddingHorizontal: 5,
-    paddingVertical: 1.5,
-    borderRadius: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
   },
   dateBadgeOverdue: {
     backgroundColor: 'rgba(255, 69, 58, 0.15)',
   },
   dueDateText: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#8E8E93',
     fontWeight: '500',
   },
   dueDateTextOverdue: {
     color: '#FF453A',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   labelPill: {
     flexDirection: 'row',
@@ -432,53 +452,63 @@ const styles = StyleSheet.create({
     backgroundColor: '#2C2C2E',
     borderWidth: 1,
     borderColor: '#3A3A3C',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
+    borderRadius: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
   },
   labelText: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#0A84FF',
     fontWeight: '700',
-    letterSpacing: 0.1,
   },
-  editLabelBtn: {
-    backgroundColor: '#2C2C2E',
-    borderRadius: 6,
-    paddingHorizontal: 5,
-    paddingVertical: 1.5,
-    borderWidth: 1,
-    borderColor: '#3A3A3C',
+  addLabelLink: {
+    marginLeft: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    backgroundColor: 'rgba(142, 142, 147, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  editLabelBtnText: {
+  addLabelLinkText: {
     fontSize: 10,
     color: '#8E8E93',
-    fontWeight: '600',
+    fontWeight: '700',
   },
-  actionsContainer: {
+  leftSwipeAction: {
+    backgroundColor: '#FF453A',
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    borderRadius: 7,
+    marginHorizontal: 8,
+    marginVertical: 1.5,
+    paddingLeft: 18,
+    flex: 1,
+  },
+  rightSwipeAction: {
+    backgroundColor: '#30D158',
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    borderRadius: 7,
+    marginHorizontal: 8,
+    marginVertical: 1.5,
+    paddingRight: 18,
+    flex: 1,
+  },
+  swipeInnerContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 4,
-    marginRight: 16,
+    gap: 6,
   },
-  actionBtn: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: 68,
-    height: '100%',
-    borderRadius: 10,
-    marginLeft: 6,
-  },
-  moveBtn: {
-    backgroundColor: '#0A84FF',
-  },
-  deleteBtn: {
-    backgroundColor: '#FF453A',
-  },
-  actionText: {
+  swipeActionIcon: {
+    fontSize: 14,
     color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 13,
+    fontWeight: '900',
+  },
+  swipeActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   embeddedActions: {
     width: 0,
@@ -491,58 +521,33 @@ const styles = StyleSheet.create({
   },
   webActions: {
     flexDirection: 'row',
-    gap: 6,
-    marginLeft: 8,
+    gap: 4,
+    marginLeft: 6,
   },
   webActionBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
     backgroundColor: '#2C2C2E',
   },
   webDeleteBtn: {
     backgroundColor: 'rgba(255,69,58,0.2)',
   },
   webActionText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#8E8E93',
     fontWeight: '600',
   },
   assigneeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 5,
     borderWidth: 1,
   },
-  assigneeIcon: {
-    fontSize: 10,
-  },
   assigneeText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '600',
-  },
-  progressContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 3,
-    marginBottom: 2,
-  },
-  progressBarTrack: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-    maxWidth: 100,
-  },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  progressText: {
-    fontSize: 10,
-    fontWeight: '700',
   },
 });

@@ -237,5 +237,25 @@ describe('QuickAddBar', () => {
       })
     );
   });
+
+  it('renders label suggestion without tag icon and updates last-used label', () => {
+    const { getByTestId, getByText } = render(
+      <QuickAddBar
+        activeProjectId={1}
+        onAddTask={mockOnAddTask}
+        availableLabels={['Costco', 'Dairy']}
+      />
+    );
+
+    const input = getByTestId('quick-add-input');
+    fireEvent.changeText(input, 'Shopping *');
+
+    // Label should be clean with # prefix, not emoji tag
+    const costcoChip = getByText('#Costco');
+    expect(costcoChip).toBeTruthy();
+
+    fireEvent.press(costcoChip);
+    expect(input.props.value).toBe('Shopping *Costco ');
+  });
 });
 

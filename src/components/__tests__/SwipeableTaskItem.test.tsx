@@ -39,7 +39,9 @@ describe('SwipeableTaskItem', () => {
       />
     );
 
-    expect(getByText('Ship Vikunja Mobile UX')).toBeTruthy();
+    const title = getByText('Ship Vikunja Mobile UX');
+    expect(title).toBeTruthy();
+    expect(title.props.numberOfLines).toBe(1);
     expect(getByTestId('task-label-10-Costco')).toBeTruthy();
     expect(getByTestId('task-label-10-Produce')).toBeTruthy();
   });
@@ -226,9 +228,9 @@ describe('SwipeableTaskItem', () => {
     expect(mockOnDelete).toHaveBeenCalledWith(mockTask.id);
   });
 
-  it('calls onEditLabels when tag icon/button is pressed', () => {
+  it('calls onEditLabels when + link is pressed and does not render tag icon', () => {
     const mockOnEditLabels = jest.fn();
-    const { getByTestId } = render(
+    const { getByTestId, getByText, queryByText } = render(
       <SwipeableTaskItem
         task={mockTask}
         onToggle={mockOnToggle}
@@ -240,8 +242,10 @@ describe('SwipeableTaskItem', () => {
     );
 
     const editLabelsBtn = getByTestId(`task-edit-labels-${mockTask.id}`);
-    fireEvent.press(editLabelsBtn);
+    expect(getByText('+#')).toBeTruthy();
+    expect(queryByText(/🏷️/)).toBeNull();
 
+    fireEvent.press(editLabelsBtn);
     expect(mockOnEditLabels).toHaveBeenCalledWith(mockTask);
   });
 

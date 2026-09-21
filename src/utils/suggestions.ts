@@ -25,19 +25,26 @@ export function getTaskSuggestions(
 
 export function getLabelSuggestions(
   currentInput: string,
-  availableLabels: string[]
+  availableLabels: string[],
+  lastUsedLabel?: string
 ): string[] {
   // Check if input currently ends with * or *partial_name
   const match = currentInput.match(/\*([a-zA-Z0-9_-]*)$/);
   if (!match) return [];
 
   const partial = match[1].toLowerCase();
-  if (!partial) {
-    // Return all available labels
-    return [...availableLabels];
+  let filtered = !partial
+    ? [...availableLabels]
+    : availableLabels.filter((lbl) => lbl.toLowerCase().includes(partial));
+
+  if (lastUsedLabel) {
+    const lastLower = lastUsedLabel.toLowerCase();
+    const lastMatches = filtered.filter((lbl) => lbl.toLowerCase() === lastLower);
+    const otherMatches = filtered.filter((lbl) => lbl.toLowerCase() !== lastLower);
+    filtered = [...lastMatches, ...otherMatches];
   }
 
-  return availableLabels.filter((lbl) => lbl.toLowerCase().includes(partial));
+  return filtered;
 }
 
 export function applyLabelSuggestion(

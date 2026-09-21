@@ -273,7 +273,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               ]}
             >
               <Text style={[styles.activeLabelText, { color: badgeStyle.textColor }]}>
-                🏷️ #{selectedLabel}
+                #{selectedLabel}
               </Text>
               <TouchableOpacity
                 testID="clear-label-filter"
@@ -454,6 +454,7 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#0D0D0E',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   keyboardContainer: {
     flex: 1,

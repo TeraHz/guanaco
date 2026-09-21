@@ -59,6 +59,8 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   const theme = useAppTheme();
   const [rawText, setRawText] = useState('');
   const [manualPriority, setManualPriority] = useState<number>(0);
+  const [lastUsedLabel, setLastUsedLabel] = useState<string>('');
+  const inputRef = React.useRef<TextInput>(null);
 
   // Live Quick Add Magic Parsing
   const parsed: ParsedTaskInput = rawText.trim()
@@ -87,9 +89,11 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   const userSuggestions =
     mentionQuery !== null ? getUserSuggestions(mentionQuery, availableUsers) : [];
 
-  // Label Suggestions (when typing *label)
+  // Label Suggestions (when typing *label) - prioritized with last used label first
   const labelSuggestions =
-    userSuggestions.length === 0 ? getLabelSuggestions(rawText, availableLabels) : [];
+    userSuggestions.length === 0
+      ? getLabelSuggestions(rawText, availableLabels, lastUsedLabel)
+      : [];
 
   // Task Suggestions (from completed / done tasks)
   const taskSuggestions =
@@ -101,12 +105,20 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
     const updated = replaceMentionQuery(rawText, user.username);
     setRawText(updated);
     safeHaptics.selection();
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 10);
   };
 
   const handleSelectLabelSuggestion = (label: string) => {
     const updated = applyLabelSuggestion(rawText, label);
     setRawText(updated);
+    setLastUsedLabel(label);
     safeHaptics.selection();
+    // Do not close out keyboard when label is selected
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 10);
   };
 
   const handleSelectTaskSuggestion = (task: Task) => {
@@ -150,6 +162,10 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
       repeat_after: parsed.repeatAfter,
     });
 
+    if (parsed.labels && parsed.labels.length > 0) {
+      setLastUsedLabel(parsed.labels[parsed.labels.length - 1]);
+    }
+
     setRawText('');
     setManualPriority(0);
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Light);
@@ -170,6 +186,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="always"
           style={styles.suggestionScroll}
           contentContainerStyle={styles.suggestionRow}
         >
@@ -191,6 +208,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="always"
           style={styles.suggestionScroll}
           contentContainerStyle={styles.suggestionRow}
         >
@@ -211,6 +229,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="always"
           style={styles.suggestionScroll}
           contentContainerStyle={styles.suggestionRow}
         >
@@ -264,6 +283,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
 
       <View style={[styles.inputCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
         <TextInput
+          ref={inputRef}
           testID="quick-add-input"
           style={[styles.input, { color: theme.colors.text }]}
           placeholder={placeholder}

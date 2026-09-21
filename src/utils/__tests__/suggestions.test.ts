@@ -60,5 +60,11 @@ describe('Suggestions Utility', () => {
       const res2 = applyLabelSuggestion('Buy snacks *Tra', 'Trader Joes');
       expect(res2).toBe('Buy snacks *"Trader Joes" ');
     });
+
+    it('prioritizes last used label to be first in suggested labels', () => {
+      const suggestions = getLabelSuggestions('Buy groceries *', mockAvailableLabels, 'Dairy');
+      expect(suggestions[0]).toBe('Dairy');
+      expect(suggestions).toEqual(['Dairy', 'Costco', 'Produce', 'TraderJoes']);
+    });
   });
 });

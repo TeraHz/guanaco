@@ -11,6 +11,7 @@ import {
   Switch,
   Platform,
   ActivityIndicator,
+  StatusBar,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useTaskStore } from '../store/taskStore';
@@ -344,6 +345,7 @@ const styles = StyleSheet.create({
     borderRightWidth: 1,
     borderRightColor: '#2C2C2E',
     display: 'flex',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   header: {
     flexDirection: 'row',
