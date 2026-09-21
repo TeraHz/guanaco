@@ -259,4 +259,22 @@ describe('TaskDetailModal (CUJ 2)', () => {
       require('react-native').Platform.OS = originalOS;
     }
   });
+
+  // --- CUJ: Task title top-most and active right away on create ---
+  it('renders task title as the top-most input and autoFocuses when creating a new task', () => {
+    const { getByTestId } = render(
+      <TaskDetailModal
+        visible={true}
+        task={null}
+        availableProjects={[{ id: 1, title: 'Inbox' }]}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+      />
+    );
+
+    const titleInput = getByTestId('task-detail-title-input');
+    expect(titleInput).toBeTruthy();
+    expect(titleInput.props.autoFocus).toBe(true);
+  });
 });

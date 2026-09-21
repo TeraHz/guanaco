@@ -25,6 +25,8 @@ interface SwipeableTaskItemProps {
   onEditLabels?: (task: Task) => void;
   labelDefinitions?: Label[];
   isReordering?: boolean;
+  drag?: () => void;
+  isDragging?: boolean;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   canMoveUp?: boolean;
@@ -51,6 +53,8 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   onEditLabels,
   labelDefinitions,
   isReordering = false,
+  drag,
+  isDragging = false,
   onMoveUp,
   onMoveDown,
   canMoveUp = false,
@@ -189,19 +193,25 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           backgroundColor: task.done
             ? (theme.isDark ? '#161618' : '#FFFFFF')
             : theme.colors.cardBackground,
-          borderColor: task.done
+          borderColor: isDragging
+            ? '#007AFF'
+            : task.done
             ? (theme.isDark ? '#2C2C2E' : '#E5E5EA')
             : theme.colors.cardBorder,
-          borderWidth: 1,
+          borderWidth: isDragging ? 1.5 : 1,
           opacity: task.done ? (theme.isDark ? 0.7 : 0.88) : 1,
         },
+        isDragging && styles.cardDragging,
       ]}
       onPress={() => onPress(task)}
       onLongPress={() => {
         safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+        if (drag) {
+          drag();
+        }
         onLongPress?.(task);
       }}
-      delayLongPress={280}
+      delayLongPress={240}
       activeOpacity={0.7}
     >
       {/* Priority indicator bar */}
@@ -329,29 +339,45 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         </View>
       </View>
 
-      {/* Small subtle "+#" link or Reorder Controls on the right of the item */}
+      {/* Small subtle "+#" link or Drag Handle / Reorder Controls on the right of the item */}
       {isReordering ? (
         <View style={styles.reorderControls}>
-          <TouchableOpacity
-            testID={`move-up-task-${task.id}`}
-            style={[styles.reorderBtn, !canMoveUp && styles.reorderBtnDisabled]}
-            onPress={onMoveUp}
-            disabled={!canMoveUp}
-            activeOpacity={0.6}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={[styles.reorderBtnText, !canMoveUp && styles.reorderBtnTextDisabled]}>▲</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID={`move-down-task-${task.id}`}
-            style={[styles.reorderBtn, !canMoveDown && styles.reorderBtnDisabled]}
-            onPress={onMoveDown}
-            disabled={!canMoveDown}
-            activeOpacity={0.6}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={[styles.reorderBtnText, !canMoveDown && styles.reorderBtnTextDisabled]}>▼</Text>
-          </TouchableOpacity>
+          {drag ? (
+            <TouchableOpacity
+              testID={`drag-handle-${task.id}`}
+              style={styles.dragHandle}
+              onPressIn={drag}
+              onLongPress={drag}
+              activeOpacity={0.6}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Text style={[styles.dragHandleText, { color: theme.colors.textSecondary }]}>☰</Text>
+            </TouchableOpacity>
+          ) : null}
+          {onMoveUp && onMoveDown ? (
+            <>
+              <TouchableOpacity
+                testID={`move-up-task-${task.id}`}
+                style={[styles.reorderBtn, !canMoveUp && styles.reorderBtnDisabled]}
+                onPress={onMoveUp}
+                disabled={!canMoveUp}
+                activeOpacity={0.6}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={[styles.reorderBtnText, !canMoveUp && styles.reorderBtnTextDisabled]}>▲</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID={`move-down-task-${task.id}`}
+                style={[styles.reorderBtn, !canMoveDown && styles.reorderBtnDisabled]}
+                onPress={onMoveDown}
+                disabled={!canMoveDown}
+                activeOpacity={0.6}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={[styles.reorderBtnText, !canMoveDown && styles.reorderBtnTextDisabled]}>▼</Text>
+              </TouchableOpacity>
+            </>
+          ) : null}
         </View>
       ) : (
         onEditLabels && (
@@ -639,5 +665,23 @@ const styles = StyleSheet.create({
   },
   reorderBtnTextDisabled: {
     color: '#8E8E93',
+  },
+  cardDragging: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 8,
+    transform: [{ scale: 1.02 }],
+  },
+  dragHandle: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dragHandleText: {
+    fontSize: 18,
+    fontWeight: '600',
   },
 });

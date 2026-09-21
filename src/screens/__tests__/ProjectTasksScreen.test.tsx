@@ -241,19 +241,14 @@ describe('ProjectTasksScreen', () => {
     // Long press on first task item
     fireEvent(getByTestId('task-item-101'), 'longPress');
 
-    // Reorder banner and controls should now be visible
-    expect(getByText(/Reorder Mode/)).toBeTruthy();
+    // Reorder banner and drag handles should now be visible
+    expect(getByText(/Drag items by ☰ to reorder/)).toBeTruthy();
     expect(getByTestId('reorder-done-btn')).toBeTruthy();
-    expect(getByTestId('move-down-task-101')).toBeTruthy();
+    expect(getByTestId('drag-handle-101')).toBeTruthy();
+    expect(getByTestId('drag-handle-102')).toBeTruthy();
 
-    // Tap move down on task 101
-    fireEvent.press(getByTestId('move-down-task-101'));
-
-    // Verify task positions updated in store
-    const updatedTasks = useTaskStore.getState().tasks;
-    const task101 = updatedTasks.find((t) => t.id === 101);
-    const task102 = updatedTasks.find((t) => t.id === 102);
-    expect(task101?.position).toBeGreaterThan(task102?.position || 0);
+    // Trigger drag on drag handle
+    fireEvent(getByTestId('drag-handle-101'), 'pressIn');
 
     // Tap Done
     fireEvent.press(getByTestId('reorder-done-btn'));

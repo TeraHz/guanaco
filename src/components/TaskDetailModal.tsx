@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -95,6 +95,16 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
   const [newAssigneeText, setNewAssigneeText] = useState('');
   const [newLabelText, setNewLabelText] = useState('');
+  const titleInputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (visible && !task) {
+      const timer = setTimeout(() => {
+        titleInputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [visible, task]);
 
   useEffect(() => {
     if (visible) {
@@ -306,6 +316,49 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
           >
+            {/* Title & Done Checkbox (Top-most in dialog) */}
+            <View
+              style={[
+                styles.sectionCard,
+                {
+                  backgroundColor: theme.colors.cardBackground,
+                  borderColor: theme.colors.cardBorder,
+                },
+              ]}
+            >
+              <View style={styles.titleRow}>
+                <TouchableOpacity
+                  testID="task-detail-done-toggle"
+                  style={[
+                    styles.checkbox,
+                    done && styles.checkboxDone,
+                    { borderColor: done ? '#30D158' : theme.colors.cardBorder },
+                  ]}
+                  onPress={() => {
+                    safeHaptics.selection();
+                    setDone(!done);
+                  }}
+                >
+                  {done && <Text style={styles.checkmark}>✓</Text>}
+                </TouchableOpacity>
+                <TextInput
+                  ref={titleInputRef}
+                  testID="task-detail-title-input"
+                  style={[
+                    styles.titleInput,
+                    { color: theme.colors.text },
+                    done && styles.titleInputDone,
+                  ]}
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="Task title"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  multiline
+                  autoFocus={task === null}
+                />
+              </View>
+            </View>
+
             {/* List / Project Picker */}
             {availableProjects && availableProjects.length > 0 && (
               <View
@@ -402,47 +455,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 )}
               </View>
             )}
-
-            {/* Title & Done Checkbox */}
-            <View
-              style={[
-                styles.sectionCard,
-                {
-                  backgroundColor: theme.colors.cardBackground,
-                  borderColor: theme.colors.cardBorder,
-                },
-              ]}
-            >
-              <View style={styles.titleRow}>
-                <TouchableOpacity
-                  testID="task-detail-done-toggle"
-                  style={[
-                    styles.checkbox,
-                    done && styles.checkboxDone,
-                    { borderColor: done ? '#30D158' : theme.colors.cardBorder },
-                  ]}
-                  onPress={() => {
-                    safeHaptics.selection();
-                    setDone(!done);
-                  }}
-                >
-                  {done && <Text style={styles.checkmark}>✓</Text>}
-                </TouchableOpacity>
-                <TextInput
-                  testID="task-detail-title-input"
-                  style={[
-                    styles.titleInput,
-                    { color: theme.colors.text },
-                    done && styles.titleInputDone,
-                  ]}
-                  value={title}
-                  onChangeText={setTitle}
-                  placeholder="Task title"
-                  placeholderTextColor={theme.colors.textSecondary}
-                  multiline
-                />
-              </View>
-            </View>
 
             {/* Description */}
             <View

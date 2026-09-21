@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useTaskStore } from '../store/taskStore';
 import { SwipeableTaskItem } from '../components/SwipeableTaskItem';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 import { QuickAddBar } from '../components/QuickAddBar';
 import { MoveListModal } from '../components/MoveListModal';
 import { QuickLabelModal } from '../components/QuickLabelModal';
@@ -331,6 +332,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       })()}
 
       {/* Reorder Mode Banner */}
+      {/* Reorder Mode Banner */}
       {isReordering && (
         <View
           style={[
@@ -342,7 +344,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           ]}
         >
           <Text style={[styles.reorderBannerText, { color: theme.colors.text }]}>
-            ↕ Reorder Mode (Tap ▲ ▼ to move items)
+            ↕ Drag items by ☰ to reorder
           </Text>
           <TouchableOpacity
             testID="reorder-done-btn"
@@ -372,9 +374,20 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       />
 
       {/* Tasks List */}
-      <FlatList
+      <DraggableFlatList
         data={sortedTasks}
         keyExtractor={(item) => item.id.toString()}
+        onDragBegin={() => {
+          safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+        }}
+        onDragEnd={({ data }) => {
+          safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+          const projectId = activeProject.id;
+          reorderTasks(projectId, data.map((t) => t.id));
+          if (sortBy !== 'manual') {
+            setSortBy('manual');
+          }
+        }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -382,27 +395,34 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             tintColor="#007AFF"
           />
         }
-        renderItem={({ item, index }) => (
-          <SwipeableTaskItem
-            task={item}
-            labelDefinitions={storeLabels}
-            onToggle={toggleTask}
-            onMove={(taskId) => setMovingTaskId(taskId)}
-            onDelete={deleteTask}
-            onPress={(task) => {
-              if (isReordering) return;
-              setSelectedTask(task);
-              onSelectTask?.(task);
-            }}
-            onLongPress={handleLongPressTask}
-            isReordering={isReordering}
-            canMoveUp={index > 0}
-            canMoveDown={index < sortedTasks.length - 1}
-            onMoveUp={() => handleMoveTaskPosition(item.id, 'up')}
-            onMoveDown={() => handleMoveTaskPosition(item.id, 'down')}
-            onSelectLabel={(label) => setSelectedLabel(label)}
-            onEditLabels={(task) => setEditingLabelsTask(task)}
-          />
+        renderItem={({ item, drag, isActive }: RenderItemParams<Task>) => (
+          <ScaleDecorator activeScale={1.03}>
+            <SwipeableTaskItem
+              task={item}
+              labelDefinitions={storeLabels}
+              onToggle={toggleTask}
+              onMove={(taskId) => setMovingTaskId(taskId)}
+              onDelete={deleteTask}
+              onPress={(task) => {
+                if (isReordering) return;
+                setSelectedTask(task);
+                onSelectTask?.(task);
+              }}
+              onLongPress={() => {
+                safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                setIsReordering(true);
+                if (sortBy !== 'manual') {
+                  setSortBy('manual');
+                }
+                drag();
+              }}
+              drag={drag}
+              isDragging={isActive}
+              isReordering={isReordering}
+              onSelectLabel={(label) => setSelectedLabel(label)}
+              onEditLabels={(task) => setEditingLabelsTask(task)}
+            />
+          </ScaleDecorator>
         )}
         contentContainerStyle={
           sortedTasks.length === 0 ? styles.emptyContainer : styles.listContent

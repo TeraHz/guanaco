@@ -76,3 +76,28 @@ jest.mock('react-native-gesture-handler', () => {
     Directions: {},
   };
 });
+
+// Mock DraggableFlatList
+jest.mock('react-native-draggable-flatlist', () => {
+  const React = require('react');
+  const { FlatList } = require('react-native');
+  const MockDraggableFlatList = (props: any) => {
+    return React.createElement(FlatList, {
+      ...props,
+      renderItem: ({ item, index }: any) =>
+        props.renderItem({
+          item,
+          getIndex: () => index,
+          drag: () => props.onDragEnd && props.onDragEnd({ data: props.data }),
+          isActive: false,
+        }),
+    });
+  };
+  return {
+    __esModule: true,
+    default: MockDraggableFlatList,
+    ScaleDecorator: ({ children }: any) => children,
+    ShadowDecorator: ({ children }: any) => children,
+    OpacityDecorator: ({ children }: any) => children,
+  };
+});
