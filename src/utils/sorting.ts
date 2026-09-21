@@ -62,6 +62,30 @@ export function sortTasks(tasks: Task[], sortBy: SortOption): Task[] {
 
       case 'default':
       default: {
+        // 1. Priority first (highest priority first: 5, 4, 3, 2, 1, 0)
+        const prioDiff = (b.priority || 0) - (a.priority || 0);
+        if (prioDiff !== 0) return prioDiff;
+
+        // 2. Recently updated / modified first (within priority)
+        const getModifiedTime = (t: Task): number => {
+          if (t.updated && !isNaN(new Date(t.updated).getTime())) {
+            return new Date(t.updated).getTime();
+          }
+          if (t.done_at && !isNaN(new Date(t.done_at).getTime())) {
+            return new Date(t.done_at).getTime();
+          }
+          if (t.created && !isNaN(new Date(t.created).getTime())) {
+            return new Date(t.created).getTime();
+          }
+          return 0;
+        };
+
+        const timeA = getModifiedTime(a);
+        const timeB = getModifiedTime(b);
+        if (timeA !== timeB) {
+          return timeB - timeA; // Descending: newer / recently modified at top
+        }
+
         return (a.position || 0) - (b.position || 0);
       }
     }

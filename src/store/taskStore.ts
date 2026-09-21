@@ -451,7 +451,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const task = safeTasks.find((t) => t.id === taskId);
     if (!task) return;
 
-    const updatedTask = { ...task, done: !task.done };
+    const now = new Date().toISOString();
+    const updatedTask: Task = {
+      ...task,
+      done: !task.done,
+      done_at: !task.done ? now : null,
+      updated: now,
+    };
     const updatedTasks = safeTasks.map((t) => (t.id === taskId ? updatedTask : t));
 
     set({ tasks: updatedTasks });
@@ -648,7 +654,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const { tasks, syncQueue } = get();
     const safeTasks = Array.isArray(tasks) ? tasks : [];
     const task = safeTasks.find((t) => t.id === taskId);
-    const updatedTasks = safeTasks.map((t) => (t.id === taskId ? { ...t, ...updates } : t));
+    const now = new Date().toISOString();
+    const updatedTasks = safeTasks.map((t) => (t.id === taskId ? { ...t, ...updates, updated: now } : t));
 
     set({ tasks: updatedTasks });
     AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});

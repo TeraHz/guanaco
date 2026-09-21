@@ -45,6 +45,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   labelDefinitions,
 }) => {
   const theme = useAppTheme();
+  const swipeableRef = React.useRef<Swipeable>(null);
   const priorityColor =
     task.color && task.color !== ''
       ? `#${task.color.replace(/^#/, '')}`
@@ -52,16 +53,25 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
 
   const handleToggle = () => {
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+    swipeableRef.current?.close?.();
+    setTimeout(() => {
+      swipeableRef.current?.close?.();
+    }, 40);
     onToggle(task.id);
   };
 
   const handleMove = () => {
     safeHaptics.selection();
+    swipeableRef.current?.close?.();
     onMove(task.id);
   };
 
   const handleDelete = () => {
     safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
+    swipeableRef.current?.close?.();
+    setTimeout(() => {
+      swipeableRef.current?.close?.();
+    }, 40);
     onDelete(task.id);
   };
 
@@ -102,13 +112,13 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     }
   }
 
-  // Slide RIGHT reveals LEFT action: Delete (Red with Trash)
+  // Slide RIGHT reveals LEFT action: Delete (Red with Trash) - snappy response
   const renderLeftActions = (
     _progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>
   ) => {
     const scale = dragX.interpolate({
-      inputRange: [0, 70],
+      inputRange: [0, 36],
       outputRange: [0.6, 1],
       extrapolate: 'clamp',
     });
@@ -123,13 +133,13 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     );
   };
 
-  // Slide LEFT reveals RIGHT action: Done (Green with Check)
+  // Slide LEFT reveals RIGHT action: Done (Green with Check) - snappy response
   const renderRightActions = (
     _progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>
   ) => {
     const scale = dragX.interpolate({
-      inputRange: [-70, 0],
+      inputRange: [-36, 0],
       outputRange: [1, 0.6],
       extrapolate: 'clamp',
     });
@@ -336,9 +346,16 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
 
   return (
     <Swipeable
+      ref={swipeableRef}
+      friction={1}
+      leftThreshold={25}
+      rightThreshold={25}
+      overshootLeft={false}
+      overshootRight={false}
       renderLeftActions={renderLeftActions}
       renderRightActions={renderRightActions}
       onSwipeableOpen={(direction) => {
+        swipeableRef.current?.close?.();
         if (direction === 'left') {
           // Slide right reveals left action -> Delete
           handleDelete();

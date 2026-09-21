@@ -73,4 +73,94 @@ describe('Task Sorting Utility', () => {
     const sorted = sortTasks(mockTasks, 'priority');
     expect(sorted.map((t) => t.priority)).toEqual([4, 2, 1, 1]);
   });
+
+  describe('Default Sort (recently updated/modified first within priority)', () => {
+    it('places newly added/recently updated tasks at top within same priority', () => {
+      const tasks: Task[] = [
+        {
+          id: 1,
+          title: 'Older task',
+          done: false,
+          priority: 2,
+          project_id: 1,
+          updated: '2026-09-20T10:00:00Z',
+        },
+        {
+          id: 2,
+          title: 'Newest task',
+          done: false,
+          priority: 2,
+          project_id: 1,
+          updated: '2026-09-20T12:00:00Z',
+        },
+        {
+          id: 3,
+          title: 'Mid task',
+          done: false,
+          priority: 2,
+          project_id: 1,
+          updated: '2026-09-20T11:00:00Z',
+        },
+      ];
+
+      const sorted = sortTasks(tasks, 'default');
+      expect(sorted.map((t) => t.title)).toEqual([
+        'Newest task',
+        'Mid task',
+        'Older task',
+      ]);
+    });
+
+    it('honors higher priority over newer update time', () => {
+      const tasks: Task[] = [
+        {
+          id: 1,
+          title: 'Low priority brand new',
+          done: false,
+          priority: 1,
+          project_id: 1,
+          updated: '2026-09-20T12:00:00Z',
+        },
+        {
+          id: 2,
+          title: 'Urgent priority older',
+          done: false,
+          priority: 4,
+          project_id: 1,
+          updated: '2026-09-20T10:00:00Z',
+        },
+      ];
+
+      const sorted = sortTasks(tasks, 'default');
+      expect(sorted[0].title).toBe('Urgent priority older');
+      expect(sorted[1].title).toBe('Low priority brand new');
+    });
+
+    it('places newly completed task at the top of the done list within priority', () => {
+      const tasks: Task[] = [
+        {
+          id: 1,
+          title: 'Completed earlier',
+          done: true,
+          priority: 1,
+          project_id: 1,
+          done_at: '2026-09-20T09:00:00Z',
+          updated: '2026-09-20T09:00:00Z',
+        },
+        {
+          id: 2,
+          title: 'Completed just now',
+          done: true,
+          priority: 1,
+          project_id: 1,
+          done_at: '2026-09-20T12:00:00Z',
+          updated: '2026-09-20T12:00:00Z',
+        },
+      ];
+
+      const sorted = sortTasks(tasks, 'default');
+      expect(sorted[0].title).toBe('Completed just now');
+      expect(sorted[1].title).toBe('Completed earlier');
+    });
+  });
 });
