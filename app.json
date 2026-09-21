@@ -6,9 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "backgroundColor": "#0D0D0E"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "io.vikunja.mobile"
