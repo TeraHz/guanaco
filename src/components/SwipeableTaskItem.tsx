@@ -396,8 +396,8 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     <Swipeable
       ref={swipeableRef}
       friction={2.5}
-      leftThreshold={65}
-      rightThreshold={115}
+      leftThreshold={115}
+      rightThreshold={65}
       overshootLeft={false}
       overshootRight={false}
       animationOptions={{

@@ -325,9 +325,11 @@ describe('SwipeableTaskItem', () => {
 
     const swipeableInstance = UNSAFE_getByType(Swipeable);
     expect(swipeableInstance.props.friction).toBeGreaterThanOrEqual(2);
-    expect(swipeableInstance.props.leftThreshold).toBeGreaterThanOrEqual(60);
-    expect(swipeableInstance.props.rightThreshold).toBeGreaterThanOrEqual(100);
-    expect(swipeableInstance.props.rightThreshold).toBeGreaterThan(swipeableInstance.props.leftThreshold);
+    // leftThreshold triggers renderLeftActions (Delete) - requires longer, safer swipe
+    expect(swipeableInstance.props.leftThreshold).toBeGreaterThanOrEqual(100);
+    // rightThreshold triggers renderRightActions (Done) - shorter and snappy
+    expect(swipeableInstance.props.rightThreshold).toBeGreaterThanOrEqual(50);
+    expect(swipeableInstance.props.leftThreshold).toBeGreaterThan(swipeableInstance.props.rightThreshold);
   });
 
   // --- Reordering & Long Press ---
