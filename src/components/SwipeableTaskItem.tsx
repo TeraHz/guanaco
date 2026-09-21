@@ -46,6 +46,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
 }) => {
   const theme = useAppTheme();
   const swipeableRef = React.useRef<Swipeable>(null);
+  const isSwipingActionRef = React.useRef(false);
   const priorityColor =
     task.color && task.color !== ''
       ? `#${task.color.replace(/^#/, '')}`
@@ -54,9 +55,6 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   const handleToggle = () => {
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
     swipeableRef.current?.close?.();
-    setTimeout(() => {
-      swipeableRef.current?.close?.();
-    }, 40);
     onToggle(task.id);
   };
 
@@ -69,10 +67,26 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   const handleDelete = () => {
     safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
     swipeableRef.current?.close?.();
-    setTimeout(() => {
-      swipeableRef.current?.close?.();
-    }, 40);
     onDelete(task.id);
+  };
+
+  const triggerSwipeAction = (direction: 'left' | 'right') => {
+    if (isSwipingActionRef.current) return;
+    isSwipingActionRef.current = true;
+    swipeableRef.current?.close?.();
+
+    if (direction === 'left') {
+      // Swiped right -> Delete
+      handleDelete();
+    } else if (direction === 'right') {
+      // Swiped left -> Done
+      handleToggle();
+    }
+
+    setTimeout(() => {
+      isSwipingActionRef.current = false;
+      swipeableRef.current?.close?.();
+    }, 150);
   };
 
   // Date formatting & Overdue detection
@@ -348,22 +362,18 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     <Swipeable
       ref={swipeableRef}
       friction={1}
-      leftThreshold={25}
-      rightThreshold={25}
+      leftThreshold={18}
+      rightThreshold={18}
       overshootLeft={false}
       overshootRight={false}
+      animationOptions={{
+        speed: 40,
+        bounciness: 0,
+      }}
       renderLeftActions={renderLeftActions}
       renderRightActions={renderRightActions}
-      onSwipeableOpen={(direction) => {
-        swipeableRef.current?.close?.();
-        if (direction === 'left') {
-          // Slide right reveals left action -> Delete
-          handleDelete();
-        } else if (direction === 'right') {
-          // Slide left reveals right action -> Done
-          handleToggle();
-        }
-      }}
+      onSwipeableWillOpen={triggerSwipeAction}
+      onSwipeableOpen={triggerSwipeAction}
     >
       {cardContent}
     </Swipeable>
