@@ -23,6 +23,8 @@ ios/
 .env*.local
 *.keystore
 *.jks
+*.aab
+*.apk
 play-service-account*.json
 credentials.json
 
