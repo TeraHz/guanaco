@@ -31,7 +31,7 @@ export default function App() {
 
       const biometricActive = await isBiometricEnabled();
       if (biometricActive) {
-        const passed = await authenticateWithBiometrics('Unlock Vikunja');
+        const passed = await authenticateWithBiometrics('Unlock Guanaco');
         if (!passed) return;
       }
 

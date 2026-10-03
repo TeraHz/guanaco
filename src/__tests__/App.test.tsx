@@ -49,7 +49,7 @@ describe('App Root Integration & Session Persistence', () => {
   it('renders LoginScreen when not authenticated and no stored token', () => {
     const { getByText, getByPlaceholderText } = render(<App />);
 
-    expect(getByText('Vikunja Mobile')).toBeTruthy();
+    expect(getByText('Guanaco')).toBeTruthy();
     expect(getByPlaceholderText('Username')).toBeTruthy();
   });
 
@@ -70,7 +70,7 @@ describe('App Root Integration & Session Persistence', () => {
 
     await waitFor(() => {
       expect(LocalAuthentication.authenticateAsync).toHaveBeenCalledWith(
-        expect.objectContaining({ promptMessage: 'Unlock Vikunja' })
+        expect.objectContaining({ promptMessage: 'Unlock Guanaco' })
       );
     });
   });
@@ -92,7 +92,7 @@ describe('App Root Integration & Session Persistence', () => {
     fireEvent.press(getByTestId('settings-logout-btn'));
 
     // Should return to LoginScreen
-    const loginTitle = await findByText('Vikunja Mobile');
+    const loginTitle = await findByText('Guanaco');
     expect(loginTitle).toBeTruthy();
   });
 

@@ -1,18 +1,18 @@
 {
   "expo": {
-    "name": "Vikunja",
-    "slug": "vikunja-mobile",
-    "version": "1.0.1",
+    "name": "Guanaco",
+    "slug": "guanaco",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.geodar.vikunja"
+      "bundleIdentifier": "com.geodar.guanaco"
     },
     "android": {
-      "package": "com.geodar.vikunja",
-      "versionCode": 2,
+      "package": "com.geodar.guanaco",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0D0D0E"
@@ -26,11 +26,6 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "fe2221be-caf2-4b2c-b98d-8d3e906f4f04"
-      }
     }
   }
 }

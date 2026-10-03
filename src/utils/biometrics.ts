@@ -19,7 +19,7 @@ export async function checkBiometricAvailable(): Promise<boolean> {
 }
 
 export async function authenticateWithBiometrics(
-  reason = 'Unlock Vikunja'
+  reason = 'Unlock Guanaco'
 ): Promise<boolean> {
   if (Platform.OS === 'web') return true;
   try {

@@ -92,9 +92,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           {/* Logo / Header */}
           <View style={styles.header}>
             <View style={styles.logoBadge}>
-              <Text style={styles.logoText}>V</Text>
+              <Text style={styles.logoText}>G</Text>
             </View>
-            <Text style={styles.title}>Vikunja Mobile</Text>
+            <Text style={styles.title}>Guanaco</Text>
             <Text style={styles.subtitle}>
               Connect your self-hosted or cloud Vikunja instance
             </Text>
