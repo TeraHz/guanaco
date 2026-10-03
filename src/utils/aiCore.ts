@@ -290,13 +290,14 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
 /**
  * Synchronous classification for immediate rendering and sorting.
  * Prioritizes:
- * 1. Labels
- * 2. Prefix tags ([Category] or Category:)
- * 3. In-memory / cached category
- * 4. Zero-shot contextual inference
+ * 1. Prefix tags ([Category] or Category:)
+ * 2. In-memory / cached category
+ * 3. Zero-shot contextual inference
+ *
+ * Store and task labels remain tags and do not hijack section headers.
  */
 export function classifyTaskWithAI(task: Task, contextTitle?: string): string {
-  // Check label or prefix first
+  // Check explicit title prefix first
   const manual = classifyTaskContextually(task, contextTitle);
   if (manual !== 'General') {
     return manual;

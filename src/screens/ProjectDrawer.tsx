@@ -17,6 +17,8 @@ import { useAppTheme } from '../utils/theme';
 import { SettingsModal } from '../components/SettingsModal';
 import { LabelManagementModal } from '../components/LabelManagementModal';
 
+import { MY_TASKS_PROJECT_ID, isTaskAssignedToUser } from '../utils/taskFilters';
+
 interface ProjectDrawerProps {
   visible: boolean;
   onClose: () => void;
@@ -34,6 +36,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   const {
     projects,
     tasks,
+    currentUser,
     selectedProjectId,
     setSelectedProjectId,
   } = useTaskStore();
@@ -118,6 +121,37 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                 style={styles.badgeCount}
               >
                 {safeTasks.filter((t) => !t.done).length}
+              </Text>
+            </TouchableOpacity>
+
+            {/* My Open Tasks View */}
+            <TouchableOpacity
+              testID="drawer-project-my-tasks"
+              style={[
+                styles.projectItem,
+                selectedProjectId === MY_TASKS_PROJECT_ID && {
+                  backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                },
+              ]}
+              onPress={() => handleSelect(MY_TASKS_PROJECT_ID)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.colorDot, { backgroundColor: '#AF52DE' }]} />
+              <Text
+                style={[
+                  styles.projectTitle,
+                  { color: theme.colors.text },
+                  selectedProjectId === MY_TASKS_PROJECT_ID && styles.projectTitleSelected,
+                ]}
+                numberOfLines={1}
+              >
+                My Open Tasks
+              </Text>
+              <Text
+                testID="drawer-count-my-tasks"
+                style={styles.badgeCount}
+              >
+                {safeTasks.filter((t) => !t.done && isTaskAssignedToUser(t, currentUser)).length}
               </Text>
             </TouchableOpacity>
 

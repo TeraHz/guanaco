@@ -34,6 +34,17 @@ echo "2. Building release bundle (.aab)..."
 cd android
 ./gradlew bundleRelease
 
+cp app/build/outputs/bundle/release/app-release.aab ../guanaco-release.aab
+cd ..
+
+GIT_REV=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || git describe --tags --always 2>/dev/null || echo "untagged")
+GIT_DIRTY=$(git status --porcelain 2>/dev/null)
+
 echo ""
 echo "=== Build Complete! ==="
-echo "Artifact: android/app/build/outputs/bundle/release/app-release.aab"
+echo "Artifact:       guanaco-release.aab"
+echo "Git Checkpoint: ${GIT_REV} (${GIT_TAG})"
+if [ -n "$GIT_DIRTY" ]; then
+  echo "⚠️  Note: Working tree has uncommitted changes. Make sure to commit and tag your release!"
+fi

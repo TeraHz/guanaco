@@ -26,16 +26,17 @@ describe('Smart Contextual Classifier', () => {
   });
 
   describe('classifyTaskContextually', () => {
-    it('uses existing task labels as first-class category', () => {
+    it('does not allow store/task labels to override category section', () => {
       const task: Task = {
         id: 1,
         title: 'Fresh Bread',
         done: false,
         priority: 0,
         project_id: 1,
-        labels: [{ id: 10, title: 'Bakery' }],
+        labels: [{ id: 10, title: 'Costco' }],
       };
-      expect(classifyTaskContextually(task, 'Groceries')).toBe('Bakery');
+      // Store tags like #Costco must not override section category
+      expect(classifyTaskContextually(task, 'Groceries')).toBe('General');
     });
 
     it('detects bracketed prefix category tags', () => {
@@ -60,7 +61,7 @@ describe('Smart Contextual Classifier', () => {
       expect(classifyTaskContextually(task, 'Groceries')).toBe('Produce');
     });
 
-    it('falls back to General if no category or label is present', () => {
+    it('falls back to General if no category prefix is present', () => {
       const task: Task = {
         id: 4,
         title: 'Pick up package',
@@ -75,8 +76,8 @@ describe('Smart Contextual Classifier', () => {
   describe('groupTasksContextually', () => {
     it('groups tasks into categories preserving task lists', () => {
       const tasks: Task[] = [
-        { id: 1, title: 'Milk', done: false, priority: 0, project_id: 1, labels: [{ id: 1, title: 'Dairy' }] },
-        { id: 2, title: 'Cheese', done: false, priority: 0, project_id: 1, labels: [{ id: 1, title: 'Dairy' }] },
+        { id: 1, title: '[Dairy] Milk', done: false, priority: 0, project_id: 1, labels: [{ id: 1, title: 'Costco' }] },
+        { id: 2, title: '[Dairy] Cheese', done: false, priority: 0, project_id: 1, labels: [{ id: 2, title: 'Trader Joe\'s' }] },
         { id: 3, title: '[Bakery] Sourdough', done: false, priority: 0, project_id: 1 },
         { id: 4, title: 'Napkins', done: false, priority: 0, project_id: 1 },
       ];
@@ -86,7 +87,7 @@ describe('Smart Contextual Classifier', () => {
 
       const dairyGroup = grouped.find((g) => g.category === 'Dairy');
       expect(dairyGroup).toBeDefined();
-      expect(dairyGroup?.tasks.map((t) => t.title)).toEqual(['Milk', 'Cheese']);
+      expect(dairyGroup?.tasks.map((t) => t.title)).toEqual(['[Dairy] Milk', '[Dairy] Cheese']);
 
       const bakeryGroup = grouped.find((g) => g.category === 'Bakery');
       expect(bakeryGroup).toBeDefined();

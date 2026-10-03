@@ -24,6 +24,7 @@ import { LabelManagementModal } from '../components/LabelManagementModal';
 import { sortTasks, SortOption } from '../utils/sorting';
 import { isShoppingList } from '../utils/smartClassifier';
 import { isAICoreSupported, classifyTaskWithAI, classifyTasksWithAIAsync } from '../utils/aiCore';
+import { MY_TASKS_PROJECT_ID, MY_TASKS_PROJECT, isTaskAssignedToUser } from '../utils/taskFilters';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
@@ -58,11 +59,13 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     tasks,
     labels: storeLabels,
     cachedUsers,
+    currentUser,
     selectedProjectId,
     syncStatus,
     pendingSyncCount,
     reenableStaples,
     largeTaskItems,
+    taskItemScale = 100,
     toggleTask,
     reenableTask,
     updateTaskLabels,
@@ -94,7 +97,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const safeTasks = Array.isArray(tasks) ? tasks : [];
 
   const isAllTasksView = selectedProjectId === null;
-  const activeProject = isAllTasksView
+  const isMyTasksView = selectedProjectId === MY_TASKS_PROJECT_ID;
+  const activeProject = isMyTasksView
+    ? MY_TASKS_PROJECT
+    : isAllTasksView
     ? { id: 0, title: 'All Tasks', hex_color: '#007AFF' }
     : safeProjects.find((p) => p.id === selectedProjectId) ||
       safeProjects[0] ||
@@ -104,7 +110,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
 
   // Fetch tasks on mount & when active project changes (Regression Issue #1)
   useEffect(() => {
-    if (selectedProjectId) {
+    if (selectedProjectId && selectedProjectId > 0) {
       fetchTasks(selectedProjectId);
     } else {
       fetchAllTasks();
@@ -125,8 +131,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     ].filter(Boolean))
   );
 
-  // Filter tasks belonging to current active project (or all tasks in All Tasks view)
-  const projectTasks = isAllTasksView
+  // Filter tasks belonging to current active project (or all tasks in All Tasks / My Tasks view)
+  const projectTasks = isMyTasksView
+    ? safeTasks.filter((t) => isTaskAssignedToUser(t, currentUser))
+    : isAllTasksView
     ? safeTasks
     : safeTasks.filter((t) => t.project_id === activeProject.id);
 
@@ -391,7 +399,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         historyTasks={projectTasks}
         availableLabels={availableLabels}
         reenableStaples={reenableStaples}
-        onAddTask={addTask}
+        onAddTask={(taskInput) => {
+          if (isMyTasksView && currentUser) {
+            const hasAssignees = taskInput.assignees && taskInput.assignees.length > 0;
+            return addTask({
+              ...taskInput,
+              assignees: hasAssignees ? taskInput.assignees : [currentUser],
+            });
+          }
+          return addTask(taskInput);
+        }}
         onReenableTask={(taskId) => reenableTask(taskId)}
         placeholder={`Add a task to ${activeProject.title}...`}
       />
@@ -428,6 +445,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               : null;
           const showCategoryHeader = currentCategory && currentCategory !== prevCategory;
 
+          const headerScale = (taskItemScale || 100) / 100;
+
           return (
             <View>
               {showCategoryHeader ? (
@@ -435,6 +454,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   style={[
                     styles.categorySectionHeader,
                     largeTaskItems && styles.categorySectionHeaderLarge,
+                    headerScale > 1 && {
+                      paddingHorizontal: Math.round(12 * (1 + (headerScale - 1) * 0.7)),
+                      paddingTop: Math.round(14 * headerScale),
+                      paddingBottom: Math.round(4 * headerScale),
+                    },
                   ]}
                   testID={`category-header-${currentCategory}`}
                 >
@@ -442,6 +466,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     style={[
                       styles.categorySectionText,
                       largeTaskItems && styles.categorySectionTextLarge,
+                      headerScale > 1 && {
+                        fontSize: Math.round(11 * headerScale),
+                        letterSpacing: headerScale > 1.2 ? 1 : 0.8,
+                      },
                       { color: theme.colors.textSecondary },
                     ]}
                   >
@@ -452,6 +480,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               <ScaleDecorator activeScale={1.03}>
                 <SwipeableTaskItem
                   task={item}
+                  scale={taskItemScale}
                   isLarge={largeTaskItems}
                   labelDefinitions={storeLabels}
                   onToggle={toggleTask}
@@ -560,6 +589,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           deleteTask(taskId);
         }}
         onCreateTask={(newTaskData) => {
+          const assignees =
+            isMyTasksView && currentUser && (!newTaskData.assignees || newTaskData.assignees.length === 0)
+              ? [currentUser]
+              : newTaskData.assignees;
           addTask({
             title: newTaskData.title || '',
             description: newTaskData.description,
@@ -568,6 +601,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             project_id:
               newTaskData.project_id ||
               (activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)),
+            assignees,
           });
         }}
         onMoveTask={(taskId, newProjectId) => {

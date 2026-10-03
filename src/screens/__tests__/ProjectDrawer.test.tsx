@@ -56,6 +56,32 @@ describe('ProjectDrawer', () => {
     expect(mockOnClose).toHaveBeenCalled();
   });
 
+  it('renders "My Open Tasks" item with active count assigned to current user and allows selecting it', () => {
+    useTaskStore.setState({
+      currentUser: { id: 101, username: 'terahz' },
+      tasks: [
+        { id: 10, title: 'Task for me', done: false, priority: 1, project_id: 1, assignees: [{ id: 101, username: 'terahz' }] },
+        { id: 11, title: 'Done task for me', done: true, priority: 1, project_id: 1, assignees: [{ id: 101, username: 'terahz' }] },
+        { id: 20, title: 'Task for alex', done: false, priority: 2, project_id: 2, assignees: [{ id: 102, username: 'alex' }] },
+        { id: 30, title: 'Unassigned task', done: false, priority: 0, project_id: 1 },
+      ],
+    });
+
+    const { getByTestId, getByText } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    expect(getByText('My Open Tasks')).toBeTruthy();
+    // 1 active task assigned to current user (id 10)
+    expect(getByTestId('drawer-count-my-tasks').props.children).toBe(1);
+
+    const myTasksItem = getByTestId('drawer-project-my-tasks');
+    fireEvent.press(myTasksItem);
+
+    expect(useTaskStore.getState().selectedProjectId).toBe(-1);
+    expect(mockOnClose).toHaveBeenCalled();
+  });
+
   it('switches active project when a list item is selected', () => {
     const { getByTestId } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />

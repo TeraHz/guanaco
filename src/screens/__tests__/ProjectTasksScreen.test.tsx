@@ -358,4 +358,32 @@ describe('ProjectTasksScreen', () => {
       expect(queryByTestId('sort-option-aiSmart')).toBeNull();
     });
   });
+
+  describe('My Open Tasks View', () => {
+    it('renders "My Open Tasks" view when selectedProjectId is -1 and filters tasks assigned to user', () => {
+      useTaskStore.setState({
+        currentUser: { id: 101, username: 'terahz' },
+        selectedProjectId: -1,
+        projects: [
+          { id: 1, title: 'Inbox', hex_color: '#3498db' },
+          { id: 2, title: 'Work', hex_color: '#e74c3c' },
+        ],
+        tasks: [
+          { id: 10, title: 'My Open Bug Fix', done: false, priority: 1, project_id: 1, assignees: [{ id: 101, username: 'terahz' }] },
+          { id: 11, title: 'My Done Task', done: true, priority: 1, project_id: 1, assignees: [{ id: 101, username: 'terahz' }] },
+          { id: 20, title: 'Colleague Task', done: false, priority: 2, project_id: 2, assignees: [{ id: 102, username: 'alex' }] },
+          { id: 30, title: 'Unassigned Item', done: false, priority: 0, project_id: 1 },
+        ],
+      });
+
+      const { getByText, queryByText } = render(
+        <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+      );
+
+      expect(getByText('My Open Tasks')).toBeTruthy();
+      expect(getByText('My Open Bug Fix')).toBeTruthy();
+      expect(queryByText('Colleague Task')).toBeNull();
+      expect(queryByText('Unassigned Item')).toBeNull();
+    });
+  });
 });

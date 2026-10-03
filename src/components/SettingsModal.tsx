@@ -21,7 +21,9 @@ import {
   isBiometricEnabled,
   setBiometricEnabled,
 } from '../utils/biometrics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isAICoreSupported, clearAICoreCache } from '../utils/aiCore';
+import { APP_VERSION, APP_BUILD_NUMBER, APP_NAME } from '../constants/version';
 
 interface SettingsModalProps {
   visible: boolean;
@@ -39,16 +41,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const theme = useAppTheme();
   const {
     client,
+    currentUser: storeCurrentUser,
     cachedUsers,
     reenableStaples,
     setReenableStaples,
     largeTaskItems,
     setLargeTaskItems,
+    taskItemScale = 100,
+    setTaskItemScale,
     resetAndSyncFromServer,
     syncStatus,
     pendingSyncCount,
   } = useTaskStore();
 
+  const [savedUsername, setSavedUsername] = useState<string | null>(null);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricActive, setBiometricActive] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -56,7 +62,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const resetTimerRef = React.useRef<any>(null);
 
   const serverUrl = client ? client.getBaseApiUrl().replace(/\/api\/v1$/, '') : 'https://vikunja.example.com';
-  const currentUser = cachedUsers?.[0]?.username || 'Connected';
+  const displayUsername =
+    storeCurrentUser?.username ||
+    savedUsername ||
+    (cachedUsers && cachedUsers.length > 0 ? cachedUsers[0].username : null);
 
   const hasAICore = isAICoreSupported();
   const [clearedAiCache, setClearedAiCache] = useState(false);
@@ -86,6 +95,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     if (visible) {
       loadBiometrics();
+      AsyncStorage.getItem('@vikunja_saved_username')
+        .then((saved) => {
+          if (mounted && saved) setSavedUsername(saved);
+        })
+        .catch(() => {});
     }
     return () => {
       mounted = false;
@@ -180,7 +194,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <View style={[styles.infoRow, { borderTopColor: theme.colors.cardBorder, borderTopWidth: StyleSheet.hairlineWidth }]}>
               <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>User</Text>
               <Text style={[styles.infoValue, { color: theme.colors.text }]}>
-                @{currentUser}
+                {displayUsername ? `@${displayUsername}` : 'Connected'}
+              </Text>
+            </View>
+            <View style={[styles.infoRow, { borderTopColor: theme.colors.cardBorder, borderTopWidth: StyleSheet.hairlineWidth }]}>
+              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Version</Text>
+              <Text style={[styles.infoValue, { color: theme.colors.text }]}>
+                v{APP_VERSION} (Build {APP_BUILD_NUMBER})
               </Text>
             </View>
           </View>
@@ -198,15 +218,110 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
               TASK PREFERENCES
             </Text>
-            <View style={styles.settingRow}>
-              <View style={styles.settingTextCol}>
-                <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                  Large Items (+50%)
-                </Text>
-                <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                  Make list items, text, and tap targets 50% larger
-                </Text>
+            <View style={styles.settingBlock}>
+              <View style={styles.settingRow}>
+                <View style={styles.settingTextCol}>
+                  <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                    Task Item Size ({taskItemScale}%)
+                  </Text>
+                  <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
+                    Scale list items, text, and tap targets ({taskItemScale > 100 ? `+${taskItemScale - 100}%` : 'Standard'})
+                  </Text>
+                </View>
+                <View style={styles.stepperContainer}>
+                  <TouchableOpacity
+                    testID="settings-scale-decrement"
+                    style={[styles.stepperBtn, taskItemScale <= 100 && styles.stepperBtnDisabled]}
+                    disabled={taskItemScale <= 100}
+                    onPress={() => {
+                      const newScale = Math.max(100, taskItemScale - 25);
+                      setTaskItemScale(newScale);
+                      safeHaptics.selection();
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text
+                      style={[
+                        styles.stepperBtnText,
+                        { color: taskItemScale <= 100 ? '#8E8E93' : '#007AFF' },
+                      ]}
+                    >
+                      −
+                    </Text>
+                  </TouchableOpacity>
+                  <View style={styles.stepperValueBadge}>
+                    <Text
+                      testID="settings-scale-value"
+                      style={[styles.stepperValueText, { color: theme.colors.text }]}
+                    >
+                      {taskItemScale}%
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    testID="settings-scale-increment"
+                    style={[styles.stepperBtn, taskItemScale >= 200 && styles.stepperBtnDisabled]}
+                    disabled={taskItemScale >= 200}
+                    onPress={() => {
+                      const newScale = Math.min(200, taskItemScale + 25);
+                      setTaskItemScale(newScale);
+                      safeHaptics.selection();
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text
+                      style={[
+                        styles.stepperBtnText,
+                        { color: taskItemScale >= 200 ? '#8E8E93' : '#007AFF' },
+                      ]}
+                    >
+                      +
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
+
+              {/* Preset chips */}
+              <View style={styles.presetChipsRow}>
+                {[100, 125, 150, 175, 200].map((preset) => {
+                  const isSelected = taskItemScale === preset;
+                  return (
+                    <TouchableOpacity
+                      key={preset}
+                      testID={`settings-scale-preset-${preset}`}
+                      style={[
+                        styles.presetChip,
+                        isSelected
+                          ? { backgroundColor: '#007AFF', borderColor: '#007AFF' }
+                          : {
+                              backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                              borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                            },
+                      ]}
+                      onPress={() => {
+                        setTaskItemScale(preset);
+                        safeHaptics.selection();
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.presetChipText,
+                          {
+                            color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
+                            fontWeight: isSelected ? '700' : '500',
+                          },
+                        ]}
+                      >
+                        {preset === 100 ? '100%' : `${preset}%`}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Test automation and accessibility fallback switch */}
+            <View style={styles.hiddenAutomation}>
               <Switch
                 testID="settings-large-items-switch"
                 value={largeTaskItems}
@@ -214,8 +329,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   setLargeTaskItems(val);
                   safeHaptics.selection();
                 }}
-                trackColor={{ false: '#3A3A3C', true: '#30D158' }}
-                thumbColor="#FFFFFF"
               />
             </View>
 
@@ -405,6 +518,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Text style={styles.logoutBtnText}>Log Out</Text>
             </TouchableOpacity>
           )}
+
+          {/* App Version Footer */}
+          <View style={styles.footerVersionRow}>
+            <Text style={[styles.footerVersionText, { color: theme.colors.textSecondary }]}>
+              {APP_NAME} v{APP_VERSION} • Build {APP_BUILD_NUMBER}
+            </Text>
+          </View>
         </ScrollView>
       </SafeAreaView>
     </Modal>
@@ -562,5 +682,73 @@ const styles = StyleSheet.create({
     color: '#30D158',
     fontSize: 13,
     fontWeight: '600',
+  },
+  settingBlock: {
+    paddingVertical: 4,
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  stepperBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 122, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperBtnDisabled: {
+    opacity: 0.35,
+    backgroundColor: 'rgba(142, 142, 147, 0.12)',
+  },
+  stepperBtnText: {
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  stepperValueBadge: {
+    paddingHorizontal: 8,
+    minWidth: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperValueText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  presetChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  presetChip: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  presetChipText: {
+    fontSize: 11,
+  },
+  hiddenAutomation: {
+    width: 0,
+    height: 0,
+    opacity: 0,
+    overflow: 'hidden',
+  },
+  footerVersionRow: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+  },
+  footerVersionText: {
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0.3,
   },
 });

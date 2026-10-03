@@ -28,28 +28,23 @@ export function isShoppingList(listTitle?: string): boolean {
 }
 
 /**
- * Contextually classifies a task into a category.
+ * Contextually classifies a task into a category based on explicit title syntax.
  * Prioritizes:
- * 1. Explicit labels assigned to the task (e.g. "Produce", "Aisle 4")
- * 2. Bracketed or colon prefixes in the title (e.g. "[Bakery] Croissant", "Deli: Ham")
- * 3. Fallback to "General"
+ * 1. Bracketed prefixes in the title (e.g. "[Bakery] Croissant", "[Produce] Apples")
+ * 2. Colon prefixes in the title (e.g. "Produce: Apples", "Deli: Ham")
+ * 3. Fallback to "General" (allowing AI / zero-shot semantic grouping to classify the item)
  *
- * Designed to be cleanly extendable with an on-device ML / LLM hook
- * without needing a static hardcoded database.
+ * Note: Labels/tags (like store tags #Costco, #Trader Joe's, #Caraluzzi) are metadata tags
+ * and do not override the department category/section header.
  */
 export function classifyTaskContextually(task: Task, contextTitle?: string): string {
-  // 1. Task labels are top priority
-  if (task.labels && task.labels.length > 0 && task.labels[0].title) {
-    return task.labels[0].title.trim();
-  }
-
-  // 2. Bracketed prefix: [Produce] Apples -> Produce
+  // 1. Bracketed prefix: [Produce] Apples -> Produce
   const bracketMatch = task.title.match(/^\[(.*?)\]/);
   if (bracketMatch && bracketMatch[1]?.trim()) {
     return bracketMatch[1].trim();
   }
 
-  // 3. Colon prefix: Produce: Apples -> Produce
+  // 2. Colon prefix: Produce: Apples -> Produce
   const colonMatch = task.title.match(/^([A-Za-z0-9\s]{2,15}):\s+/);
   if (colonMatch && colonMatch[1]?.trim()) {
     return colonMatch[1].trim();

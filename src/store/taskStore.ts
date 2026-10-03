@@ -10,8 +10,11 @@ const CACHE_KEY_PROJECTS = '@vikunja_cached_projects';
 const CACHE_KEY_TASKS = '@vikunja_cached_tasks';
 const CACHE_KEY_LABELS = '@vikunja_cached_labels';
 const CACHE_KEY_USERS = '@vikunja_cached_users';
+const CACHE_KEY_CURRENT_USER = '@vikunja_current_user';
+const CACHE_KEY_SAVED_USERNAME = '@vikunja_saved_username';
 const CACHE_KEY_REENABLE_STAPLES = '@vikunja_reenable_staples';
 const CACHE_KEY_LARGE_TASK_ITEMS = '@vikunja_large_task_items';
+const CACHE_KEY_TASK_ITEM_SCALE = '@vikunja_task_item_scale';
 const CACHE_KEY_LAST_PROJECT = '@vikunja_last_project_id';
 
 export interface TaskState {
@@ -21,6 +24,7 @@ export interface TaskState {
   tasks: Task[];
   labels: Label[];
   cachedUsers: User[];
+  currentUser: User | null;
   selectedProjectId: number | null;
   isLoading: boolean;
   error: string | null;
@@ -29,19 +33,21 @@ export interface TaskState {
   syncStatus: SyncStatus;
   pendingSyncCount: number;
 
-  // Settings
   reenableStaples: boolean;
   largeTaskItems: boolean;
+  taskItemScale: number; // Percentage: 100, 125, 150, 175, 200 (default: 100)
 
   // Actions
   initialize: (baseUrl: string, token?: string) => Promise<void>;
   loadCachedData: () => Promise<void>;
   setReenableStaples: (enabled: boolean) => Promise<void>;
   setLargeTaskItems: (enabled: boolean) => Promise<void>;
+  setTaskItemScale: (scale: number) => Promise<void>;
   retrySync: () => Promise<void>;
   setSelectedProjectId: (id: number | null) => void;
   fetchProjects: () => Promise<void>;
   fetchLabels: () => Promise<Label[]>;
+  fetchCurrentUser: () => Promise<User | null>;
   fetchUsers: (query?: string) => Promise<User[]>;
   setCachedUsers: (users: User[]) => void;
   fetchTasks: (projectId: number) => Promise<void>;
@@ -69,6 +75,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   tasks: [],
   labels: [],
   cachedUsers: [],
+  currentUser: null,
   selectedProjectId: null,
   isLoading: false,
   error: null,
@@ -76,6 +83,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   pendingSyncCount: 0,
   reenableStaples: true,
   largeTaskItems: false,
+  taskItemScale: 100,
 
   initialize: async (baseUrl: string, token?: string) => {
     const client = new VikunjaClient({ baseUrl, token });
@@ -96,16 +104,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         cachedTasksRaw,
         cachedLabelsRaw,
         cachedUsersRaw,
+        cachedCurrentUserRaw,
+        savedUsernameRaw,
         reenableSettingRaw,
         largeItemsRaw,
+        taskItemScaleRaw,
         lastProjectRaw,
       ] = await Promise.all([
         AsyncStorage.getItem(CACHE_KEY_PROJECTS),
         AsyncStorage.getItem(CACHE_KEY_TASKS),
         AsyncStorage.getItem(CACHE_KEY_LABELS),
         AsyncStorage.getItem(CACHE_KEY_USERS),
+        AsyncStorage.getItem(CACHE_KEY_CURRENT_USER),
+        AsyncStorage.getItem(CACHE_KEY_SAVED_USERNAME),
         AsyncStorage.getItem(CACHE_KEY_REENABLE_STAPLES),
         AsyncStorage.getItem(CACHE_KEY_LARGE_TASK_ITEMS),
+        AsyncStorage.getItem(CACHE_KEY_TASK_ITEM_SCALE),
         AsyncStorage.getItem(CACHE_KEY_LAST_PROJECT),
       ]);
 
@@ -147,12 +161,34 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         }
       }
 
+      if (cachedCurrentUserRaw) {
+        try {
+          const parsed = JSON.parse(cachedCurrentUserRaw);
+          if (parsed && parsed.username) {
+            updates.currentUser = parsed;
+          }
+        } catch (_) {}
+      } else if (savedUsernameRaw) {
+        updates.currentUser = { id: 0, username: savedUsernameRaw } as User;
+      }
+
       if (reenableSettingRaw !== null) {
         updates.reenableStaples = reenableSettingRaw === 'true';
       }
 
       if (largeItemsRaw !== null) {
         updates.largeTaskItems = largeItemsRaw === 'true';
+      }
+
+      if (taskItemScaleRaw !== null) {
+        const parsed = parseInt(taskItemScaleRaw, 10);
+        if (!isNaN(parsed) && parsed >= 100 && parsed <= 200) {
+          updates.taskItemScale = parsed;
+          updates.largeTaskItems = parsed > 100;
+        }
+      } else if (largeItemsRaw !== null) {
+        const isLarge = largeItemsRaw === 'true';
+        updates.taskItemScale = isLarge ? 150 : 100;
       }
 
       set(updates);
@@ -197,9 +233,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   setLargeTaskItems: async (enabled: boolean) => {
-    set({ largeTaskItems: enabled });
+    const scale = enabled ? 150 : 100;
+    set({ largeTaskItems: enabled, taskItemScale: scale });
     try {
       await AsyncStorage.setItem(CACHE_KEY_LARGE_TASK_ITEMS, enabled ? 'true' : 'false');
+      await AsyncStorage.setItem(CACHE_KEY_TASK_ITEM_SCALE, scale.toString());
+    } catch (e) {
+      // non-blocking
+    }
+  },
+
+  setTaskItemScale: async (scale: number) => {
+    const clamped = Math.max(100, Math.min(200, Math.round(scale)));
+    set({ taskItemScale: clamped, largeTaskItems: clamped > 100 });
+    try {
+      await AsyncStorage.setItem(CACHE_KEY_TASK_ITEM_SCALE, clamped.toString());
+      await AsyncStorage.setItem(CACHE_KEY_LARGE_TASK_ITEMS, clamped > 100 ? 'true' : 'false');
     } catch (e) {
       // non-blocking
     }
@@ -241,6 +290,20 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     } catch (_) {
       return get().labels || [];
     }
+  },
+
+  fetchCurrentUser: async (): Promise<User | null> => {
+    const { client } = get();
+    if (!client || typeof client.getCurrentUser !== 'function') return get().currentUser;
+    try {
+      const user = await client.getCurrentUser();
+      if (user && user.username) {
+        set({ currentUser: user });
+        AsyncStorage.setItem(CACHE_KEY_CURRENT_USER, JSON.stringify(user)).catch(() => {});
+        return user;
+      }
+    } catch (_) {}
+    return get().currentUser;
   },
 
   fetchProjects: async () => {
@@ -428,6 +491,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       await get().fetchLabels();
       await get().fetchProjects();
       await get().fetchAllTasks();
+      await get().fetchCurrentUser();
 
       set({ syncStatus: 'synced' });
     } catch (err) {

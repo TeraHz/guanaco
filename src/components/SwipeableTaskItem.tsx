@@ -33,6 +33,7 @@ interface SwipeableTaskItemProps {
   canMoveUp?: boolean;
   canMoveDown?: boolean;
   isLarge?: boolean;
+  scale?: number;
 }
 
 const PRIORITY_COLORS: Record<number, string> = {
@@ -62,10 +63,130 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   canMoveUp = false,
   canMoveDown = false,
   isLarge: isLargeProp,
+  scale: scaleProp,
 }) => {
   const theme = useAppTheme();
+  const storeScale = useTaskStore((state) => state.taskItemScale);
   const storeLarge = useTaskStore((state) => state.largeTaskItems);
-  const isLarge = isLargeProp ?? storeLarge ?? false;
+
+  // Compute effective scale multiplier (1.0 = 100%, 1.25 = 125%, 1.5 = 150%, etc.)
+  const scalePercent =
+    scaleProp !== undefined
+      ? scaleProp
+      : isLargeProp !== undefined
+      ? isLargeProp
+        ? 150
+        : 100
+      : storeScale ?? (storeLarge ? 150 : 100);
+  const scale = (scalePercent || 100) / 100;
+  const isLarge = scale > 1.0;
+
+  const dynamicStyles = React.useMemo(() => {
+    if (scale === 1) return null;
+    return {
+      card: {
+        borderRadius: scale === 1.5 ? 10 : Math.round(7 * (1 + (scale - 1) * 0.7)),
+        marginVertical: scale === 1.5 ? 3 : Math.round(1.5 * scale),
+        paddingVertical: scale === 1.5 ? 9 : Math.round(5.5 * scale),
+        paddingHorizontal: scale === 1.5 ? 12 : Math.round(8 * (1 + (scale - 1) * 0.7)),
+        minHeight: scale === 1.5 ? 52 : Math.round(35 * scale),
+      },
+      priorityStrip: {
+        width: scale === 1.5 ? 5 : Math.round(3.5 * scale),
+      },
+      checkbox: {
+        width: scale === 1.5 ? 28 : Math.round(19 * scale),
+        height: scale === 1.5 ? 28 : Math.round(19 * scale),
+        borderRadius: scale === 1.5 ? 14 : Math.round(9.5 * scale),
+        borderWidth: scale >= 1.4 ? 2 : 1.5,
+        marginRight: scale === 1.5 ? 12 : Math.round(8 * scale),
+      },
+      checkmark: {
+        fontSize: scale === 1.5 ? 16 : Math.round(10.5 * scale),
+      },
+      title: {
+        fontSize: scale === 1.5 ? 20 : Math.round(13.5 * scale),
+        marginRight: scale === 1.5 ? 9 : Math.round(6 * scale),
+        lineHeight: scale === 1.5 ? 26 : Math.round(18 * scale),
+      },
+      metaRow: {
+        gap: Math.round(4 * scale),
+      },
+      progressBadge: {
+        paddingHorizontal: Math.round(4 * scale),
+        paddingVertical: Math.round(1 * scale),
+        borderRadius: Math.round(4 * scale),
+      },
+      progressText: {
+        fontSize: Math.round(10 * scale),
+      },
+      dateBadge: {
+        paddingHorizontal: Math.round(5 * scale),
+        paddingVertical: Math.round(1 * scale),
+        borderRadius: Math.round(4 * scale),
+      },
+      dueDateText: {
+        fontSize: Math.round(10.5 * scale),
+      },
+      labelPill: {
+        borderRadius: Math.round(5 * (1 + (scale - 1) * 0.5)),
+        paddingHorizontal: Math.round(5 * scale),
+        paddingVertical: Math.round(1.5 * scale),
+      },
+      labelText: {
+        fontSize: Math.round(10.5 * scale),
+      },
+      assigneeBadge: {
+        paddingHorizontal: Math.round(5 * scale),
+        paddingVertical: Math.round(1 * scale),
+        borderRadius: Math.round(5 * scale),
+      },
+      assigneeText: {
+        fontSize: Math.round(10.5 * scale),
+      },
+      addLabelLink: {
+        marginLeft: Math.round(6 * scale),
+        paddingHorizontal: Math.round(4 * scale),
+        paddingVertical: Math.round(1 * scale),
+        borderRadius: Math.round(4 * scale),
+      },
+      addLabelLinkText: {
+        fontSize: Math.round(10 * scale),
+      },
+      leftSwipeAction: {
+        borderRadius: Math.round(7 * (1 + (scale - 1) * 0.7)),
+        marginVertical: Math.round(1.5 * scale),
+        paddingLeft: Math.round(18 * scale),
+      },
+      rightSwipeAction: {
+        borderRadius: Math.round(7 * (1 + (scale - 1) * 0.7)),
+        marginVertical: Math.round(1.5 * scale),
+        paddingRight: Math.round(18 * scale),
+      },
+      swipeActionIcon: {
+        fontSize: Math.round(14 * scale),
+      },
+      swipeActionText: {
+        fontSize: Math.round(12 * scale),
+      },
+      reorderBtn: {
+        paddingHorizontal: Math.round(8 * scale),
+        paddingVertical: Math.round(5 * scale),
+        borderRadius: Math.round(8 * scale),
+      },
+      reorderBtnText: {
+        fontSize: Math.round(13 * scale),
+      },
+      dragHandle: {
+        paddingHorizontal: Math.round(8 * scale),
+        paddingVertical: Math.round(6 * scale),
+      },
+      dragHandleText: {
+        fontSize: Math.round(18 * scale),
+      },
+    };
+  }, [scale]);
+
   const swipeableRef = React.useRef<Swipeable>(null);
   const isSwipingActionRef = React.useRef(false);
   const priorityColor =
@@ -152,17 +273,17 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     _progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>
   ) => {
-    const scale = dragX.interpolate({
+    const actionScale = dragX.interpolate({
       inputRange: [0, 36],
       outputRange: [0.6, 1],
       extrapolate: 'clamp',
     });
 
     return (
-      <View style={[styles.leftSwipeAction, isLarge && styles.leftSwipeActionLarge]}>
-        <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale }] }]}>
-          <Text style={[styles.swipeActionIcon, isLarge && styles.swipeActionIconLarge]}>🗑️</Text>
-          <Text style={[styles.swipeActionText, isLarge && styles.swipeActionTextLarge]}>Delete</Text>
+      <View style={[styles.leftSwipeAction, isLarge && styles.leftSwipeActionLarge, dynamicStyles?.leftSwipeAction]}>
+        <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
+          <Text style={[styles.swipeActionIcon, isLarge && styles.swipeActionIconLarge, dynamicStyles?.swipeActionIcon]}>🗑️</Text>
+          <Text style={[styles.swipeActionText, isLarge && styles.swipeActionTextLarge, dynamicStyles?.swipeActionText]}>Delete</Text>
         </Animated.View>
       </View>
     );
@@ -173,17 +294,17 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     _progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>
   ) => {
-    const scale = dragX.interpolate({
+    const actionScale = dragX.interpolate({
       inputRange: [-36, 0],
       outputRange: [1, 0.6],
       extrapolate: 'clamp',
     });
 
     return (
-      <View style={[styles.rightSwipeAction, isLarge && styles.rightSwipeActionLarge]}>
-        <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale }] }]}>
-          <Text style={[styles.swipeActionIcon, isLarge && styles.swipeActionIconLarge]}>✓</Text>
-          <Text style={[styles.swipeActionText, isLarge && styles.swipeActionTextLarge]}>{task.done ? 'Undo' : 'Done'}</Text>
+      <View style={[styles.rightSwipeAction, isLarge && styles.rightSwipeActionLarge, dynamicStyles?.rightSwipeAction]}>
+        <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
+          <Text style={[styles.swipeActionIcon, isLarge && styles.swipeActionIconLarge, dynamicStyles?.swipeActionIcon]}>✓</Text>
+          <Text style={[styles.swipeActionText, isLarge && styles.swipeActionTextLarge, dynamicStyles?.swipeActionText]}>{task.done ? 'Undo' : 'Done'}</Text>
         </Animated.View>
       </View>
     );
@@ -195,6 +316,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
       style={[
         styles.card,
         isLarge && styles.cardLarge,
+        dynamicStyles?.card,
         {
           backgroundColor: task.done
             ? (theme.isDark ? '#161618' : '#FFFFFF')
@@ -226,6 +348,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           style={[
             styles.priorityStrip,
             isLarge && styles.priorityStripLarge,
+            dynamicStyles?.priorityStrip,
             { backgroundColor: priorityColor },
           ]}
         />
@@ -237,6 +360,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         style={[
           styles.checkbox,
           isLarge && styles.checkboxLarge,
+          dynamicStyles?.checkbox,
           task.done && styles.checkboxDone,
           { borderColor: task.done ? '#30D158' : theme.colors.cardBorder },
         ]}
@@ -244,7 +368,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         activeOpacity={0.7}
       >
         {task.done && (
-          <Text style={[styles.checkmark, isLarge && styles.checkmarkLarge]}>✓</Text>
+          <Text style={[styles.checkmark, isLarge && styles.checkmarkLarge, dynamicStyles?.checkmark]}>✓</Text>
         )}
       </TouchableOpacity>
 
@@ -255,6 +379,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           style={[
             styles.title,
             isLarge && styles.titleLarge,
+            dynamicStyles?.title,
             { color: theme.colors.text },
             task.done && styles.titleDone,
             task.done && { color: theme.colors.textSecondary },
@@ -265,17 +390,18 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         </Text>
 
         {/* Metadata badges row */}
-        <View style={[styles.metaRow, isLarge && styles.metaRowLarge]}>
+        <View style={[styles.metaRow, isLarge && styles.metaRowLarge, dynamicStyles?.metaRow]}>
           {/* Progress % */}
           {task.percent_done !== undefined && task.percent_done > 0 && (
             <View
               testID={`task-progress-${task.id}`}
-              style={[styles.progressBadge, isLarge && styles.progressBadgeLarge]}
+              style={[styles.progressBadge, isLarge && styles.progressBadgeLarge, dynamicStyles?.progressBadge]}
             >
               <Text
                 style={[
                   styles.progressText,
                   isLarge && styles.progressTextLarge,
+                  dynamicStyles?.progressText,
                   {
                     color:
                       task.percent_done === 1 || task.percent_done === 100
@@ -298,6 +424,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
               style={[
                 styles.dateBadge,
                 isLarge && styles.dateBadgeLarge,
+                dynamicStyles?.dateBadge,
                 isOverdue && styles.dateBadgeOverdue,
               ]}
             >
@@ -305,6 +432,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 style={[
                   styles.dueDateText,
                   isLarge && styles.dueDateTextLarge,
+                  dynamicStyles?.dueDateText,
                   isOverdue && styles.dueDateTextOverdue,
                 ]}
               >
@@ -323,6 +451,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 style={[
                   styles.assigneeBadge,
                   isLarge && styles.assigneeBadgeLarge,
+                  dynamicStyles?.assigneeBadge,
                   {
                     backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
                     borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
@@ -333,6 +462,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                   style={[
                     styles.assigneeText,
                     isLarge && styles.assigneeTextLarge,
+                    dynamicStyles?.assigneeText,
                     { color: theme.colors.textSecondary },
                   ]}
                 >
@@ -352,6 +482,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                   style={[
                     styles.labelPill,
                     isLarge && styles.labelPillLarge,
+                    dynamicStyles?.labelPill,
                     {
                       backgroundColor: badgeStyle.backgroundColor,
                       borderColor: badgeStyle.borderColor,
@@ -364,6 +495,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                     style={[
                       styles.labelText,
                       isLarge && styles.labelTextLarge,
+                      dynamicStyles?.labelText,
                       { color: badgeStyle.textColor },
                     ]}
                   >
@@ -381,7 +513,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           {drag ? (
             <TouchableOpacity
               testID={`drag-handle-${task.id}`}
-              style={[styles.dragHandle, isLarge && styles.dragHandleLarge]}
+              style={[styles.dragHandle, isLarge && styles.dragHandleLarge, dynamicStyles?.dragHandle]}
               onPressIn={drag}
               onLongPress={drag}
               activeOpacity={0.6}
@@ -391,6 +523,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 style={[
                   styles.dragHandleText,
                   isLarge && styles.dragHandleTextLarge,
+                  dynamicStyles?.dragHandleText,
                   { color: theme.colors.textSecondary },
                 ]}
               >
@@ -405,6 +538,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 style={[
                   styles.reorderBtn,
                   isLarge && styles.reorderBtnLarge,
+                  dynamicStyles?.reorderBtn,
                   !canMoveUp && styles.reorderBtnDisabled,
                 ]}
                 onPress={onMoveUp}
@@ -416,6 +550,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                   style={[
                     styles.reorderBtnText,
                     isLarge && styles.reorderBtnTextLarge,
+                    dynamicStyles?.reorderBtnText,
                     !canMoveUp && styles.reorderBtnTextDisabled,
                   ]}
                 >
@@ -427,6 +562,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 style={[
                   styles.reorderBtn,
                   isLarge && styles.reorderBtnLarge,
+                  dynamicStyles?.reorderBtn,
                   !canMoveDown && styles.reorderBtnDisabled,
                 ]}
                 onPress={onMoveDown}
@@ -438,6 +574,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                   style={[
                     styles.reorderBtnText,
                     isLarge && styles.reorderBtnTextLarge,
+                    dynamicStyles?.reorderBtnText,
                     !canMoveDown && styles.reorderBtnTextDisabled,
                   ]}
                 >
@@ -451,7 +588,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         onEditLabels && (
           <TouchableOpacity
             testID={`task-edit-labels-${task.id}`}
-            style={[styles.addLabelLink, isLarge && styles.addLabelLinkLarge]}
+            style={[styles.addLabelLink, isLarge && styles.addLabelLinkLarge, dynamicStyles?.addLabelLink]}
             onPress={() => onEditLabels(task)}
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
             activeOpacity={0.7}
@@ -460,6 +597,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
               style={[
                 styles.addLabelLinkText,
                 isLarge && styles.addLabelLinkTextLarge,
+                dynamicStyles?.addLabelLinkText,
               ]}
             >
               +#
@@ -497,8 +635,8 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     <Swipeable
       ref={swipeableRef}
       friction={2.5}
-      leftThreshold={isLarge ? 150 : 115}
-      rightThreshold={isLarge ? 90 : 65}
+      leftThreshold={Math.round(115 * scale)}
+      rightThreshold={Math.round(65 * scale)}
       overshootLeft={false}
       overshootRight={false}
       animationOptions={{

@@ -619,9 +619,26 @@ describe('useTaskStore', () => {
       await setLargeTaskItems(true);
 
       expect(useTaskStore.getState().largeTaskItems).toBe(true);
+      expect(useTaskStore.getState().taskItemScale).toBe(150);
 
       await setLargeTaskItems(false);
 
+      expect(useTaskStore.getState().largeTaskItems).toBe(false);
+      expect(useTaskStore.getState().taskItemScale).toBe(100);
+    });
+
+    it('should update taskItemScale and clamp between 100 and 200', async () => {
+      const { setTaskItemScale } = useTaskStore.getState();
+
+      await setTaskItemScale(125);
+      expect(useTaskStore.getState().taskItemScale).toBe(125);
+      expect(useTaskStore.getState().largeTaskItems).toBe(true);
+
+      await setTaskItemScale(250); // should clamp to 200
+      expect(useTaskStore.getState().taskItemScale).toBe(200);
+
+      await setTaskItemScale(80); // should clamp to 100
+      expect(useTaskStore.getState().taskItemScale).toBe(100);
       expect(useTaskStore.getState().largeTaskItems).toBe(false);
     });
   });

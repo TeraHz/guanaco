@@ -163,16 +163,17 @@ describe('AICore & On-Device ML Grouping', () => {
   });
 
   describe('classifyTaskWithAI() and caching', () => {
-    it('prioritizes explicit labels on task', () => {
+    it('does not allow store/task labels to hijack category section', () => {
       const task: Task = {
         id: 1,
-        title: 'Random Item',
+        title: 'Whole Milk',
         done: false,
         priority: 0,
         project_id: 1,
-        labels: [{ id: 10, title: 'Urgent Action' }],
+        labels: [{ id: 10, title: 'Costco' }],
       };
-      expect(classifyTaskWithAI(task, 'Trip')).toBe('Urgent Action');
+      // Store labels like #Costco stay tags and do not override category section
+      expect(classifyTaskWithAI(task, 'Groceries')).toBe('🥛 Dairy & Cold');
     });
 
     it('prioritizes prefix tags like [Category] or Category:', () => {
