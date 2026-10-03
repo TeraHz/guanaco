@@ -11,7 +11,9 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "typecheck": "tsc --noEmit",
-    "build:bundle": "bash scripts/build-android-bundle.sh"
+    "build:bundle": "bash scripts/build-android-bundle.sh",
+    "publish:play": "node scripts/publish-play-store.js",
+    "deploy": "npm run build:bundle && npm run publish:play"
   },
   "dependencies": {
     "@expo/metro-runtime": "^57.0.16",
@@ -38,6 +40,7 @@
     "@babel/preset-env": "^7.25.4",
     "@babel/preset-react": "^7.24.7",
     "@babel/preset-typescript": "^7.24.7",
+    "@googleapis/androidpublisher": "^42.2.0",
     "@react-native/jest-preset": "^0.86.3",
     "@testing-library/react-native": "^13.0.1",
     "@types/jest": "^29.5.14",

@@ -21,6 +21,10 @@ ios/
 # Environment / Secrets
 .env
 .env*.local
+*.keystore
+*.jks
+play-service-account*.json
+credentials.json
 
 # OS
 .DS_Store
