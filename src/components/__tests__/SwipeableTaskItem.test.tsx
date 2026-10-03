@@ -381,5 +381,39 @@ describe('SwipeableTaskItem', () => {
     fireEvent.press(downBtn);
     expect(mockOnMoveDown).toHaveBeenCalledTimes(1);
   });
+
+  it('renders with 50% larger dimensions and font sizes when isLarge is true', () => {
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+        isLarge={true}
+      />
+    );
+
+    const card = getByTestId(`task-item-${mockTask.id}`);
+    const checkbox = getByTestId(`task-checkbox-${mockTask.id}`);
+    const title = getByTestId(`task-title-${mockTask.id}`);
+
+    // Flatten styles to assert on effective values
+    const flattenedCard = Array.isArray(card.props.style)
+      ? Object.assign({}, ...card.props.style.filter(Boolean))
+      : card.props.style;
+    const flattenedCheckbox = Array.isArray(checkbox.props.style)
+      ? Object.assign({}, ...checkbox.props.style.filter(Boolean))
+      : checkbox.props.style;
+    const flattenedTitle = Array.isArray(title.props.style)
+      ? Object.assign({}, ...title.props.style.filter(Boolean))
+      : title.props.style;
+
+    expect(flattenedCard.minHeight).toBe(52);
+    expect(flattenedCheckbox.width).toBe(28);
+    expect(flattenedCheckbox.height).toBe(28);
+    expect(flattenedTitle.fontSize).toBe(20);
+  });
 });
+
 

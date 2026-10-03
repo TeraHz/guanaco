@@ -32,8 +32,25 @@ describe('SettingsModal', () => {
 
     expect(getByText('Settings')).toBeTruthy();
     expect(getByText(/tasks\.geodar\.com/)).toBeTruthy();
+    expect(getByText('Large Items (+50%)')).toBeTruthy();
+    expect(getByTestId('settings-large-items-switch')).toBeTruthy();
     expect(getByText('Re-enable Staple Tasks')).toBeTruthy();
     expect(getByTestId('settings-staples-switch')).toBeTruthy();
+  });
+
+  it('allows toggling large items preference in task store', () => {
+    const { getByTestId } = render(
+      <SettingsModal
+        visible={true}
+        onClose={mockOnClose}
+        onLogout={mockOnLogout}
+      />
+    );
+
+    const switchEl = getByTestId('settings-large-items-switch');
+    fireEvent(switchEl, 'valueChange', true);
+
+    expect(useTaskStore.getState().largeTaskItems).toBe(true);
   });
 
   it('allows toggling staple tasks preference in task store', () => {

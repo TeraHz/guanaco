@@ -62,6 +62,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     syncStatus,
     pendingSyncCount,
     reenableStaples,
+    largeTaskItems,
     toggleTask,
     reenableTask,
     updateTaskLabels,
@@ -431,12 +432,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             <View>
               {showCategoryHeader ? (
                 <View
-                  style={styles.categorySectionHeader}
+                  style={[
+                    styles.categorySectionHeader,
+                    largeTaskItems && styles.categorySectionHeaderLarge,
+                  ]}
                   testID={`category-header-${currentCategory}`}
                 >
                   <Text
                     style={[
                       styles.categorySectionText,
+                      largeTaskItems && styles.categorySectionTextLarge,
                       { color: theme.colors.textSecondary },
                     ]}
                   >
@@ -447,6 +452,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               <ScaleDecorator activeScale={1.03}>
                 <SwipeableTaskItem
                   task={item}
+                  isLarge={largeTaskItems}
                   labelDefinitions={storeLabels}
                   onToggle={toggleTask}
                   onMove={(taskId) => setMovingTaskId(taskId)}
@@ -957,9 +963,18 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 4,
   },
+  categorySectionHeaderLarge: {
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 6,
+  },
   categorySectionText: {
     fontSize: 12,
     fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  categorySectionTextLarge: {
+    fontSize: 16,
     letterSpacing: 0.8,
   },
 });

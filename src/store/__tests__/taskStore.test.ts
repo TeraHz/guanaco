@@ -609,6 +609,22 @@ describe('useTaskStore', () => {
       ]);
     });
   });
+
+  describe('Large Task Items Preference', () => {
+    it('should update largeTaskItems state and persist to AsyncStorage', async () => {
+      const { setLargeTaskItems } = useTaskStore.getState();
+
+      expect(useTaskStore.getState().largeTaskItems).toBe(false);
+
+      await setLargeTaskItems(true);
+
+      expect(useTaskStore.getState().largeTaskItems).toBe(true);
+
+      await setLargeTaskItems(false);
+
+      expect(useTaskStore.getState().largeTaskItems).toBe(false);
+    });
+  });
 });
 
 

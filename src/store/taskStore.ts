@@ -11,6 +11,7 @@ const CACHE_KEY_TASKS = '@vikunja_cached_tasks';
 const CACHE_KEY_LABELS = '@vikunja_cached_labels';
 const CACHE_KEY_USERS = '@vikunja_cached_users';
 const CACHE_KEY_REENABLE_STAPLES = '@vikunja_reenable_staples';
+const CACHE_KEY_LARGE_TASK_ITEMS = '@vikunja_large_task_items';
 const CACHE_KEY_LAST_PROJECT = '@vikunja_last_project_id';
 
 export interface TaskState {
@@ -30,11 +31,13 @@ export interface TaskState {
 
   // Settings
   reenableStaples: boolean;
+  largeTaskItems: boolean;
 
   // Actions
   initialize: (baseUrl: string, token?: string) => Promise<void>;
   loadCachedData: () => Promise<void>;
   setReenableStaples: (enabled: boolean) => Promise<void>;
+  setLargeTaskItems: (enabled: boolean) => Promise<void>;
   retrySync: () => Promise<void>;
   setSelectedProjectId: (id: number | null) => void;
   fetchProjects: () => Promise<void>;
@@ -72,6 +75,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   syncStatus: 'synced',
   pendingSyncCount: 0,
   reenableStaples: true,
+  largeTaskItems: false,
 
   initialize: async (baseUrl: string, token?: string) => {
     const client = new VikunjaClient({ baseUrl, token });
@@ -93,6 +97,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         cachedLabelsRaw,
         cachedUsersRaw,
         reenableSettingRaw,
+        largeItemsRaw,
         lastProjectRaw,
       ] = await Promise.all([
         AsyncStorage.getItem(CACHE_KEY_PROJECTS),
@@ -100,6 +105,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         AsyncStorage.getItem(CACHE_KEY_LABELS),
         AsyncStorage.getItem(CACHE_KEY_USERS),
         AsyncStorage.getItem(CACHE_KEY_REENABLE_STAPLES),
+        AsyncStorage.getItem(CACHE_KEY_LARGE_TASK_ITEMS),
         AsyncStorage.getItem(CACHE_KEY_LAST_PROJECT),
       ]);
 
@@ -145,6 +151,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         updates.reenableStaples = reenableSettingRaw === 'true';
       }
 
+      if (largeItemsRaw !== null) {
+        updates.largeTaskItems = largeItemsRaw === 'true';
+      }
+
       set(updates);
     } catch (e) {
       // Ignore cache load errors gracefully
@@ -181,6 +191,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set({ reenableStaples: enabled });
     try {
       await AsyncStorage.setItem(CACHE_KEY_REENABLE_STAPLES, enabled ? 'true' : 'false');
+    } catch (e) {
+      // non-blocking
+    }
+  },
+
+  setLargeTaskItems: async (enabled: boolean) => {
+    set({ largeTaskItems: enabled });
+    try {
+      await AsyncStorage.setItem(CACHE_KEY_LARGE_TASK_ITEMS, enabled ? 'true' : 'false');
     } catch (e) {
       // non-blocking
     }

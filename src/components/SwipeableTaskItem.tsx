@@ -12,6 +12,7 @@ import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
 import { useAppTheme } from '../utils/theme';
+import { useTaskStore } from '../store/taskStore';
 import { Label, Task } from '../types/vikunja';
 
 interface SwipeableTaskItemProps {
@@ -31,6 +32,7 @@ interface SwipeableTaskItemProps {
   onMoveDown?: () => void;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
+  isLarge?: boolean;
 }
 
 const PRIORITY_COLORS: Record<number, string> = {
@@ -59,8 +61,11 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   onMoveDown,
   canMoveUp = false,
   canMoveDown = false,
+  isLarge: isLargeProp,
 }) => {
   const theme = useAppTheme();
+  const storeLarge = useTaskStore((state) => state.largeTaskItems);
+  const isLarge = isLargeProp ?? storeLarge ?? false;
   const swipeableRef = React.useRef<Swipeable>(null);
   const isSwipingActionRef = React.useRef(false);
   const priorityColor =
@@ -154,10 +159,10 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     });
 
     return (
-      <View style={styles.leftSwipeAction}>
+      <View style={[styles.leftSwipeAction, isLarge && styles.leftSwipeActionLarge]}>
         <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale }] }]}>
-          <Text style={styles.swipeActionIcon}>🗑️</Text>
-          <Text style={styles.swipeActionText}>Delete</Text>
+          <Text style={[styles.swipeActionIcon, isLarge && styles.swipeActionIconLarge]}>🗑️</Text>
+          <Text style={[styles.swipeActionText, isLarge && styles.swipeActionTextLarge]}>Delete</Text>
         </Animated.View>
       </View>
     );
@@ -175,10 +180,10 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     });
 
     return (
-      <View style={styles.rightSwipeAction}>
+      <View style={[styles.rightSwipeAction, isLarge && styles.rightSwipeActionLarge]}>
         <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale }] }]}>
-          <Text style={styles.swipeActionIcon}>✓</Text>
-          <Text style={styles.swipeActionText}>{task.done ? 'Undo' : 'Done'}</Text>
+          <Text style={[styles.swipeActionIcon, isLarge && styles.swipeActionIconLarge]}>✓</Text>
+          <Text style={[styles.swipeActionText, isLarge && styles.swipeActionTextLarge]}>{task.done ? 'Undo' : 'Done'}</Text>
         </Animated.View>
       </View>
     );
@@ -189,6 +194,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
       testID={`task-item-${task.id}`}
       style={[
         styles.card,
+        isLarge && styles.cardLarge,
         {
           backgroundColor: task.done
             ? (theme.isDark ? '#161618' : '#FFFFFF')
@@ -216,7 +222,13 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     >
       {/* Priority indicator bar */}
       {task.priority > 0 && (
-        <View style={[styles.priorityStrip, { backgroundColor: priorityColor }]} />
+        <View
+          style={[
+            styles.priorityStrip,
+            isLarge && styles.priorityStripLarge,
+            { backgroundColor: priorityColor },
+          ]}
+        />
       )}
 
       {/* Tactile Checkbox */}
@@ -224,13 +236,16 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         testID={`task-checkbox-${task.id}`}
         style={[
           styles.checkbox,
+          isLarge && styles.checkboxLarge,
           task.done && styles.checkboxDone,
           { borderColor: task.done ? '#30D158' : theme.colors.cardBorder },
         ]}
         onPress={handleToggle}
         activeOpacity={0.7}
       >
-        {task.done && <Text style={styles.checkmark}>✓</Text>}
+        {task.done && (
+          <Text style={[styles.checkmark, isLarge && styles.checkmarkLarge]}>✓</Text>
+        )}
       </TouchableOpacity>
 
       {/* Title & Metadata */}
@@ -239,6 +254,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           testID={`task-title-${task.id}`}
           style={[
             styles.title,
+            isLarge && styles.titleLarge,
             { color: theme.colors.text },
             task.done && styles.titleDone,
             task.done && { color: theme.colors.textSecondary },
@@ -249,13 +265,17 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         </Text>
 
         {/* Metadata badges row */}
-        <View style={styles.metaRow}>
+        <View style={[styles.metaRow, isLarge && styles.metaRowLarge]}>
           {/* Progress % */}
           {task.percent_done !== undefined && task.percent_done > 0 && (
-            <View testID={`task-progress-${task.id}`} style={styles.progressBadge}>
+            <View
+              testID={`task-progress-${task.id}`}
+              style={[styles.progressBadge, isLarge && styles.progressBadgeLarge]}
+            >
               <Text
                 style={[
                   styles.progressText,
+                  isLarge && styles.progressTextLarge,
                   {
                     color:
                       task.percent_done === 1 || task.percent_done === 100
@@ -277,12 +297,14 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
             <View
               style={[
                 styles.dateBadge,
+                isLarge && styles.dateBadgeLarge,
                 isOverdue && styles.dateBadgeOverdue,
               ]}
             >
               <Text
                 style={[
                   styles.dueDateText,
+                  isLarge && styles.dueDateTextLarge,
                   isOverdue && styles.dueDateTextOverdue,
                 ]}
               >
@@ -300,13 +322,20 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 testID={`task-assignee-${task.id}-${user.username}`}
                 style={[
                   styles.assigneeBadge,
+                  isLarge && styles.assigneeBadgeLarge,
                   {
                     backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
                     borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
                   },
                 ]}
               >
-                <Text style={[styles.assigneeText, { color: theme.colors.textSecondary }]}>
+                <Text
+                  style={[
+                    styles.assigneeText,
+                    isLarge && styles.assigneeTextLarge,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
                   @{user.username}
                 </Text>
               </View>
@@ -322,6 +351,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                   testID={`task-label-${task.id}-${label.title}`}
                   style={[
                     styles.labelPill,
+                    isLarge && styles.labelPillLarge,
                     {
                       backgroundColor: badgeStyle.backgroundColor,
                       borderColor: badgeStyle.borderColor,
@@ -330,7 +360,13 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                   onPress={() => onSelectLabel && onSelectLabel(label.title)}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.labelText, { color: badgeStyle.textColor }]}>
+                  <Text
+                    style={[
+                      styles.labelText,
+                      isLarge && styles.labelTextLarge,
+                      { color: badgeStyle.textColor },
+                    ]}
+                  >
                     #{label.title}
                   </Text>
                 </TouchableOpacity>
@@ -345,36 +381,68 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           {drag ? (
             <TouchableOpacity
               testID={`drag-handle-${task.id}`}
-              style={styles.dragHandle}
+              style={[styles.dragHandle, isLarge && styles.dragHandleLarge]}
               onPressIn={drag}
               onLongPress={drag}
               activeOpacity={0.6}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
-              <Text style={[styles.dragHandleText, { color: theme.colors.textSecondary }]}>☰</Text>
+              <Text
+                style={[
+                  styles.dragHandleText,
+                  isLarge && styles.dragHandleTextLarge,
+                  { color: theme.colors.textSecondary },
+                ]}
+              >
+                ☰
+              </Text>
             </TouchableOpacity>
           ) : null}
           {onMoveUp && onMoveDown ? (
             <>
               <TouchableOpacity
                 testID={`move-up-task-${task.id}`}
-                style={[styles.reorderBtn, !canMoveUp && styles.reorderBtnDisabled]}
+                style={[
+                  styles.reorderBtn,
+                  isLarge && styles.reorderBtnLarge,
+                  !canMoveUp && styles.reorderBtnDisabled,
+                ]}
                 onPress={onMoveUp}
                 disabled={!canMoveUp}
                 activeOpacity={0.6}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Text style={[styles.reorderBtnText, !canMoveUp && styles.reorderBtnTextDisabled]}>▲</Text>
+                <Text
+                  style={[
+                    styles.reorderBtnText,
+                    isLarge && styles.reorderBtnTextLarge,
+                    !canMoveUp && styles.reorderBtnTextDisabled,
+                  ]}
+                >
+                  ▲
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 testID={`move-down-task-${task.id}`}
-                style={[styles.reorderBtn, !canMoveDown && styles.reorderBtnDisabled]}
+                style={[
+                  styles.reorderBtn,
+                  isLarge && styles.reorderBtnLarge,
+                  !canMoveDown && styles.reorderBtnDisabled,
+                ]}
                 onPress={onMoveDown}
                 disabled={!canMoveDown}
                 activeOpacity={0.6}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Text style={[styles.reorderBtnText, !canMoveDown && styles.reorderBtnTextDisabled]}>▼</Text>
+                <Text
+                  style={[
+                    styles.reorderBtnText,
+                    isLarge && styles.reorderBtnTextLarge,
+                    !canMoveDown && styles.reorderBtnTextDisabled,
+                  ]}
+                >
+                  ▼
+                </Text>
               </TouchableOpacity>
             </>
           ) : null}
@@ -383,12 +451,19 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         onEditLabels && (
           <TouchableOpacity
             testID={`task-edit-labels-${task.id}`}
-            style={styles.addLabelLink}
+            style={[styles.addLabelLink, isLarge && styles.addLabelLinkLarge]}
             onPress={() => onEditLabels(task)}
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
             activeOpacity={0.7}
           >
-            <Text style={styles.addLabelLinkText}>+#</Text>
+            <Text
+              style={[
+                styles.addLabelLinkText,
+                isLarge && styles.addLabelLinkTextLarge,
+              ]}
+            >
+              +#
+            </Text>
           </TouchableOpacity>
         )
       )}
@@ -422,8 +497,8 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     <Swipeable
       ref={swipeableRef}
       friction={2.5}
-      leftThreshold={115}
-      rightThreshold={65}
+      leftThreshold={isLarge ? 150 : 115}
+      rightThreshold={isLarge ? 90 : 65}
       overshootLeft={false}
       overshootRight={false}
       animationOptions={{
@@ -453,6 +528,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     minHeight: 35,
   },
+  cardLarge: {
+    borderRadius: 10,
+    marginVertical: 3,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    minHeight: 52,
+  },
   cardDone: {
     opacity: 0.65,
     backgroundColor: '#161618',
@@ -464,6 +546,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 3.5,
   },
+  priorityStripLarge: {
+    width: 5,
+  },
   checkbox: {
     width: 19,
     height: 19,
@@ -474,6 +559,13 @@ const styles = StyleSheet.create({
     marginRight: 8,
     flexShrink: 0,
   },
+  checkboxLarge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    marginRight: 12,
+  },
   checkboxDone: {
     backgroundColor: '#30D158',
   },
@@ -481,6 +573,9 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 10.5,
     fontWeight: '900',
+  },
+  checkmarkLarge: {
+    fontSize: 16,
   },
   singleRow: {
     flex: 1,
@@ -496,6 +591,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginRight: 6,
   },
+  titleLarge: {
+    fontSize: 20,
+    marginRight: 9,
+    lineHeight: 26,
+  },
   titleDone: {
     textDecorationLine: 'line-through',
   },
@@ -505,21 +605,37 @@ const styles = StyleSheet.create({
     gap: 4,
     flexShrink: 0,
   },
+  metaRowLarge: {
+    gap: 6,
+  },
   progressBadge: {
     backgroundColor: 'rgba(10, 132, 255, 0.12)',
     paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 4,
   },
+  progressBadgeLarge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
   progressText: {
     fontSize: 10,
     fontWeight: '700',
+  },
+  progressTextLarge: {
+    fontSize: 14,
   },
   dateBadge: {
     backgroundColor: '#2C2C2E',
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderRadius: 4,
+  },
+  dateBadgeLarge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   dateBadgeOverdue: {
     backgroundColor: 'rgba(255, 69, 58, 0.15)',
@@ -528,6 +644,9 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: '#8E8E93',
     fontWeight: '500',
+  },
+  dueDateTextLarge: {
+    fontSize: 15,
   },
   dueDateTextOverdue: {
     color: '#FF453A',
@@ -543,10 +662,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 1,
   },
+  labelPillLarge: {
+    borderRadius: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+  },
   labelText: {
     fontSize: 10.5,
     color: '#0A84FF',
     fontWeight: '700',
+  },
+  labelTextLarge: {
+    fontSize: 15,
   },
   addLabelLink: {
     marginLeft: 6,
@@ -557,10 +684,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  addLabelLinkLarge: {
+    marginLeft: 9,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
   addLabelLinkText: {
     fontSize: 10,
     color: '#8E8E93',
     fontWeight: '700',
+  },
+  addLabelLinkTextLarge: {
+    fontSize: 14,
   },
   leftSwipeAction: {
     backgroundColor: '#FF453A',
@@ -572,6 +708,11 @@ const styles = StyleSheet.create({
     paddingLeft: 18,
     flex: 1,
   },
+  leftSwipeActionLarge: {
+    borderRadius: 10,
+    marginVertical: 3,
+    paddingLeft: 24,
+  },
   rightSwipeAction: {
     backgroundColor: '#30D158',
     justifyContent: 'center',
@@ -581,6 +722,11 @@ const styles = StyleSheet.create({
     marginVertical: 1.5,
     paddingRight: 18,
     flex: 1,
+  },
+  rightSwipeActionLarge: {
+    borderRadius: 10,
+    marginVertical: 3,
+    paddingRight: 24,
   },
   swipeInnerContent: {
     flexDirection: 'row',
@@ -592,10 +738,16 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '900',
   },
+  swipeActionIconLarge: {
+    fontSize: 20,
+  },
   swipeActionText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  swipeActionTextLarge: {
+    fontSize: 17,
   },
   embeddedActions: {
     width: 0,
@@ -633,9 +785,17 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     borderWidth: 1,
   },
+  assigneeBadgeLarge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
   assigneeText: {
     fontSize: 10.5,
     fontWeight: '600',
+  },
+  assigneeTextLarge: {
+    fontSize: 15,
   },
   reorderControls: {
     flexDirection: 'row',
@@ -653,6 +813,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  reorderBtnLarge: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
   reorderBtnDisabled: {
     backgroundColor: 'transparent',
     borderColor: '#3A3A3C',
@@ -662,6 +827,9 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  reorderBtnTextLarge: {
+    fontSize: 17,
   },
   reorderBtnTextDisabled: {
     color: '#8E8E93',
@@ -680,8 +848,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  dragHandleLarge: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
   dragHandleText: {
     fontSize: 18,
     fontWeight: '600',
+  },
+  dragHandleTextLarge: {
+    fontSize: 26,
   },
 });

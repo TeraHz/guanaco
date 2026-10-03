@@ -42,6 +42,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     cachedUsers,
     reenableStaples,
     setReenableStaples,
+    largeTaskItems,
+    setLargeTaskItems,
     resetAndSyncFromServer,
     syncStatus,
     pendingSyncCount,
@@ -197,6 +199,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               TASK PREFERENCES
             </Text>
             <View style={styles.settingRow}>
+              <View style={styles.settingTextCol}>
+                <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                  Large Items (+50%)
+                </Text>
+                <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
+                  Make list items, text, and tap targets 50% larger
+                </Text>
+              </View>
+              <Switch
+                testID="settings-large-items-switch"
+                value={largeTaskItems}
+                onValueChange={(val) => {
+                  setLargeTaskItems(val);
+                  safeHaptics.selection();
+                }}
+                trackColor={{ false: '#3A3A3C', true: '#30D158' }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
+            <View
+              style={[
+                styles.settingRow,
+                { borderTopColor: theme.colors.cardBorder, borderTopWidth: StyleSheet.hairlineWidth },
+              ]}
+            >
               <View style={styles.settingTextCol}>
                 <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
                   Re-enable Staple Tasks
