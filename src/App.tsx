@@ -99,14 +99,18 @@ export default function App() {
   const handleLogout = async () => {
     await clearStoredAuth();
     setIsAuthenticated(false);
-    useTaskStore.setState({
-      client: null,
-      syncQueue: null,
-      projects: [],
-      tasks: [],
-      selectedProjectId: null,
-    });
+    await useTaskStore.getState().clearSession();
   };
+
+  useEffect(() => {
+    const unsub = useTaskStore.subscribe((state, prev) => {
+      if (prev.client && !state.client) {
+        clearStoredAuth().catch(() => {});
+        setIsAuthenticated(false);
+      }
+    });
+    return unsub;
+  }, []);
 
   return (
     <GestureHandlerRootView

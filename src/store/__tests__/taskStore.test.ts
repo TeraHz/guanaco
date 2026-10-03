@@ -16,6 +16,9 @@ describe('useTaskStore', () => {
       selectedProjectId: 1,
       isLoading: false,
       error: null,
+      client: null,
+      syncQueue: null,
+      isSyncingAll: false,
     });
     jest.clearAllMocks();
   });
@@ -809,6 +812,90 @@ describe('useTaskStore', () => {
       expect(useTaskStore.getState().largeTaskItems).toBe(false);
     });
   });
+
+  describe('Phase 2 Reliability: Sync Locks, Storage Rehydration & Clear Session', () => {
+    it('syncAll should acquire concurrency lock and prevent overlapping executions', async () => {
+      let resolveFirstSync: () => void = () => {};
+      const mockClient = {
+        getLabels: jest.fn().mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              resolveFirstSync = () => resolve([]);
+            })
+        ),
+        getProjects: jest.fn().mockResolvedValue([{ id: 1, title: 'Inbox' } as any]),
+        getAllTasks: jest.fn().mockResolvedValue([]),
+        getCurrentUser: jest.fn().mockResolvedValue({ id: 1, username: 'terahz' } as any),
+      };
+
+      useTaskStore.setState({ client: mockClient as any });
+      const store = useTaskStore.getState();
+
+      // Trigger first sync (will pause on getLabels)
+      const firstSyncPromise = store.syncAll();
+      expect(useTaskStore.getState().syncStatus).toBe('syncing');
+
+      // Trigger second sync while first is still in progress
+      const secondSyncPromise = store.syncAll();
+
+      // Resolve first sync to complete
+      resolveFirstSync();
+      await Promise.all([firstSyncPromise, secondSyncPromise]);
+
+      // getLabels should only have been called ONCE due to concurrency lock
+      expect(mockClient.getLabels).toHaveBeenCalledTimes(1);
+    });
+
+    it('clearSession should clear in-memory state, syncQueue, and all AsyncStorage caches', async () => {
+      const AsyncStorage = require('@react-native-async-storage/async-storage');
+      useTaskStore.setState({
+        projects: [{ id: 1, title: 'Work' } as any],
+        tasks: [{ id: 10, title: 'Task 1', done: false, project_id: 1 } as any],
+        labels: [{ id: 2, title: 'Bug' } as any],
+        currentUser: { id: 1, username: 'terahz' } as any,
+        selectedProjectId: 1,
+      });
+
+      const store = useTaskStore.getState();
+      await store.clearSession();
+
+      const stateAfter = useTaskStore.getState();
+      expect(stateAfter.projects).toEqual([]);
+      expect(stateAfter.tasks).toEqual([]);
+      expect(stateAfter.labels).toEqual([]);
+      expect(stateAfter.currentUser).toBeNull();
+      expect(stateAfter.selectedProjectId).toBeNull();
+
+      expect(await AsyncStorage.getItem('@vikunja_cached_projects')).toBeNull();
+      expect(await AsyncStorage.getItem('@vikunja_cached_tasks')).toBeNull();
+      expect(await AsyncStorage.getItem('@vikunja_cached_labels')).toBeNull();
+      expect(await AsyncStorage.getItem('@vikunja_cached_current_user')).toBeNull();
+      expect(await AsyncStorage.getItem('@vikunja_sync_queue')).toBeNull();
+    });
+
+    it('initialize should rehydrate pending syncQueue from AsyncStorage', async () => {
+      const AsyncStorage = require('@react-native-async-storage/async-storage');
+      await AsyncStorage.setItem(
+        '@vikunja_sync_queue',
+        JSON.stringify([
+          {
+            id: 'persisted-mutation',
+            type: 'TOGGLE_TASK',
+            payload: { taskId: 55, done: true },
+            timestamp: 1000,
+          },
+        ])
+      );
+
+      await useTaskStore.getState().initialize('https://try.vikunja.io', 'test-token');
+
+      const queue = useTaskStore.getState().syncQueue;
+      expect(queue).not.toBeNull();
+      expect(queue?.getQueue()).toHaveLength(1);
+      expect(queue?.getQueue()[0].id).toBe('persisted-mutation');
+    });
+  });
 });
+
 
 

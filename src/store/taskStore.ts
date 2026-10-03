@@ -3,7 +3,7 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CreateTaskInput, Label, Project, Task, UpdateTaskInput, User } from '../types/vikunja';
 import { VikunjaClient } from '../api/client';
-import { SyncQueue, SyncStatus } from './syncQueue';
+import { SyncQueue, SyncStatus, SYNC_QUEUE_STORAGE_KEY } from './syncQueue';
 import { safeHaptics } from '../utils/haptics';
 import { MY_TASKS_PROJECT_ID } from '../utils/taskFilters';
 
@@ -33,6 +33,7 @@ export interface TaskState {
   // Offline & Sync
   syncStatus: SyncStatus;
   pendingSyncCount: number;
+  isSyncingAll?: boolean;
 
   reenableStaples: boolean;
   largeTaskItems: boolean;
@@ -55,6 +56,7 @@ export interface TaskState {
   fetchAllTasks: () => Promise<void>;
   syncAll: () => Promise<void>;
   resetAndSyncFromServer: () => Promise<void>;
+  clearSession: () => Promise<void>;
   toggleTask: (taskId: number) => void;
   reenableTask: (taskId: number, newLabels?: Label[]) => void;
   updateTaskLabels: (taskId: number, labels: Label[]) => void;
@@ -94,7 +96,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       set({ syncStatus, pendingSyncCount });
     });
 
+    client.onUnauthorized = () => {
+      get().clearSession().catch(() => {});
+    };
+
     set({ client, syncQueue });
+    await syncQueue.loadFromStorage();
+    set({ pendingSyncCount: syncQueue.getQueue().length });
     await get().loadCachedData();
   },
 
@@ -482,13 +490,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   syncAll: async () => {
-    const { client, syncQueue } = get();
-    if (!client) return;
+    const { client, syncQueue, isSyncingAll } = get();
+    if (!client || isSyncingAll) return;
 
-    set({ syncStatus: 'syncing' });
+    set({ isSyncingAll: true, syncStatus: 'syncing' });
     try {
       // 1. Outbound sync: process queued mutations first
-      if (syncQueue) {
+      if (syncQueue && typeof syncQueue.processQueue === 'function') {
         await syncQueue.processQueue();
       }
 
@@ -501,20 +509,29 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       set({ syncStatus: 'synced' });
     } catch (err) {
       set({ syncStatus: 'offline' });
+    } finally {
+      set({ isSyncingAll: false });
     }
   },
 
   resetAndSyncFromServer: async () => {
-    const { client } = get();
+    const { client, syncQueue } = get();
     if (!client) return;
 
     set({ isLoading: true, syncStatus: 'syncing', error: null });
     try {
+      if (syncQueue && typeof syncQueue.clear === 'function') {
+        await syncQueue.clear();
+      }
+
       // 1. Clear cached storage to eliminate any stale data
       await AsyncStorage.multiRemove([
         CACHE_KEY_TASKS,
         CACHE_KEY_LABELS,
         CACHE_KEY_PROJECTS,
+        CACHE_KEY_USERS,
+        CACHE_KEY_CURRENT_USER,
+        SYNC_QUEUE_STORAGE_KEY,
       ]);
 
       // 2. Clear in-memory tasks
@@ -534,6 +551,37 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       });
       throw err;
     }
+  },
+
+  clearSession: async () => {
+    const { syncQueue } = get();
+    if (syncQueue && typeof syncQueue.clear === 'function') {
+      await syncQueue.clear();
+    }
+    set({
+      client: null,
+      syncQueue: null,
+      projects: [],
+      tasks: [],
+      labels: [],
+      cachedUsers: [],
+      currentUser: null,
+      selectedProjectId: null,
+      syncStatus: 'synced',
+      pendingSyncCount: 0,
+      isSyncingAll: false,
+    });
+    try {
+      await AsyncStorage.multiRemove([
+        CACHE_KEY_PROJECTS,
+        CACHE_KEY_TASKS,
+        CACHE_KEY_LABELS,
+        CACHE_KEY_USERS,
+        CACHE_KEY_CURRENT_USER,
+        CACHE_KEY_LAST_PROJECT,
+        SYNC_QUEUE_STORAGE_KEY,
+      ]);
+    } catch (_) {}
   },
 
   toggleTask: (taskId: number) => {

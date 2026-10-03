@@ -345,4 +345,73 @@ describe('SyncQueue', () => {
     // Item must be removed from queue so it is not re-executed creating duplicate tasks
     expect(queue.getQueue()).toHaveLength(0);
   });
+
+  it('should persist queue to AsyncStorage on enqueue and rehydrate on loadFromStorage', async () => {
+    const AsyncStorage = require('@react-native-async-storage/async-storage');
+    await AsyncStorage.clear();
+
+    const mutation: Mutation = {
+      id: 'persist-1',
+      type: 'TOGGLE_TASK',
+      payload: { taskId: 42, done: true },
+      timestamp: 5000,
+      onSuccess: jest.fn(),
+    };
+
+    queue.enqueue(mutation);
+
+    // Wait microtask for async storage write
+    await new Promise((r) => setTimeout(r, 10));
+
+    const stored = await AsyncStorage.getItem('@vikunja_sync_queue');
+    expect(stored).not.toBeNull();
+    const parsed = JSON.parse(stored!);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].id).toBe('persist-1');
+    expect(parsed[0].payload.taskId).toBe(42);
+    // Callbacks should not be stored
+    expect(parsed[0].onSuccess).toBeUndefined();
+
+    // Create a new fresh queue instance and load from storage
+    const newQueue = new SyncQueue(mockClient);
+    await newQueue.loadFromStorage();
+
+    expect(newQueue.getQueue()).toHaveLength(1);
+    expect(newQueue.getQueue()[0].id).toBe('persist-1');
+    expect(newQueue.getStatus()).toBe('syncing');
+
+    // Processing the new queue executes the persisted mutation and clears storage
+    mockClient.toggleTaskDone.mockResolvedValueOnce({
+      id: 42,
+      done: true,
+      title: 'Persisted task',
+      priority: 0,
+      project_id: 1,
+    } as any);
+
+    await newQueue.processQueue();
+    expect(newQueue.getQueue()).toHaveLength(0);
+
+    await new Promise((r) => setTimeout(r, 10));
+    const storedAfter = await AsyncStorage.getItem('@vikunja_sync_queue');
+    expect(storedAfter).toBeNull();
+  });
+
+  it('should clear AsyncStorage when queue.clear() is called', async () => {
+    const AsyncStorage = require('@react-native-async-storage/async-storage');
+    queue.enqueue({
+      id: 'persist-2',
+      type: 'DELETE_TASK',
+      payload: { taskId: 99 },
+      timestamp: 6000,
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(await AsyncStorage.getItem('@vikunja_sync_queue')).not.toBeNull();
+
+    await queue.clear();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(await AsyncStorage.getItem('@vikunja_sync_queue')).toBeNull();
+    expect(queue.getQueue()).toHaveLength(0);
+  });
 });

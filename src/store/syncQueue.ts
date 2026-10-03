@@ -1,5 +1,8 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { VikunjaClient } from '../api/client';
 import { Task } from '../types/vikunja';
+
+export const SYNC_QUEUE_STORAGE_KEY = '@vikunja_sync_queue';
 
 export type MutationType =
   | 'CREATE_TASK'
@@ -54,12 +57,45 @@ export class SyncQueue {
     this.statusListeners.forEach((l) => l(this.status, count));
   }
 
+  private async persistQueue(): Promise<void> {
+    try {
+      if (this.queue.length === 0) {
+        await AsyncStorage.removeItem(SYNC_QUEUE_STORAGE_KEY);
+      } else {
+        const serializable = this.queue.map(({ id, type, payload, timestamp, retryCount }) => ({
+          id,
+          type,
+          payload,
+          timestamp,
+          retryCount,
+        }));
+        await AsyncStorage.setItem(SYNC_QUEUE_STORAGE_KEY, JSON.stringify(serializable));
+      }
+    } catch (_) {
+      // Storage errors should not break in-memory queue operation
+    }
+  }
+
+  public async loadFromStorage(): Promise<void> {
+    try {
+      const data = await AsyncStorage.getItem(SYNC_QUEUE_STORAGE_KEY);
+      if (data) {
+        const parsed: Mutation[] = JSON.parse(data);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          this.queue = parsed;
+          this.setStatus('syncing');
+        }
+      }
+    } catch (_) {}
+  }
+
   public enqueue(mutation: Mutation): void {
     this.queue.push({
       ...mutation,
       retryCount: mutation.retryCount ?? 0,
     });
     this.setStatus('syncing');
+    this.persistQueue();
   }
 
   public hasPendingForTask(taskId: number, mutationType?: MutationType): boolean {
@@ -105,6 +141,7 @@ export class SyncQueue {
         }
       }
     }
+    this.persistQueue();
   }
 
   public async processQueue(): Promise<void> {
@@ -212,6 +249,7 @@ export class SyncQueue {
 
           // Successfully processed by server: remove from queue first
           this.queue.shift();
+          await this.persistQueue();
 
           if (item.onSuccess) {
             try {
@@ -228,6 +266,7 @@ export class SyncQueue {
           if (isPermanentClientError) {
             // Drop permanent 4xx error (e.g. 404 Not Found) so queue doesn't get blocked forever
             this.queue.shift();
+            await this.persistQueue();
             if (item.onError) {
               try {
                 item.onError(err);
@@ -238,6 +277,7 @@ export class SyncQueue {
 
           // Network error or 5xx/429: increment retry count and mark offline
           item.retryCount = (item.retryCount || 0) + 1;
+          await this.persistQueue();
           this.setStatus('offline');
           if (item.onError) {
             try {
@@ -252,10 +292,12 @@ export class SyncQueue {
       if (this.queue.length === 0) {
         this.setStatus('synced');
       }
+      await this.persistQueue();
     }
   }
 
-  public clear(): void {
+  public async clear(): Promise<void> {
     this.queue = [];
+    await this.persistQueue();
   }
 }

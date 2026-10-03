@@ -13,6 +13,7 @@ import {
 export interface VikunjaClientConfig {
   baseUrl: string;
   token?: string;
+  timeoutMs?: number;
 }
 
 export class VikunjaApiError extends Error {
@@ -25,12 +26,15 @@ export class VikunjaApiError extends Error {
 export class VikunjaClient {
   private baseApiUrl: string;
   private token: string | null = null;
+  private timeoutMs: number;
+  public onUnauthorized?: () => void;
 
   constructor(config: VikunjaClientConfig) {
     this.baseApiUrl = this.normalizeUrl(config.baseUrl);
     if (config.token) {
       this.token = config.token;
     }
+    this.timeoutMs = config.timeoutMs ?? 15000;
   }
 
   private normalizeUrl(url: string): string {
@@ -64,34 +68,71 @@ export class VikunjaClient {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    const controller = new AbortController();
+    let isTimedOut = false;
+    const timer = setTimeout(() => {
+      isTimedOut = true;
+      controller.abort();
+    }, this.timeoutMs);
 
-    let data: any = null;
-    const contentType = response.headers?.get?.('content-type') || '';
-    if (contentType.includes('application/json') || response.json) {
-      try {
-        data = await response.json();
-      } catch (e) {
-        data = null;
+    // If caller provided their own signal, forward abort
+    if (options.signal) {
+      options.signal.addEventListener('abort', () => controller.abort());
+    }
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      });
+
+      let data: any = null;
+      const contentType = response.headers?.get?.('content-type') || '';
+      if (contentType.includes('application/json') || response.json) {
+        try {
+          data = await response.json();
+        } catch (e) {
+          data = null;
+        }
       }
-    }
 
-    if (!response.ok) {
-      const errorMsg = data?.message || response.statusText || 'API request failed';
-      throw new VikunjaApiError(response.status, errorMsg, data);
-    }
+      if (!response.ok) {
+        if (response.status === 401 && this.onUnauthorized) {
+          this.onUnauthorized();
+        }
+        const errorMsg = data?.message || response.statusText || 'API request failed';
+        throw new VikunjaApiError(response.status, errorMsg, data);
+      }
 
-    return data as T;
+      return data as T;
+    } catch (err: any) {
+      if (isTimedOut || err?.name === 'AbortError') {
+        const timeoutErr = new Error(`Request timed out after ${this.timeoutMs}ms`);
+        timeoutErr.name = 'TimeoutError';
+        throw timeoutErr;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // --- Auth Endpoints ---
-  public async login(username: string, password: string): Promise<AuthTokens> {
+  public async login(username: string, password: string, longToken = true): Promise<AuthTokens> {
     const res = await this.request<AuthTokens>('/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, long_token: longToken }),
+    });
+    if (res.token) {
+      this.setToken(res.token);
+    }
+    return res;
+  }
+
+  public async renewToken(): Promise<AuthTokens> {
+    const res = await this.request<AuthTokens>('/user/token', {
+      method: 'POST',
     });
     if (res.token) {
       this.setToken(res.token);

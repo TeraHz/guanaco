@@ -64,7 +64,11 @@ describe('VikunjaClient', () => {
         'https://try.vikunja.io/api/v1/login',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ username: 'testuser', password: 'password123' }),
+          body: JSON.stringify({
+            username: 'testuser',
+            password: 'password123',
+            long_token: true,
+          }),
         })
       );
     });
@@ -753,5 +757,88 @@ describe('VikunjaClient', () => {
       );
     });
   });
+
+  describe('Auth Token Lifecycle & Error Handling', () => {
+    it('login should request a long-lived token (long_token: true)', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'long-lived-jwt-token' }),
+      } as Response);
+
+      const res = await client.login('testuser', 'secretpass');
+      expect(res.token).toBe('long-lived-jwt-token');
+      expect(client.getToken()).toBe('long-lived-jwt-token');
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/login',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            username: 'testuser',
+            password: 'secretpass',
+            long_token: true,
+          }),
+        })
+      );
+    });
+
+    it('renewToken should send POST to /user/token and update token', async () => {
+      client.setToken('old-token');
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'refreshed-jwt-token' }),
+      } as Response);
+
+      const res = await client.renewToken();
+      expect(res.token).toBe('refreshed-jwt-token');
+      expect(client.getToken()).toBe('refreshed-jwt-token');
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/user/token',
+        expect.objectContaining({
+          method: 'POST',
+        })
+      );
+    });
+
+    it('should invoke onUnauthorized callback when API responds with 401', async () => {
+      client.setToken('expired-token');
+      const onUnauthorized = jest.fn();
+      client.onUnauthorized = onUnauthorized;
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Token is expired' }),
+      } as Response);
+
+      await expect(client.getProjects()).rejects.toThrow('Token is expired');
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    });
+
+    it('should abort request and throw when timeout is exceeded', async () => {
+      const fastTimeoutClient = new VikunjaClient({
+        baseUrl: 'https://try.vikunja.io',
+        timeoutMs: 50,
+      });
+
+      // Simulate a fetch that takes longer than timeoutMs
+      global.fetch = jest.fn().mockImplementation((url, options) => {
+        return new Promise((resolve, reject) => {
+          if (options?.signal) {
+            options.signal.addEventListener('abort', () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }
+        });
+      });
+
+      await expect(fastTimeoutClient.getProjects()).rejects.toThrow(/timed out|timeout|aborted/i);
+    });
+  });
 });
+
 
