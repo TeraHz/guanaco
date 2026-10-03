@@ -8,8 +8,8 @@ import {
   ScrollView,
   StyleSheet,
   TouchableWithoutFeedback,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles, getLabelColor } from '../utils/colors';
 import { Label, Task } from '../types/vikunja';

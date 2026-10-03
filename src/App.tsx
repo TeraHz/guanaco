@@ -49,33 +49,63 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => {
+        if (AppState.currentState === 'active') {
+          syncAll().catch(() => {});
+        }
+      }, 60000); // 60s active polling interval
+    };
+
+    const stopPolling = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    // Start polling initially if active
+    if (AppState.currentState === 'active') {
+      startPolling();
+    }
+
     // React Native AppState listener
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
         syncAll().catch(() => {});
+        startPolling();
+      } else {
+        stopPolling();
       }
     });
 
-    // Web window focus listener
+    // Web window focus / blur listener
     let handleFocus: (() => void) | null = null;
+    let handleBlur: (() => void) | null = null;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       handleFocus = () => {
         syncAll().catch(() => {});
+        startPolling();
+      };
+      handleBlur = () => {
+        stopPolling();
       };
       window.addEventListener('focus', handleFocus);
+      window.addEventListener('blur', handleBlur);
     }
-
-    // Periodic sync every 30 seconds
-    const interval = setInterval(() => {
-      syncAll().catch(() => {});
-    }, 30000);
 
     return () => {
       subscription.remove();
+      stopPolling();
       if (handleFocus && typeof window !== 'undefined') {
         window.removeEventListener('focus', handleFocus);
       }
-      clearInterval(interval);
+      if (handleBlur && typeof window !== 'undefined') {
+        window.removeEventListener('blur', handleBlur);
+      }
     };
   }, [isAuthenticated]);
 

@@ -18,6 +18,36 @@ const CACHE_KEY_LARGE_TASK_ITEMS = '@vikunja_large_task_items';
 const CACHE_KEY_TASK_ITEM_SCALE = '@vikunja_task_item_scale';
 const CACHE_KEY_LAST_PROJECT = '@vikunja_last_project_id';
 
+let persistTasksTimer: ReturnType<typeof setTimeout> | null = null;
+const persistTasksDebounced = (tasks: Task[], immediate = false) => {
+  if (persistTasksTimer) {
+    clearTimeout(persistTasksTimer);
+    persistTasksTimer = null;
+  }
+  if (immediate) {
+    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(tasks)).catch(() => {});
+  } else {
+    persistTasksTimer = setTimeout(() => {
+      AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(tasks)).catch(() => {});
+    }, 250);
+  }
+};
+
+let persistProjectsTimer: ReturnType<typeof setTimeout> | null = null;
+const persistProjectsDebounced = (projects: Project[], immediate = false) => {
+  if (persistProjectsTimer) {
+    clearTimeout(persistProjectsTimer);
+    persistProjectsTimer = null;
+  }
+  if (immediate) {
+    AsyncStorage.setItem(CACHE_KEY_PROJECTS, JSON.stringify(projects)).catch(() => {});
+  } else {
+    persistProjectsTimer = setTimeout(() => {
+      AsyncStorage.setItem(CACHE_KEY_PROJECTS, JSON.stringify(projects)).catch(() => {});
+    }, 250);
+  }
+};
+
 export interface TaskState {
   client: VikunjaClient | null;
   syncQueue: SyncQueue | null;
@@ -558,6 +588,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     if (syncQueue && typeof syncQueue.clear === 'function') {
       await syncQueue.clear();
     }
+    if (persistTasksTimer) {
+      clearTimeout(persistTasksTimer);
+      persistTasksTimer = null;
+    }
+    if (persistProjectsTimer) {
+      clearTimeout(persistProjectsTimer);
+      persistProjectsTimer = null;
+    }
     set({
       client: null,
       syncQueue: null,
@@ -600,7 +638,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const updatedTasks = safeTasks.map((t) => (t.id === taskId ? updatedTask : t));
 
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
 
@@ -635,7 +673,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const updatedTasks = [updatedTask, ...remainingTasks];
 
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
 
@@ -669,7 +707,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const updatedTasks = safeTasks.map((t) => (t.id === taskId ? { ...t, labels } : t));
 
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     safeHaptics.selection();
 
@@ -692,7 +730,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const updatedTasks = safeTasks.map((t) => (t.id === taskId ? { ...t, assignees } : t));
 
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     safeHaptics.selection();
 
@@ -771,7 +809,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     set({ labels: updatedLabels, tasks: updatedTasks });
     AsyncStorage.setItem(CACHE_KEY_LABELS, JSON.stringify(updatedLabels)).catch(() => {});
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     if (client && labelId > 0) {
       await client.deleteLabel(labelId);
@@ -819,7 +857,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     // Instant optimistic update
     const updatedTasks = [optimisticTask, ...currentTasks];
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Light);
 
@@ -849,7 +887,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
               }
               return t;
             });
-            AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(finalTasks)).catch(() => {});
+            persistTasksDebounced(finalTasks);
             return { tasks: finalTasks };
           });
         },
@@ -868,7 +906,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const updatedTasks = safeTasks.map((t) => (t.id === taskId ? { ...t, ...updates, updated: now } : t));
 
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     if (syncQueue) {
       if (updates.assignees !== undefined && task) {
@@ -921,7 +959,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     );
 
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     safeHaptics.selection();
 
@@ -953,7 +991,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     });
 
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     safeHaptics.selection();
 
@@ -976,7 +1014,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const updatedTasks = safeTasks.filter((t) => t.id !== taskId);
 
     set({ tasks: updatedTasks });
-    AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(updatedTasks)).catch(() => {});
+    persistTasksDebounced(updatedTasks);
 
     if (syncQueue) {
       syncQueue.enqueue({
