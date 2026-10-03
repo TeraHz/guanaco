@@ -14,10 +14,10 @@ const { GoogleAuth } = require('google-auth-library');
 
 const SERVICE_ACCOUNT_PATH = path.resolve(__dirname, '../play-service-account.json');
 const APP_JSON_PATH = path.resolve(__dirname, '../app.json');
-const DEFAULT_AAB_PATH = path.resolve(
-  __dirname,
-  '../android/app/build/outputs/bundle/release/app-release.aab'
-);
+const ROOT_AAB_PATH = path.resolve(__dirname, '../guanaco-release.aab');
+const DEFAULT_AAB_PATH = fs.existsSync(ROOT_AAB_PATH)
+  ? ROOT_AAB_PATH
+  : path.resolve(__dirname, '../android/app/build/outputs/bundle/release/app-release.aab');
 
 // Parse CLI args
 const args = process.argv.slice(2);
