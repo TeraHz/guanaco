@@ -376,6 +376,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         availableProjects={safeProjects}
         availableUsers={cachedUsers}
         doneTasks={doneTasks}
+        historyTasks={projectTasks}
         availableLabels={availableLabels}
         reenableStaples={reenableStaples}
         onAddTask={addTask}

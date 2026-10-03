@@ -10,6 +10,10 @@ describe('Smart Contextual Classifier', () => {
       expect(isShoppingList('Costco Market')).toBe(true);
       expect(isShoppingList('Pantry Restock')).toBe(true);
       expect(isShoppingList('Trader Joe\'s')).toBe(true);
+      expect(isShoppingList('Седмичен пазар')).toBe(true);
+      expect(isShoppingList('Пазаруване')).toBe(true);
+      expect(isShoppingList('Покупки за вкъщи')).toBe(true);
+      expect(isShoppingList('Хранителен магазин')).toBe(true);
     });
 
     it('returns false for generic task lists', () => {

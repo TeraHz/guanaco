@@ -59,93 +59,226 @@ function getCacheKey(projectId: number | undefined, taskId: number, contextTitle
 }
 
 /**
+ * Extracts the core subject/ingredient from descriptive phrases.
+ * Handles quantities (e.g. "2 кг", "500g", "2 lbs"),
+ * prepositional intent clauses (e.g. "X за Y" in Bulgarian, "X for Y" in English),
+ * and preparation modifiers (e.g. "peeled", "белен", "замразени", "пресни").
+ */
+export function extractCoreSubject(title: string): string {
+  let cleaned = (title || '').trim();
+  if (!cleaned) return '';
+
+  // 1. Remove bracketed / colon prefix tags: "[Bakery] Croissant" -> "Croissant"
+  cleaned = cleaned.replace(/^\[.*?\]\s*/, '').replace(/^[A-Za-zА-Яа-я0-9\s]{2,15}:\s+/, '');
+
+  // 2. Remove leading quantities & units (English & Bulgarian)
+  // e.g. "2 kg", "2кг", "500g", "500г", "2 бр.", "3 пакета", "1 bottle of", "2 кутии"
+  cleaned = cleaned.replace(
+    /^(\d+([.,]\d+)?\s*(кг|г|гр|мл|л|бр|пакет|пакета|кутия|кутии|kg|g|ml|l|lbs?|oz|pcs?|cans?|bottles?|packs?|boxes?)(?:\.|\s+|$)\s*(на\s+|of\s+)?)/i,
+    ''
+  );
+  // Also strip bare leading number e.g. "2 "
+  cleaned = cleaned.replace(/^\d+\s+/, '');
+
+  // 3. Handle prepositional intent clauses: "X for Y", "X за Y", "X c Y", "X със Y", "X with Y"
+  // e.g. "Milk for yogurt" -> "Milk"
+  // e.g. "Мляко за кисело мляко" -> "Мляко"
+  // e.g. "Pork for stew" -> "Pork"
+  // e.g. "Свинско за яхния" -> "Свинско"
+  // e.g. "Домати за салата" -> "Домати"
+  const prepMatch = cleaned.match(/^(.*?)\s+(for|за|с|със|with)\s+/i);
+  if (prepMatch && prepMatch[1] && prepMatch[1].trim().length > 1) {
+    cleaned = prepMatch[1].trim();
+  }
+
+  // 4. Strip common descriptive / preparation adjectives at the start
+  // e.g. "peeled garlic" -> "garlic", "белен чесън" -> "чесън"
+  // e.g. "frozen croissants" -> "croissants", "замразени кроасани" -> "кроасани"
+  const adjRegex =
+    /^(peeled|fresh|frozen|roasted|baked|raw|organic|whole|skim|sliced|chopped|diced|minced|ground|homemade|белен|белени|белено|пресен|пресни|прясно|замразен|замразени|замразено|печен|печени|печено|суров|сурови|сурово|био|пълномаслен|пълномаслено|обезмаслен|обезмаслено|нарязан|нарязани|млян|мляно|мляна|домашен|домашно|домашни)\s+/i;
+
+  cleaned = cleaned.replace(adjRegex, '').trim();
+
+  return cleaned.length > 0 ? cleaned : title.trim();
+}
+
+/**
  * Contextual zero-shot semantic grouping for arbitrary task lists without hardcoding ingredients.
  * Determines the category based on context heuristics (Travel, DIY/Home, Tech/Dev, Events, Shopping, General).
+ * Supports English and Bulgarian with descriptive intent phrases.
  */
 export function inferContextualCategory(title: string, contextTitle?: string): string {
+  const core = extractCoreSubject(title);
   const t = title.toLowerCase();
+  const c = core.toLowerCase();
   const ctx = (contextTitle || '').toLowerCase();
 
+  const matches = (...stems: string[]) => stems.some((s) => c.includes(s) || t.includes(s));
+
   // 1. Travel / Packing
-  if (ctx.includes('trip') || ctx.includes('pack') || ctx.includes('travel') || ctx.includes('vacation') || ctx.includes('flight') || ctx.includes('camp')) {
-    if (t.includes('passport') || t.includes('ticket') || t.includes('visa') || t.includes('doc') || t.includes('insurance') || t.includes('hotel') || t.includes('reservation')) {
+  if (
+    ctx.includes('trip') ||
+    ctx.includes('pack') ||
+    ctx.includes('travel') ||
+    ctx.includes('vacation') ||
+    ctx.includes('flight') ||
+    ctx.includes('camp') ||
+    ctx.includes('път') ||
+    ctx.includes('почивк') ||
+    ctx.includes('куфар')
+  ) {
+    if (matches('passport', 'ticket', 'visa', 'doc', 'insurance', 'hotel', 'reservation', 'паспорт', 'билет', 'виза', 'документ', 'резерваци')) {
       return '📄 Travel & Documents';
     }
-    if (t.includes('shirt') || t.includes('pant') || t.includes('sock') || t.includes('shoe') || t.includes('boot') || t.includes('jacket') || t.includes('hat') || t.includes('coat') || t.includes('wear') || t.includes('clothes')) {
+    if (matches('shirt', 'pant', 'sock', 'shoe', 'boot', 'jacket', 'hat', 'coat', 'wear', 'clothes', 'dress', 'дрех', 'тениск', 'риза', 'панталон', 'чорап', 'обувк', 'яке', 'палто', 'бански', 'шапк')) {
       return '🧳 Clothes & Wearables';
     }
-    if (t.includes('charger') || t.includes('cable') || t.includes('phone') || t.includes('laptop') || t.includes('adapter') || t.includes('battery') || t.includes('headphone')) {
+    if (matches('charger', 'cable', 'phone', 'laptop', 'adapter', 'battery', 'headphone', 'зарядн', 'кабел', 'телефон', 'лаптоп', 'адаптер', 'батери', 'слушалк')) {
       return '🔌 Electronics';
     }
-    if (t.includes('brush') || t.includes('soap') || t.includes('shampoo') || t.includes('med') || t.includes('pill') || t.includes('paste') || t.includes('sunscreen') || t.includes('towel')) {
+    if (matches('brush', 'soap', 'shampoo', 'med', 'pill', 'paste', 'sunscreen', 'towel', 'четк', 'сапун', 'шампоан', 'паста за зъби', 'лекарств', 'хапчет', 'кърп', 'дезодорант')) {
       return '💊 Toiletries & Health';
     }
     return '🎒 Gear & Essentials';
   }
 
   // 2. DIY / Home Renovation / Hardware
-  if (ctx.includes('remodel') || ctx.includes('diy') || ctx.includes('renov') || ctx.includes('build') || ctx.includes('home') || ctx.includes('fix') || ctx.includes('garden')) {
-    if (t.includes('hammer') || t.includes('drill') || t.includes('screw') || t.includes('nail') || t.includes('saw') || t.includes('tape') || t.includes('wrench')) {
+  if (
+    ctx.includes('remodel') ||
+    ctx.includes('diy') ||
+    ctx.includes('renov') ||
+    ctx.includes('build') ||
+    ctx.includes('home') ||
+    ctx.includes('fix') ||
+    ctx.includes('garden') ||
+    ctx.includes('ремонт') ||
+    ctx.includes('майстор') ||
+    ctx.includes('дом') ||
+    ctx.includes('градин')
+  ) {
+    if (matches('hammer', 'drill', 'screw', 'nail', 'saw', 'tape', 'wrench', 'чук', 'бормашин', 'винтове', 'винт', 'пирон', 'трион', 'клещи')) {
       return '🔨 Tools & Hardware';
     }
-    if (t.includes('paint') || t.includes('primer') || t.includes('brush') || t.includes('roller') || t.includes('sandpaper') || t.includes('finish')) {
+    if (matches('paint', 'primer', 'brush', 'roller', 'sandpaper', 'finish', 'боя', 'грунд', 'лак', 'четк', 'валяк', 'шкурк')) {
       return '🎨 Paint & Finishes';
     }
-    if (t.includes('wire') || t.includes('light') || t.includes('switch') || t.includes('bulb') || t.includes('outlet') || t.includes('lamp')) {
+    if (matches('wire', 'light', 'switch', 'bulb', 'outlet', 'lamp', 'жица', 'лампа', 'крушк', 'контакт', 'осветлени')) {
       return '💡 Electrical & Lighting';
     }
-    if (t.includes('pipe') || t.includes('faucet') || t.includes('drain') || t.includes('valve') || t.includes('sink') || t.includes('plumb')) {
+    if (matches('pipe', 'faucet', 'drain', 'valve', 'sink', 'plumb', 'тръб', 'кран', 'сифон', 'мивк', 'канал', 'душ')) {
       return '🚰 Plumbing & Fixtures';
     }
     return '🪵 Materials & Supplies';
   }
 
   // 3. Work / Software / Project Sprint
-  if (ctx.includes('sprint') || ctx.includes('dev') || ctx.includes('work') || ctx.includes('launch') || ctx.includes('project') || ctx.includes('app') || ctx.includes('feat') || ctx.includes('qa') || ctx.includes('tech') || ctx.includes('release') || ctx.includes('code')) {
-    if (t.includes('api') || t.includes('code') || t.includes('backend') || t.includes('frontend') || t.includes('db') || t.includes('bug') || t.includes('endpoint')) {
+  if (
+    ctx.includes('sprint') ||
+    ctx.includes('dev') ||
+    ctx.includes('work') ||
+    ctx.includes('launch') ||
+    ctx.includes('project') ||
+    ctx.includes('app') ||
+    ctx.includes('feat') ||
+    ctx.includes('qa') ||
+    ctx.includes('tech') ||
+    ctx.includes('release') ||
+    ctx.includes('code') ||
+    ctx.includes('проект') ||
+    ctx.includes('работ')
+  ) {
+    if (matches('api', 'code', 'backend', 'frontend', 'db', 'bug', 'endpoint', 'код', 'бъг', 'база')) {
       return '💻 Engineering';
     }
-    if (t.includes('test') || t.includes('qa') || t.includes('verify') || t.includes('check') || t.includes('audit') || t.includes('regression')) {
+    if (matches('test', 'qa', 'verify', 'check', 'audit', 'regression', 'тест', 'проверк')) {
       return '🧪 QA & Testing';
     }
-    if (t.includes('design') || t.includes('figma') || /\bux\b/i.test(t) || /\bui\b/i.test(t) || t.includes('mockup') || t.includes('asset') || t.includes('icon')) {
+    if (matches('design', 'figma', 'mockup', 'asset', 'icon', 'дизайн', 'икон') || /\bux\b/i.test(c) || /\bui\b/i.test(c)) {
       return '🎨 Design & UX';
     }
-    if (t.includes('deploy') || t.includes('release') || t.includes('docker') || t.includes('server') || t.includes('ci') || t.includes('build')) {
+    if (matches('deploy', 'release', 'docker', 'server', 'ci', 'build', 'сървър')) {
       return '🚀 DevOps & Release';
     }
     return '📋 Planning & Tasks';
   }
 
-  // 4. Shopping / Groceries (contextual fallback)
-  if (ctx.includes('shop') || ctx.includes('grocer') || ctx.includes('market') || ctx.includes('pantry') || ctx.includes('store') || ctx.includes('costco')) {
-    if (t.includes('apple') || t.includes('banana') || t.includes('salad') || t.includes('herb') || t.includes('vegetable') || t.includes('fruit') || t.includes('onion') || t.includes('garlic') || t.includes('tomato')) {
-      return '🥦 Produce';
-    }
-    if (t.includes('milk') || t.includes('cheese') || t.includes('yogurt') || t.includes('butter') || t.includes('cream') || t.includes('egg')) {
-      return '🥛 Dairy & Cold';
-    }
-    if (t.includes('bread') || t.includes('flour') || t.includes('pasta') || t.includes('rice') || t.includes('cereal') || t.includes('bagel') || t.includes('sauce') || t.includes('snack')) {
-      return '🍞 Bakery & Pantry';
-    }
-    if (t.includes('chicken') || t.includes('beef') || t.includes('pork') || t.includes('fish') || t.includes('salmon') || t.includes('meat') || t.includes('turkey')) {
-      return '🥩 Meat & Seafood';
-    }
-    if (t.includes('soap') || t.includes('detergent') || t.includes('paper') || t.includes('sponge') || t.includes('clean') || t.includes('trash')) {
-      return '🧼 Household';
-    }
+  // 4. Shopping / Groceries (contextual or ingredient match)
+  // 4a. Produce
+  if (
+    matches(
+      'apple', 'banana', 'salad', 'herb', 'vegetable', 'veggie', 'fruit', 'onion', 'garlic', 'tomato',
+      'potato', 'cucumber', 'pepper', 'carrot', 'spinach', 'mushroom', 'lettuce', 'avocado', 'orange',
+      'lemon', 'lime', 'berry', 'grape', 'peach', 'melon', 'broccoli', 'zucchini',
+      'домат', 'краставиц', 'чушк', 'пипер', 'лук', 'чесън', 'картоф', 'морков', 'ябълк', 'банан',
+      'портокал', 'лимон', 'плод', 'зеленчук', 'салат', 'спанак', 'гъб', 'тиквички', 'патладжан',
+      'зеле', 'магданоз', 'копър', 'авокадо', 'круш', 'ягод', 'грозде', 'прасков', 'диня', 'пъпеш', 'брокол'
+    )
+  ) {
+    return '🥦 Produce';
+  }
+
+  // 4b. Dairy & Cold
+  if (
+    matches(
+      'milk', 'cheese', 'yogurt', 'butter', 'cream', 'egg', 'tofu', 'sour cream', 'cottage',
+      'мляк', 'сирен', 'кашкавал', 'масл', 'яйц', 'сметан', 'йогурт', 'извар', 'айрян', 'тофу'
+    )
+  ) {
+    return '🥛 Dairy & Cold';
+  }
+
+  // 4c. Meat & Seafood
+  if (
+    matches(
+      'chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'meat', 'turkey', 'lamb', 'shrimp', 'seafood',
+      'bacon', 'sausage', 'ham', 'steak', 'patty', 'stew',
+      'свинск', 'телешк', 'говежд', 'пилешк', 'пиле', 'кайм', 'мес', 'риб', 'сьомг', 'пъстърв',
+      'лаврак', 'ципура', 'скарид', 'надениц', 'салам', 'шунк', 'бекон', 'пуешк', 'агнешк', 'суджук', 'яхния'
+    )
+  ) {
+    return '🥩 Meat & Seafood';
+  }
+
+  // 4d. Bakery & Pantry
+  if (
+    matches(
+      'bread', 'croissant', 'baguette', 'flour', 'pasta', 'spaghetti', 'noodle', 'rice', 'cereal', 'bagel',
+      'sauce', 'snack', 'oil', 'olive oil', 'vinegar', 'salt', 'sugar', 'spice', 'bean', 'lentil',
+      'honey', 'nut', 'cookie', 'biscuit', 'chocolate', 'coffee', 'tea', 'oat',
+      'хляб', 'кроасан', 'багет', 'закуск', 'брашн', 'ориз', 'макарон', 'паст', 'спагет', 'олио',
+      'зехтин', 'оцет', 'сол', 'захар', 'подправк', 'консерв', 'боб', 'леща', 'лютениц', 'сос',
+      'мед', 'ядки', 'бисквит', 'шоколад', 'кафе', 'чай', 'овесен', 'сладкиш'
+    )
+  ) {
+    return '🍞 Bakery & Pantry';
+  }
+
+  // 4e. Household
+  if (
+    matches(
+      'soap', 'detergent', 'paper', 'sponge', 'clean', 'trash', 'napkin', 'tissue', 'toothpaste',
+      'shampoo', 'bleach', 'foil',
+      'сапун', 'препарат', 'прах', 'веро', 'хартия', 'салфетк', 'чувал', 'паста за зъби',
+      'шампоан', 'душ гел', 'белина', 'фолио'
+    )
+  ) {
+    return '🧼 Household';
+  }
+
+  // If context was explicitly shopping
+  if (ctx.includes('shop') || ctx.includes('grocer') || ctx.includes('market') || ctx.includes('pantry') || ctx.includes('store') || ctx.includes('costco') || ctx.includes('пазар') || ctx.includes('покупк') || ctx.includes('магазин')) {
     return '🛒 Groceries';
   }
 
   // 5. Events / Parties
-  if (ctx.includes('party') || ctx.includes('event') || ctx.includes('dinner') || ctx.includes('wedding') || ctx.includes('birthday')) {
-    if (t.includes('food') || t.includes('drink') || t.includes('cake') || t.includes('wine') || t.includes('beer') || t.includes('snack') || t.includes('cater')) {
+  if (ctx.includes('party') || ctx.includes('event') || ctx.includes('dinner') || ctx.includes('wedding') || ctx.includes('birthday') || ctx.includes('парти') || ctx.includes('рожден ден') || ctx.includes('сватб')) {
+    if (matches('food', 'drink', 'cake', 'wine', 'beer', 'snack', 'cater', 'торта', 'вино', 'бира', 'сок', 'хапван')) {
       return '🍕 Food & Refreshments';
     }
-    if (t.includes('invite') || t.includes('guest') || t.includes('rsvp') || t.includes('call') || t.includes('email')) {
+    if (matches('invite', 'guest', 'rsvp', 'call', 'email', 'покан', 'гости')) {
       return '✉️ Invitations & Guests';
     }
-    if (t.includes('decor') || t.includes('balloon') || t.includes('table') || t.includes('chair') || t.includes('flower') || t.includes('light')) {
+    if (matches('decor', 'balloon', 'table', 'chair', 'flower', 'light', 'балон', 'цветя', 'украс')) {
       return '🎉 Decor & Venue';
     }
     return '🎵 Activities & Coordination';
@@ -225,7 +358,11 @@ export async function classifyTasksWithAIAsync(
   if (promptApi && uncachedTasks.length > 0) {
     try {
       const session = await promptApi.create({
-        systemPrompt: `You group tasks into concise categories based on list context "${contextTitle || 'General'}". Return items in format: TaskName -> Category`,
+        systemPrompt: `You are an expert multilingual task organizer.
+You group task items into concise categories based on list context "${contextTitle || 'General'}".
+Understand items in any language (especially Bulgarian and English).
+Extract the core ingredient or subject from descriptive phrases (e.g. 'мляко за кисело мляко' -> Milk -> Dairy & Cold, 'свинско за яхния' -> Pork -> Meat & Seafood, 'белен чесън' -> Garlic -> Produce, 'Milk for yogurt' -> Dairy & Cold, 'peeled garlic' -> Produce).
+Format each output line strictly as: TaskName -> Category`,
       });
       const promptText = uncachedTasks.map((t) => t.title).join('\n');
       const response: string = await session.prompt(promptText);

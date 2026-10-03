@@ -257,5 +257,34 @@ describe('QuickAddBar', () => {
     fireEvent.press(costcoChip);
     expect(input.props.value).toBe('Shopping *Costco ');
   });
+
+  // --- Historical Store Suggestions ---
+  it('suggests historical store label when typing item with consistent store history', () => {
+    const historyTasks = [
+      { id: 1, title: 'Ground beef', done: true, priority: 0, project_id: 1, labels: [{ id: 1, title: 'Costco' }] },
+      { id: 2, title: 'Beef steaks', done: true, priority: 0, project_id: 1, labels: [{ id: 1, title: 'Costco' }] },
+    ];
+    const availableLabels = ['Costco', 'TraderJoes'];
+
+    const { getByTestId } = render(
+      <QuickAddBar
+        activeProjectId={1}
+        onAddTask={mockOnAddTask}
+        historyTasks={historyTasks as any}
+        availableLabels={availableLabels}
+      />
+    );
+
+    const input = getByTestId('quick-add-input');
+    fireEvent.changeText(input, 'Beef for stew');
+
+    // Should display store suggestion chip
+    const storeChip = getByTestId('store-suggestion-chip');
+    expect(storeChip).toBeTruthy();
+
+    // Tapping chip should append *Costco to input
+    fireEvent.press(storeChip);
+    expect(input.props.value).toContain('*Costco');
+  });
 });
 

@@ -12,6 +12,10 @@ const SHOPPING_KEYWORDS = [
   'walmart',
   'store',
   'food',
+  'пазар',
+  'покупк',
+  'магазин',
+  'хран',
 ];
 
 /**

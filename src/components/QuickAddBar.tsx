@@ -21,6 +21,7 @@ import {
   getUserSuggestions,
   replaceMentionQuery,
 } from '../utils/userSuggestions';
+import { getHistoricalStoreSuggestion } from '../utils/storeSuggestions';
 import { CreateTaskInput, Label, Project, Task, User } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
 
@@ -28,6 +29,7 @@ interface QuickAddBarProps {
   activeProjectId: number;
   availableProjects?: { id: number; title: string; hex_color?: string }[];
   doneTasks?: Task[];
+  historyTasks?: Task[];
   availableLabels?: string[];
   availableUsers?: User[];
   reenableStaples?: boolean;
@@ -49,6 +51,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   activeProjectId,
   availableProjects = [],
   doneTasks = [],
+  historyTasks = [],
   availableLabels = [],
   availableUsers = [],
   reenableStaples = true,
@@ -100,6 +103,16 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
     userSuggestions.length === 0 && labelSuggestions.length === 0
       ? getTaskSuggestions(rawText, doneTasks)
       : [];
+
+  // High-Confidence Historical Store Suggestion (>=75% consistency across past tasks)
+  const historicalStoreSuggestion =
+    userSuggestions.length === 0 && labelSuggestions.length === 0
+      ? getHistoricalStoreSuggestion(
+          rawText,
+          historyTasks && historyTasks.length > 0 ? historyTasks : doneTasks,
+          (availableLabels || []).map((l, idx) => ({ id: idx + 1, title: l }))
+        )
+      : null;
 
   const handleSelectUserSuggestion = (user: User) => {
     const updated = replaceMentionQuery(rawText, user.username);
@@ -225,7 +238,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         </ScrollView>
       )}
 
-      {taskSuggestions.length > 0 && (
+      {(taskSuggestions.length > 0 || historicalStoreSuggestion) && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -233,6 +246,24 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           style={styles.suggestionScroll}
           contentContainerStyle={styles.suggestionRow}
         >
+          {historicalStoreSuggestion && (
+            <TouchableOpacity
+              testID="store-suggestion-chip"
+              style={[styles.taskSuggestionChip, styles.storeSuggestionChip]}
+              onPress={() => {
+                const labelTitle = historicalStoreSuggestion.label.title;
+                const formatted = labelTitle.includes(' ') ? `*"${labelTitle}"` : `*${labelTitle}`;
+                setRawText((prev) => `${prev.trim()} ${formatted} `);
+                safeHaptics.selection();
+                setTimeout(() => inputRef.current?.focus(), 10);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.storeSuggestionText}>
+                🛒 Usually at #{historicalStoreSuggestion.label.title}
+              </Text>
+            </TouchableOpacity>
+          )}
           {taskSuggestions.map((task) => (
             <TouchableOpacity
               key={task.id}
@@ -483,5 +514,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     lineHeight: 18,
+  },
+  storeSuggestionChip: {
+    backgroundColor: 'rgba(255, 159, 10, 0.15)',
+    borderColor: 'rgba(255, 159, 10, 0.45)',
+  },
+  storeSuggestionText: {
+    color: '#FF9F0A',
+    fontSize: 12.5,
+    fontWeight: '700',
   },
 });
