@@ -104,7 +104,7 @@ async function main() {
         await publisher.edits.deobfuscationfiles.upload({
           editId,
           packageName,
-          versionCode,
+          apkVersionCode: versionCode,
           deobfuscationFileType: 'proguard',
           media: {
             mimeType: 'application/octet-stream',
