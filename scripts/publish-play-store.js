@@ -96,6 +96,27 @@ async function main() {
     });
     console.log(`   Uploaded bundle version code: ${uploadRes.data.versionCode}`);
 
+    // Upload deobfuscation mapping file if available
+    const mappingPath = path.resolve(__dirname, '../android/app/build/outputs/mapping/release/mapping.txt');
+    if (fs.existsSync(mappingPath)) {
+      console.log('📄 Uploading ProGuard/R8 deobfuscation mapping.txt...');
+      try {
+        await publisher.edits.deobfuscationfiles.upload({
+          editId,
+          packageName,
+          versionCode,
+          deobfuscationFileType: 'proguard',
+          media: {
+            mimeType: 'application/octet-stream',
+            body: fs.createReadStream(mappingPath),
+          },
+        });
+        console.log('   Deobfuscation file uploaded successfully.');
+      } catch (deobfErr) {
+        console.warn(`   ⚠️ Warning: Could not upload deobfuscation file: ${deobfErr.message}`);
+      }
+    }
+
     // 7. Assign to target track
     console.log(`🚚 Assigning release to "${track}" track...`);
     await publisher.edits.tracks.update({

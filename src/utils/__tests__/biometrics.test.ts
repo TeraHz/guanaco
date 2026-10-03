@@ -78,5 +78,22 @@ describe('Biometrics & Auth Persistence', () => {
       // Keeps server URL for convenience
       expect(auth.serverUrl).toBe('https://vikunja.myorg.com');
     });
+
+    it('migrates legacy tokens from AsyncStorage to SecureStore automatically', async () => {
+      const SecureStore = require('expo-secure-store');
+      await SecureStore.deleteItemAsync('vikunja_auth_token');
+
+      // Place legacy token in AsyncStorage
+      await AsyncStorage.setItem('@vikunja_auth_token', 'legacy-secret-token');
+      await AsyncStorage.setItem('@vikunja_server_url', 'https://vikunja.example.com');
+
+      const auth = await getStoredAuth();
+      expect(auth.token).toBe('legacy-secret-token');
+      expect(auth.serverUrl).toBe('https://vikunja.example.com');
+
+      // Legacy token should have been moved into SecureStore and removed from AsyncStorage
+      expect(await SecureStore.getItemAsync('vikunja_auth_token')).toBe('legacy-secret-token');
+      expect(await AsyncStorage.getItem('@vikunja_auth_token')).toBeNull();
+    });
   });
 });

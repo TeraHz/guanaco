@@ -36,6 +36,21 @@ jest.mock('expo-local-authentication', () => ({
   },
 }));
 
+// Mock Expo Secure Store
+const mockSecureStoreMap = new Map<string, string>();
+jest.mock('expo-secure-store', () => ({
+  setItemAsync: jest.fn(async (key: string, value: string) => {
+    mockSecureStoreMap.set(key, value);
+  }),
+  getItemAsync: jest.fn(async (key: string) => {
+    return mockSecureStoreMap.has(key) ? mockSecureStoreMap.get(key)! : null;
+  }),
+  deleteItemAsync: jest.fn(async (key: string) => {
+    mockSecureStoreMap.delete(key);
+  }),
+  isAvailableAsync: jest.fn(async () => true),
+}));
+
 // Mock Reanimated
 jest.mock('react-native-reanimated', () => {
   const Reanimated = require('react-native-reanimated/mock');
