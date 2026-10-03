@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Guanaco",
-    "slug": "vikunja-mobile",
+    "slug": "guanaco",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -26,12 +26,6 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "fe2221be-caf2-4b2c-b98d-8d3e906f4f04"
-      }
-    },
-    "owner": "terahz"
+    }
   }
 }
