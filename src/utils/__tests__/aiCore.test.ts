@@ -202,5 +202,40 @@ describe('AICore & On-Device ML Grouping', () => {
       const afterClear = await AsyncStorage.getItem('@vikunja_aicore_cat_5_10_flight packing');
       expect(afterClear).toBeNull();
     });
+
+    it('uses on-device Gemini Nano Prompt API to classify multilingual items (Spanish, Bulgarian) zero-shot', async () => {
+      const mockPromptSession = {
+        prompt: jest.fn().mockResolvedValue(
+          'jamón ibérico -> Carnes y Embutidos\nlechuga fresca -> Verduras\nсвинско за яхния -> Месо'
+        ),
+      };
+      const originalAi = (globalThis as any).ai;
+      (globalThis as any).ai = {
+        languageModel: {
+          create: jest.fn().mockResolvedValue(mockPromptSession),
+        },
+      };
+
+      try {
+        const tasks: Task[] = [
+          { id: 201, title: 'jamón ibérico', done: false, priority: 0, project_id: 20 },
+          { id: 202, title: 'lechuga fresca', done: false, priority: 0, project_id: 20 },
+          { id: 203, title: 'свинско за яхния', done: false, priority: 0, project_id: 20 },
+        ];
+
+        const results = await classifyTasksWithAIAsync(tasks, 'Compras en España');
+
+        expect((globalThis as any).ai.languageModel.create).toHaveBeenCalled();
+        expect(results[201]).toBe('Carnes y Embutidos');
+        expect(results[202]).toBe('Verduras');
+        expect(results[203]).toBe('Месо');
+
+        // Verify stored in cache
+        const cachedJamon = await AsyncStorage.getItem('@vikunja_aicore_cat_20_201_compras en españa');
+        expect(cachedJamon).toBe('Carnes y Embutidos');
+      } finally {
+        (globalThis as any).ai = originalAi;
+      }
+    });
   });
 });

@@ -86,7 +86,7 @@ export function extractCoreSubject(title: string): string {
   // e.g. "Pork for stew" -> "Pork"
   // e.g. "Свинско за яхния" -> "Свинско"
   // e.g. "Домати за салата" -> "Домати"
-  const prepMatch = cleaned.match(/^(.*?)\s+(for|за|с|със|with)\s+/i);
+  const prepMatch = cleaned.match(/^(.*?)\s+(for|за|para|pour|с|със|with|con|avec)\s+/i);
   if (prepMatch && prepMatch[1] && prepMatch[1].trim().length > 1) {
     cleaned = prepMatch[1].trim();
   }
@@ -358,11 +358,13 @@ export async function classifyTasksWithAIAsync(
   if (promptApi && uncachedTasks.length > 0) {
     try {
       const session = await promptApi.create({
-        systemPrompt: `You are an expert multilingual task organizer.
-You group task items into concise categories based on list context "${contextTitle || 'General'}".
-Understand items in any language (especially Bulgarian and English).
-Extract the core ingredient or subject from descriptive phrases (e.g. 'мляко за кисело мляко' -> Milk -> Dairy & Cold, 'свинско за яхния' -> Pork -> Meat & Seafood, 'белен чесън' -> Garlic -> Produce, 'Milk for yogurt' -> Dairy & Cold, 'peeled garlic' -> Produce).
-Format each output line strictly as: TaskName -> Category`,
+        systemPrompt: `You are an on-device intelligent multilingual task assistant.
+You understand all languages natively (Spanish, Bulgarian, English, French, German, Italian, etc.) and recognize descriptive phrases in any language.
+For each item:
+1. Detect its language and extract the core item from descriptive phrases (e.g. 'jamón ibérico para cenar' -> core: 'jamón ibérico', 'lechuga fresca' -> core: 'lechuga', 'свинско за яхния' -> core: 'свинско', 'мляко за кисело мляко' -> core: 'мляко', 'peeled garlic' -> core: 'garlic').
+2. Assign each item to a concise category appropriate for the list context: "${contextTitle || 'Tasks'}".
+3. Return output strictly in the format:
+Item -> Category`,
       });
       const promptText = uncachedTasks.map((t) => t.title).join('\n');
       const response: string = await session.prompt(promptText);

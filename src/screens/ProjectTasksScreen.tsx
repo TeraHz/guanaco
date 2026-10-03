@@ -146,14 +146,25 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   });
 
   const hasAICore = isAICoreSupported();
+  const [aiVersion, setAiVersion] = useState(0);
 
   useEffect(() => {
+    let isMounted = true;
     if (sortBy === 'aiSmart' && filteredTasks.length > 0) {
-      classifyTasksWithAIAsync(filteredTasks, activeProject?.title).catch(() => {});
+      classifyTasksWithAIAsync(filteredTasks, activeProject?.title)
+        .then((cats) => {
+          if (isMounted && cats && Object.keys(cats).length > 0) {
+            setAiVersion((v) => v + 1);
+          }
+        })
+        .catch(() => {});
     }
+    return () => {
+      isMounted = false;
+    };
   }, [sortBy, filteredTasks, activeProject?.title]);
 
-  // Apply intelligent sorting with priority preserved
+  // Apply intelligent sorting with priority preserved (aiVersion ensures reactive re-sort)
   const sortedTasks = sortTasks(filteredTasks, sortBy, activeProject?.title);
 
   const handleMoveTaskPosition = (taskId: number, direction: 'up' | 'down') => {
