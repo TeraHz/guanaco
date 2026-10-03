@@ -2,6 +2,7 @@ import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { SettingsModal } from '../SettingsModal';
 import { useTaskStore } from '../../store/taskStore';
+import { APP_VERSION } from '../../constants/version';
 
 describe('SettingsModal', () => {
   const mockOnClose = jest.fn();
@@ -33,7 +34,7 @@ describe('SettingsModal', () => {
     expect(getByText('Settings')).toBeTruthy();
     expect(getByText(/tasks\.geodar\.com/)).toBeTruthy();
     expect(getByText(/Version/)).toBeTruthy();
-    expect(getAllByText(/v1\.0\.1/).length).toBeGreaterThanOrEqual(1);
+    expect(getAllByText(new RegExp(APP_VERSION)).length).toBeGreaterThanOrEqual(1);
     expect(getByText(/Task Item Size/)).toBeTruthy();
     expect(getByTestId('settings-large-items-switch')).toBeTruthy();
     expect(getByText('Re-enable Staple Tasks')).toBeTruthy();

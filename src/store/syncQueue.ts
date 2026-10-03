@@ -90,6 +90,23 @@ export class SyncQueue {
     }
   }
 
+  public remapTaskIdInQueue(oldId: number, newId: number): void {
+    for (let i = 0; i < this.queue.length; i++) {
+      const q = this.queue[i];
+      if (q.payload) {
+        if (q.payload.taskId === oldId) {
+          q.payload.taskId = newId;
+        }
+        if (q.payload.data && q.payload.data.id === oldId) {
+          q.payload.data.id = newId;
+        }
+        if (q.payload.tempId === oldId) {
+          q.payload.tempId = newId;
+        }
+      }
+    }
+  }
+
   public async processQueue(): Promise<void> {
     if (this.isProcessing || this.queue.length === 0) {
       if (this.queue.length === 0 && this.status !== 'synced') {
@@ -109,6 +126,7 @@ export class SyncQueue {
           switch (item.type) {
             case 'CREATE_TASK': {
               const { projectId, taskData } = item.payload;
+              const tempId = item.payload.tempId || taskData?.id;
               const labels = item.payload.labels || taskData?.labels;
               const assignees = item.payload.assignees || taskData?.assignees;
               result = await this.client.createTask(projectId, taskData);
@@ -119,7 +137,6 @@ export class SyncQueue {
                   const attachedLabels = await this.client.setTaskLabels(result.id, labels);
                   result.labels = attachedLabels;
                 } catch (_) {
-                  // Keep optimistic labels if server label association fails
                   result.labels = labels;
                 }
               }
@@ -133,6 +150,11 @@ export class SyncQueue {
                   result.assignees = assignees;
                 }
               }
+
+              // Remap temporary ID across all subsequent queued mutations
+              if (result && result.id > 0 && tempId && tempId < 0) {
+                this.remapTaskIdInQueue(tempId, result.id);
+              }
               break;
             }
             case 'UPDATE_TASK': {
@@ -141,18 +163,26 @@ export class SyncQueue {
               break;
             }
             case 'TOGGLE_TASK': {
-              const { taskId, done } = item.payload;
-              result = await this.client.toggleTaskDone(taskId, done);
+              const { taskId, done, data } = item.payload;
+              if (data) {
+                result = await this.client.updateTask(taskId, { ...data, done });
+              } else {
+                result = await this.client.toggleTaskDone(taskId, done);
+              }
               break;
             }
             case 'MOVE_TASK': {
-              const { taskId, targetProjectId } = item.payload;
-              result = await this.client.moveTask(taskId, targetProjectId);
+              const { taskId, targetProjectId, data } = item.payload;
+              if (data) {
+                result = await this.client.updateTask(taskId, { ...data, project_id: targetProjectId });
+              } else {
+                result = await this.client.moveTask(taskId, targetProjectId);
+              }
               break;
             }
             case 'REORDER_TASK': {
-              const { taskId, position } = item.payload;
-              result = await this.client.reorderTask(taskId, position);
+              const { taskId, position, projectViewId } = item.payload;
+              result = await this.client.reorderTask(taskId, position, projectViewId);
               break;
             }
             case 'SET_TASK_LABELS': {
@@ -180,18 +210,39 @@ export class SyncQueue {
             }
           }
 
+          // Successfully processed by server: remove from queue first
+          this.queue.shift();
+
           if (item.onSuccess) {
-            item.onSuccess(result);
+            try {
+              item.onSuccess(result);
+            } catch (_) {
+              // Callback failure must not re-trigger network mutation
+            }
+          }
+        } catch (err: any) {
+          const status = err?.status || err?.response?.status;
+          const isPermanentClientError =
+            status && typeof status === 'number' && status >= 400 && status < 500 && status !== 429;
+
+          if (isPermanentClientError) {
+            // Drop permanent 4xx error (e.g. 404 Not Found) so queue doesn't get blocked forever
+            this.queue.shift();
+            if (item.onError) {
+              try {
+                item.onError(err);
+              } catch (_) {}
+            }
+            continue;
           }
 
-          // Successfully processed, remove from queue
-          this.queue.shift();
-        } catch (err: any) {
-          // Network error or offline: increment retry count and mark offline
+          // Network error or 5xx/429: increment retry count and mark offline
           item.retryCount = (item.retryCount || 0) + 1;
           this.setStatus('offline');
           if (item.onError) {
-            item.onError(err);
+            try {
+              item.onError(err);
+            } catch (_) {}
           }
           break;
         }

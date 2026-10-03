@@ -368,6 +368,173 @@ describe('useTaskStore', () => {
       expect(useTaskStore.getState().selectedProjectId).toBeNull();
       expect(mockClient.getAllTasks).toHaveBeenCalled();
     });
+
+    it('setSelectedProjectId(-1) should select My Open Tasks mode and trigger fetchAllTasks without calling fetchTasks(-1)', async () => {
+      const mockClient = {
+        getAllTasks: jest.fn().mockResolvedValue([]),
+        getTasks: jest.fn().mockResolvedValue([]),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        selectedProjectId: 1,
+      });
+
+      const { setSelectedProjectId } = useTaskStore.getState();
+      setSelectedProjectId(-1);
+
+      expect(useTaskStore.getState().selectedProjectId).toBe(-1);
+      expect(mockClient.getAllTasks).toHaveBeenCalled();
+      expect(mockClient.getTasks).not.toHaveBeenCalledWith(-1);
+    });
+
+    it('fetchProjects() should preserve selectedProjectId = -1 (My Open Tasks) without resetting to null', async () => {
+      const mockClient = {
+        getProjects: jest.fn().mockResolvedValue([
+          { id: 1, title: 'Inbox' },
+          { id: 2, title: 'Work' },
+        ]),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        selectedProjectId: -1,
+        projects: [],
+      });
+
+      const { fetchProjects } = useTaskStore.getState();
+      await fetchProjects();
+
+      expect(useTaskStore.getState().selectedProjectId).toBe(-1);
+    });
+
+    it('toggleTask() should enqueue mutation carrying full task snapshot to prevent server field wiping', () => {
+      const mockEnqueue = jest.fn();
+      const mockSyncQueue = {
+        enqueue: mockEnqueue,
+        processQueue: jest.fn(),
+      };
+
+      const task = {
+        id: 42,
+        title: 'Complete tax filing',
+        description: 'Forms 1040 and W2 attached',
+        done: false,
+        priority: 4,
+        project_id: 2,
+        due_date: '2026-10-15T00:00:00Z',
+        assignees: [{ id: 101, username: 'terahz' }],
+      };
+
+      useTaskStore.setState({
+        tasks: [task as any],
+        syncQueue: mockSyncQueue as any,
+      });
+
+      const { toggleTask } = useTaskStore.getState();
+      toggleTask(42);
+
+      expect(mockEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'TOGGLE_TASK',
+          payload: expect.objectContaining({
+            taskId: 42,
+            data: expect.objectContaining({
+              id: 42,
+              title: 'Complete tax filing',
+              description: 'Forms 1040 and W2 attached',
+              priority: 4,
+              done: true,
+              assignees: [{ id: 101, username: 'terahz' }],
+            }),
+          }),
+        })
+      );
+    });
+
+    it('moveTask() should enqueue mutation carrying full task snapshot with updated project_id', () => {
+      const mockEnqueue = jest.fn();
+      const mockSyncQueue = {
+        enqueue: mockEnqueue,
+        processQueue: jest.fn(),
+      };
+
+      const task = {
+        id: 42,
+        title: 'Move Me',
+        description: 'Important notes',
+        done: false,
+        priority: 3,
+        project_id: 1,
+      };
+
+      useTaskStore.setState({
+        tasks: [task as any],
+        syncQueue: mockSyncQueue as any,
+      });
+
+      const { moveTask } = useTaskStore.getState();
+      moveTask(42, 5);
+
+      expect(mockEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'MOVE_TASK',
+          payload: expect.objectContaining({
+            taskId: 42,
+            targetProjectId: 5,
+            data: expect.objectContaining({
+              id: 42,
+              title: 'Move Me',
+              description: 'Important notes',
+              priority: 3,
+              project_id: 5,
+            }),
+          }),
+        })
+      );
+    });
+
+    it('updateTaskDetails() should enqueue mutation carrying full merged task snapshot', () => {
+      const mockEnqueue = jest.fn();
+      const mockSyncQueue = {
+        enqueue: mockEnqueue,
+        processQueue: jest.fn(),
+      };
+
+      const task = {
+        id: 42,
+        title: 'Original Title',
+        description: 'Original Description',
+        done: false,
+        priority: 1,
+        project_id: 1,
+        due_date: '2026-10-10T00:00:00Z',
+      };
+
+      useTaskStore.setState({
+        tasks: [task as any],
+        syncQueue: mockSyncQueue as any,
+      });
+
+      const { updateTaskDetails } = useTaskStore.getState();
+      updateTaskDetails(42, { title: 'Updated Title', priority: 3 });
+
+      expect(mockEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'UPDATE_TASK',
+          payload: expect.objectContaining({
+            taskId: 42,
+            data: expect.objectContaining({
+              id: 42,
+              title: 'Updated Title',
+              description: 'Original Description',
+              priority: 3,
+              due_date: '2026-10-10T00:00:00Z',
+            }),
+          }),
+        })
+      );
+    });
   });
 
   describe('Label Sync, Color Enrichment, and Deletion', () => {

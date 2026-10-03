@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -142,20 +142,27 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const doneTasks = projectTasks.filter((t) => t.done);
 
   // Apply filters
-  const filteredTasks = projectTasks.filter((task) => {
-    if (filter === 'active' && task.done) return false;
-    if (filter === 'done' && !task.done) return false;
-    if (selectedLabel) {
-      const hasLabel = task.labels?.some(
-        (l) => l.title.toLowerCase() === selectedLabel.toLowerCase()
-      );
-      if (!hasLabel) return false;
-    }
-    return true;
-  });
+  const filteredTasks = useMemo(() => {
+    return projectTasks.filter((task) => {
+      if (filter === 'active' && task.done) return false;
+      if (filter === 'done' && !task.done) return false;
+      if (selectedLabel) {
+        const hasLabel = task.labels?.some(
+          (l) => l.title.toLowerCase() === selectedLabel.toLowerCase()
+        );
+        if (!hasLabel) return false;
+      }
+      return true;
+    });
+  }, [projectTasks, filter, selectedLabel]);
 
   const hasAICore = isAICoreSupported();
   const [aiVersion, setAiVersion] = useState(0);
+
+  const tasksSignature = useMemo(
+    () => filteredTasks.map((t) => `${t.id}:${t.title}`).join('|'),
+    [filteredTasks]
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -171,7 +178,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [sortBy, filteredTasks, activeProject?.title]);
+  }, [sortBy, tasksSignature, activeProject?.title]);
 
   // Apply intelligent sorting with priority preserved (aiVersion ensures reactive re-sort)
   const sortedTasks = sortTasks(filteredTasks, sortBy, activeProject?.title);

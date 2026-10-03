@@ -227,4 +227,122 @@ describe('SyncQueue', () => {
     expect(queue.getStatus()).toBe('synced');
     expect(queue.getQueue()).toHaveLength(0);
   });
+
+  it('should remap temporary negative task IDs to remote ID across subsequent queued mutations', async () => {
+    const tempId = -999;
+    const remoteId = 12345;
+
+    mockClient.createTask.mockResolvedValueOnce({
+      id: remoteId,
+      title: 'Offline Created Task',
+      done: false,
+      priority: 1,
+      project_id: 1,
+    });
+    mockClient.updateTask.mockResolvedValueOnce({
+      id: remoteId,
+      title: 'Offline Created Task',
+      done: true,
+      priority: 1,
+      project_id: 1,
+    });
+
+    // Enqueue create followed by toggle on the tempId
+    queue.enqueue({
+      id: `create-${tempId}`,
+      type: 'CREATE_TASK',
+      payload: {
+        tempId,
+        projectId: 1,
+        taskData: { title: 'Offline Created Task', project_id: 1 },
+      },
+      timestamp: 1000,
+    });
+
+    queue.enqueue({
+      id: `toggle-${tempId}`,
+      type: 'TOGGLE_TASK',
+      payload: {
+        taskId: tempId,
+        done: true,
+        data: { id: tempId, title: 'Offline Created Task', done: true, project_id: 1 },
+      },
+      timestamp: 2000,
+    });
+
+    await queue.processQueue();
+
+    expect(mockClient.createTask).toHaveBeenCalledWith(1, expect.objectContaining({ title: 'Offline Created Task' }));
+    // updateTask should have been called with the remapped real remoteId, NOT tempId!
+    expect(mockClient.updateTask).toHaveBeenCalledWith(remoteId, expect.objectContaining({ done: true }));
+    expect(queue.getQueue()).toHaveLength(0);
+  });
+
+  it('should drop permanent 4xx errors and continue processing subsequent queued items', async () => {
+    const error404: any = new Error('Task not found');
+    error404.status = 404;
+
+    mockClient.updateTask.mockRejectedValueOnce(error404);
+    mockClient.toggleTaskDone.mockResolvedValueOnce({
+      id: 2,
+      title: 'Valid task',
+      done: true,
+      priority: 0,
+      project_id: 1,
+    });
+
+    const onError = jest.fn();
+
+    // Enqueue an invalid task followed by a valid task
+    queue.enqueue({
+      id: 'm-bad-404',
+      type: 'UPDATE_TASK',
+      payload: { taskId: 99999, data: { done: true } },
+      timestamp: 1000,
+      onError,
+    });
+
+    queue.enqueue({
+      id: 'm-valid',
+      type: 'TOGGLE_TASK',
+      payload: { taskId: 2, done: true },
+      timestamp: 2000,
+    });
+
+    await queue.processQueue();
+
+    // 404 item was notified of error and discarded
+    expect(onError).toHaveBeenCalledWith(error404);
+    // Queue did NOT get stuck; valid item was processed!
+    expect(mockClient.toggleTaskDone).toHaveBeenCalledWith(2, true);
+    expect(queue.getQueue()).toHaveLength(0);
+    expect(queue.getStatus()).toBe('synced');
+  });
+
+  it('should not retry mutation if onSuccess throws an error', async () => {
+    mockClient.createTask.mockResolvedValueOnce({
+      id: 777,
+      title: 'Callback test',
+      done: false,
+      priority: 0,
+      project_id: 1,
+    });
+
+    const badOnSuccess = jest.fn().mockImplementation(() => {
+      throw new Error('Crash in callback');
+    });
+
+    queue.enqueue({
+      id: 'm-crash-callback',
+      type: 'CREATE_TASK',
+      payload: { projectId: 1, taskData: { title: 'Callback test', project_id: 1 } },
+      timestamp: 1000,
+      onSuccess: badOnSuccess,
+    });
+
+    await queue.processQueue();
+
+    // Item must be removed from queue so it is not re-executed creating duplicate tasks
+    expect(queue.getQueue()).toHaveLength(0);
+  });
 });

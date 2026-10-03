@@ -7,6 +7,16 @@ export interface User {
   updated?: string;
 }
 
+export interface ProjectView {
+  id: number;
+  title: string;
+  project_id: number;
+  view_kind: 'list' | 'kanban' | 'gantt' | 'table';
+  default_bucket_id?: number;
+  done_bucket_id?: number;
+  position?: number;
+}
+
 export interface Project {
   id: number;
   title: string;
@@ -17,6 +27,7 @@ export interface Project {
   is_archived?: boolean;
   is_favorite?: boolean;
   position?: number;
+  views?: ProjectView[];
   created?: string;
   updated?: string;
 }
@@ -62,6 +73,7 @@ export interface CreateTaskInput {
   assignees?: User[];
   percent_done?: number;
   color?: string;
+  hex_color?: string;
   repeat_after?: number;
 }
 
@@ -78,6 +90,7 @@ export interface UpdateTaskInput {
   position?: number;
   percent_done?: number;
   color?: string;
+  hex_color?: string;
   repeat_after?: number;
   labels?: Label[];
   assignees?: User[];

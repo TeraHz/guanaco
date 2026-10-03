@@ -385,5 +385,31 @@ describe('ProjectTasksScreen', () => {
       expect(queryByText('Colleague Task')).toBeNull();
       expect(queryByText('Unassigned Item')).toBeNull();
     });
+
+    it('automatically assigns currentUser to tasks added from My Open Tasks view via QuickAddBar', () => {
+      const mockAddTask = jest.fn();
+      useTaskStore.setState({
+        currentUser: { id: 101, username: 'terahz' },
+        selectedProjectId: -1,
+        projects: [{ id: 1, title: 'Inbox', hex_color: '#3498db' }],
+        tasks: [],
+        addTask: mockAddTask,
+      });
+
+      const { getByTestId } = render(
+        <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+      );
+
+      const input = getByTestId('quick-add-input');
+      fireEvent.changeText(input, 'New personal task');
+      fireEvent.press(getByTestId('quick-add-submit'));
+
+      expect(mockAddTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'New personal task',
+          assignees: [{ id: 101, username: 'terahz' }],
+        })
+      );
+    });
   });
 });

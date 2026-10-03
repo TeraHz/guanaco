@@ -301,56 +301,111 @@ describe('VikunjaClient', () => {
       );
     });
 
-    it('should toggle task completion (done: true/false)', async () => {
+    it('should update task preserving all mutable fields and mapping color to hex_color', async () => {
+      const fullTaskInput = {
+        title: 'Important Meeting',
+        description: 'Prepare quarterly slides',
+        done: false,
+        due_date: '2026-10-15T10:00:00Z',
+        priority: 4,
+        project_id: 2,
+        color: '#ff0000',
+        repeat_after: 86400,
+        assignees: [{ id: 101, username: 'terahz' }],
+      };
+
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ id: 10, done: true, title: 'Buy groceries' }),
+        json: async () => ({ id: 10, ...fullTaskInput, hex_color: '#ff0000' }),
       } as Response);
 
-      const updated = await client.toggleTaskDone(10, true);
+      const updated = await client.updateTask(10, fullTaskInput);
+      expect(updated.id).toBe(10);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/tasks/10',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            ...fullTaskInput,
+            hex_color: '#ff0000',
+          }),
+        })
+      );
+    });
+
+    it('should toggle task completion with task snapshot to prevent field wiping', async () => {
+      const snapshot = {
+        title: 'Buy groceries',
+        description: 'Apples and milk',
+        priority: 2,
+        project_id: 1,
+        due_date: '2026-10-10T12:00:00Z',
+        assignees: [{ id: 101, username: 'terahz' }],
+      };
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 10, done: true, ...snapshot }),
+      } as Response);
+
+      const updated = await client.toggleTaskDone(10, true, snapshot);
       expect(updated.done).toBe(true);
       expect(global.fetch).toHaveBeenCalledWith(
         'https://try.vikunja.io/api/v1/tasks/10',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ done: true }),
+          body: JSON.stringify({
+            ...snapshot,
+            done: true,
+          }),
         })
       );
     });
 
-    it('should move task to another project (list)', async () => {
+    it('should move task with task snapshot to prevent field wiping', async () => {
+      const snapshot = {
+        title: 'Buy groceries',
+        description: 'Apples and milk',
+        done: false,
+        priority: 2,
+        project_id: 1,
+      };
+
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ id: 10, project_id: 5, title: 'Buy groceries' }),
+        json: async () => ({ id: 10, ...snapshot, project_id: 5 }),
       } as Response);
 
-      const moved = await client.moveTask(10, 5);
+      const moved = await client.moveTask(10, 5, snapshot);
       expect(moved.project_id).toBe(5);
       expect(global.fetch).toHaveBeenCalledWith(
         'https://try.vikunja.io/api/v1/tasks/10',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ project_id: 5 }),
+          body: JSON.stringify({
+            ...snapshot,
+            project_id: 5,
+          }),
         })
       );
     });
 
-    it('should reorder task by updating position', async () => {
+    it('should set task position via dedicated /tasks/{id}/position endpoint', async () => {
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ id: 10, position: 2048, title: 'Buy groceries' }),
+        json: async () => ({ position: 2048, project_view_id: 7, task_id: 10 }),
       } as Response);
 
-      const reordered = await client.reorderTask(10, 2048);
-      expect(reordered.position).toBe(2048);
+      await client.setTaskPosition(10, 7, 2048);
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/tasks/10',
+        'https://try.vikunja.io/api/v1/tasks/10/position',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ position: 2048 }),
+          body: JSON.stringify({ project_view_id: 7, position: 2048 }),
         })
       );
     });

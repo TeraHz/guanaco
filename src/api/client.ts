@@ -221,21 +221,52 @@ export class VikunjaClient {
   }
 
   public async updateTask(taskId: number, data: UpdateTaskInput): Promise<Task> {
+    const payload: any = { ...data };
+    if (payload.color && !payload.hex_color) {
+      payload.hex_color = payload.color;
+    }
     return this.request<Task>(`/tasks/${taskId}`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
   }
 
-  public async toggleTaskDone(taskId: number, done: boolean): Promise<Task> {
-    return this.updateTask(taskId, { done });
+  public async toggleTaskDone(
+    taskId: number,
+    done: boolean,
+    taskSnapshot?: Partial<Task>
+  ): Promise<Task> {
+    const base = taskSnapshot ? { ...taskSnapshot } : {};
+    return this.updateTask(taskId, { ...base, done });
   }
 
-  public async moveTask(taskId: number, targetProjectId: number): Promise<Task> {
-    return this.updateTask(taskId, { project_id: targetProjectId });
+  public async moveTask(
+    taskId: number,
+    targetProjectId: number,
+    taskSnapshot?: Partial<Task>
+  ): Promise<Task> {
+    const base = taskSnapshot ? { ...taskSnapshot } : {};
+    return this.updateTask(taskId, { ...base, project_id: targetProjectId });
   }
 
-  public async reorderTask(taskId: number, position: number): Promise<Task> {
+  public async setTaskPosition(
+    taskId: number,
+    projectViewId: number,
+    position: number
+  ): Promise<any> {
+    return this.request<any>(`/tasks/${taskId}/position`, {
+      method: 'POST',
+      body: JSON.stringify({
+        project_view_id: projectViewId,
+        position,
+      }),
+    });
+  }
+
+  public async reorderTask(taskId: number, position: number, projectViewId?: number): Promise<any> {
+    if (projectViewId && projectViewId > 0) {
+      return this.setTaskPosition(taskId, projectViewId, position);
+    }
     return this.updateTask(taskId, { position });
   }
 

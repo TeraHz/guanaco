@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
+# Zero Telemetry / Privacy: strictly disable all metrics, analytics, and phone-home heartbeats
+export EXPO_NO_TELEMETRY=1
+export EXPO_OFFLINE=1
+export DO_NOT_TRACK=1
+
 echo "=== Building Guanaco Android App Bundle (.aab) Locally ==="
 
 # Auto-detect Android SDK if not set

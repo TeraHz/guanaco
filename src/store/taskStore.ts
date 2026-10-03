@@ -5,6 +5,7 @@ import { CreateTaskInput, Label, Project, Task, UpdateTaskInput, User } from '..
 import { VikunjaClient } from '../api/client';
 import { SyncQueue, SyncStatus } from './syncQueue';
 import { safeHaptics } from '../utils/haptics';
+import { MY_TASKS_PROJECT_ID } from '../utils/taskFilters';
 
 const CACHE_KEY_PROJECTS = '@vikunja_cached_projects';
 const CACHE_KEY_TASKS = '@vikunja_cached_tasks';
@@ -260,11 +261,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   setSelectedProjectId: (id: number | null) => {
     set({ selectedProjectId: id });
-    if (id !== null) {
+    if (id !== null && id > 0) {
       AsyncStorage.setItem(CACHE_KEY_LAST_PROJECT, id.toString()).catch(() => {});
       get().fetchTasks(id);
     } else {
-      AsyncStorage.removeItem(CACHE_KEY_LAST_PROJECT).catch(() => {});
+      if (id === null) {
+        AsyncStorage.removeItem(CACHE_KEY_LAST_PROJECT).catch(() => {});
+      } else {
+        AsyncStorage.setItem(CACHE_KEY_LAST_PROJECT, id.toString()).catch(() => {});
+      }
       get().fetchAllTasks();
     }
   },
@@ -321,7 +326,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
       if (projects.length > 0) {
         const curId = get().selectedProjectId;
-        if (curId !== null) {
+        if (curId !== null && curId !== MY_TASKS_PROJECT_ID) {
           const targetId = projects.some((p) => p.id === curId) ? curId : null;
           set({ selectedProjectId: targetId });
         }
@@ -555,7 +560,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       syncQueue.enqueue({
         id: `toggle-${taskId}-${Date.now()}`,
         type: 'TOGGLE_TASK',
-        payload: { taskId, done: updatedTask.done },
+        payload: { taskId, done: updatedTask.done, data: updatedTask },
         timestamp: Date.now(),
       });
       syncQueue.processQueue();
@@ -592,7 +597,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         type: 'UPDATE_TASK',
         payload: {
           taskId,
-          data: { done: false, done_at: null, due_date: null, end_date: null },
+          data: updatedTask,
         },
         timestamp: Date.now(),
       });
@@ -843,15 +848,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         });
       }
 
-      const { labels, assignees, ...taskData } = updates;
-      if (Object.keys(taskData).length > 0) {
-        syncQueue.enqueue({
-          id: `update-${taskId}-${Date.now()}`,
-          type: 'UPDATE_TASK',
-          payload: { taskId, data: taskData },
-          timestamp: Date.now(),
-        });
-      }
+      // Merge full task snapshot with updates to prevent Vikunja from wiping other fields
+      const mergedTaskData = {
+        ...task,
+        ...updates,
+      };
+
+      syncQueue.enqueue({
+        id: `update-${taskId}-${Date.now()}`,
+        type: 'UPDATE_TASK',
+        payload: { taskId, data: mergedTaskData },
+        timestamp: Date.now(),
+      });
       syncQueue.processQueue();
     }
   },
@@ -859,6 +867,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   moveTask: (taskId: number, targetProjectId: number) => {
     const { tasks, syncQueue } = get();
     const safeTasks = Array.isArray(tasks) ? tasks : [];
+    const task = safeTasks.find((t) => t.id === taskId);
     const updatedTasks = safeTasks.map((t) =>
       t.id === taskId ? { ...t, project_id: targetProjectId } : t
     );
@@ -868,11 +877,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     safeHaptics.selection();
 
+    const updatedTask = task ? { ...task, project_id: targetProjectId } : { project_id: targetProjectId };
+
     if (syncQueue) {
       syncQueue.enqueue({
         id: `move-${taskId}-${Date.now()}`,
         type: 'MOVE_TASK',
-        payload: { taskId, targetProjectId },
+        payload: { taskId, targetProjectId, data: updatedTask },
         timestamp: Date.now(),
       });
       syncQueue.processQueue();
@@ -880,8 +891,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   reorderTasks: (projectId: number, orderedTaskIds: number[]) => {
-    const { tasks, syncQueue } = get();
+    const { tasks, projects, syncQueue } = get();
     const safeTasks = Array.isArray(tasks) ? tasks : [];
+    const project = (projects || []).find((p) => p.id === projectId);
+    const projectViewId =
+      project?.views?.find((v) => v.view_kind === 'list')?.id || project?.views?.[0]?.id;
 
     const updatedTasks = safeTasks.map((t) => {
       if (t.project_id !== projectId) return t;
@@ -900,7 +914,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         syncQueue.enqueue({
           id: `reorder-${id}-${Date.now()}`,
           type: 'REORDER_TASK',
-          payload: { taskId: id, position: (idx + 1) * 1000 },
+          payload: { taskId: id, position: (idx + 1) * 1000, projectViewId },
           timestamp: Date.now(),
         });
       });
