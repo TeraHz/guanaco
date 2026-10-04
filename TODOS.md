@@ -1,7 +1,7 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.0.8` (Build 7)
+- **Current Version:** `1.0.9` (Build 8)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
 
@@ -10,35 +10,33 @@
 ## 🚀 Phase 4: Performance, Refactoring & Robustness
 
 ### 1. Network & Sync Refinements
-- [ ] **Request Timeout with `AbortController` (M6)**:
-  - Add standard 15s network timeout to all `fetch` calls in `VikunjaClient` to prevent any hung connection from indefinitely blocking the mutation queue.
-- [ ] **Label & Assignee Sync Robustness (M4)**:
-  - Prevent sub-request swallows in `setTaskLabels` and `setTaskAssignees` so failures are properly flagged and retried by the sync queue.
-- [ ] **Optimized All-Tasks Fetching (M1)**:
-  - Streamline `fetchAllTasks` to use paginated `/tasks` instead of blasting individual requests per project on every sync cycle.
+- [x] **Request Timeout with `AbortController` (M6)**:
+  - Added standard 15s network timeout to all `fetch` calls in `VikunjaClient` to prevent hung connections from blocking sync.
+- [x] **Label & Assignee Sync Robustness (M4)**:
+  - Eliminated sub-request error swallows in `setTaskLabels` and `setTaskAssignees`; non-404/409 errors now propagate so `syncQueue` detects failure and retries.
+  - Eliminated redundant reassignment requests for already assigned users.
+- [x] **Optimized All-Tasks Fetching (M1)**:
+  - Streamlined `fetchAllTasks` to use paginated `/tasks` (up to 20 pages) with fallback to `/tasks/all`.
 
 ### 2. Code Quality & Architecture Cleanup
-- [ ] **Extract Custom Hooks (M7)**:
-  - Extract task filtering and sorting logic from `ProjectTasksScreen.tsx` into a dedicated `useFilteredSortedTasks` hook.
-  - Separate modal state logic out of the main screen component.
-- [ ] **Error Logging in `__DEV__`**:
-  - Replace silent empty `catch {}` blocks with conditioned `if (__DEV__) console.warn(...)` for easier local debugging.
-- [ ] **Single Source Versioning (B2)**:
-  - Create a unified `npm run bump [patch|minor|major]` script that simultaneously updates `app.json`, `package.json`, `android/app/build.gradle`, and `version.ts`.
+- [x] **Extract Custom Hooks (M7)**:
+  - Extracted task filtering, sorting, label extraction, and AI grouping logic into dedicated `useFilteredSortedTasks` custom hook with full unit test coverage.
+- [x] **Error Logging in `__DEV__`**:
+  - Replaced silent empty catch blocks with conditioned `if (__DEV__) console.warn(...)` across API and sync components for easier local debugging.
+- [x] **Single Source Versioning (B2)**:
+  - Created unified `npm run bump [patch|minor|major]` script (`scripts/bump-version.js`) updating `package.json`, `app.json`, `build.gradle`, and `version.ts`.
 
 ---
 
 ## 📱 Phase 4B: Large Screens, Tablets & Landscape Mode
 
 ### 1. Orientation & Foldable Readiness (Android 16)
-- [ ] **Unlock Orientation**:
-  - Switch `"orientation": "default"` in `app.json` to allow clean rotation between Portrait and Landscape.
-- [ ] **Tablet / Foldable Dual-Pane Layout**:
-  - When screen width is `>= 768px` (iPad / Android tablets / unfolded foldables):
-    - Replace the slide-in drawer with a permanent, responsive left sidebar showing Lists & Projects.
-    - Right area displays the active project's tasks.
-- [ ] **Landscape Modal Adjustments**:
-  - Ensure `TaskDetailModal`, `SettingsModal`, and `LabelManagementModal` take a centered card layout with max-width (~600px) instead of stretching full-width on wide displays.
+- [x] **Unlock Orientation**:
+  - Set `"orientation": "default"` in `app.json` and `android:screenOrientation="unspecified"` in `AndroidManifest.xml` (satisfies Android 16 Google Play requirement).
+- [x] **Tablet / Foldable Dual-Pane Layout**:
+  - Screen width `>= 768px` (iPad, Android tablets, unfolded foldables) renders a permanent, responsive left sidebar (`inline={true}`) showing Lists & Projects with main task list on the right.
+- [x] **Landscape & Tablet Modal Adjustments**:
+  - `TaskDetailModal`, `SettingsModal`, and `LabelManagementModal` wrapped in centered `modalBackdrop` with `maxWidth: 680` for clean, centered card dialog presentation on wide displays.
 
 ---
 

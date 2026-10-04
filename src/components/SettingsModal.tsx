@@ -137,14 +137,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <SafeAreaView
-        style={[
-          styles.modalRoot,
-          {
-            backgroundColor: theme.colors.background,
-          },
-        ]}
-      >
+      <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.background }]}>
+        <SafeAreaView
+          style={[
+            styles.modalRoot,
+            {
+              backgroundColor: theme.colors.background,
+            },
+          ]}
+        >
         {/* Header */}
         <View
           style={[
@@ -526,13 +527,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </View>
         </ScrollView>
       </SafeAreaView>
+      </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
+  modalBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   modalRoot: {
     flex: 1,
+    width: '100%',
+    maxWidth: 680,
   },
   header: {
     flexDirection: 'row',

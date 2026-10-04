@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, AppState, Platform } from 'react-native';
+import { StyleSheet, View, AppState, Platform, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -19,6 +19,8 @@ import {
 
 export default function App() {
   const theme = useAppTheme();
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
@@ -151,6 +153,23 @@ export default function App() {
         <StatusBar style={theme.isDark ? 'light' : 'dark'} />
         {!isAuthenticated ? (
           <LoginScreen onConnect={handleConnect} />
+        ) : isTablet ? (
+          <View style={styles.tabletRoot}>
+            <View style={[styles.tabletSidebar, { borderRightColor: theme.colors.cardBorder }]}>
+              <ProjectDrawer
+                visible={true}
+                inline={true}
+                onClose={() => {}}
+                onLogout={handleLogout}
+              />
+            </View>
+            <View style={styles.tabletContent}>
+              <ProjectTasksScreen
+                hideDrawerButton={true}
+                onOpenDrawer={() => {}}
+              />
+            </View>
+          </View>
         ) : (
           <View style={styles.content}>
             <ProjectTasksScreen onOpenDrawer={() => setIsDrawerOpen(true)} />
@@ -172,6 +191,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#0D0D0E',
   },
   content: {
+    flex: 1,
+  },
+  tabletRoot: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  tabletSidebar: {
+    width: 320,
+    maxWidth: '35%',
+    borderRightWidth: 1,
+  },
+  tabletContent: {
     flex: 1,
   },
 });

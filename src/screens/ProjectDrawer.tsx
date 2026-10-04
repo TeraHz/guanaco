@@ -25,6 +25,7 @@ interface ProjectDrawerProps {
   onClose: () => void;
   onAddNewList?: () => void;
   onLogout?: () => void;
+  inline?: boolean;
 }
 
 export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
@@ -32,6 +33,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   onClose,
   onAddNewList,
   onLogout,
+  inline = false,
 }) => {
   const theme = useAppTheme();
   const {
@@ -54,42 +56,37 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   const safeProjects = Array.isArray(projects) ? projects : [];
   const safeTasks = Array.isArray(tasks) ? tasks : [];
 
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
+  const drawerContent = (
+    <SafeAreaView
+      style={[
+        inline ? styles.inlineContainer : styles.drawerContainer,
+        {
+          backgroundColor: theme.colors.cardBackground,
+          borderRightColor: theme.colors.cardBorder,
+        },
+      ]}
+      edges={['top', 'bottom', 'left']}
     >
-      <View style={styles.overlay}>
-        <SafeAreaView
-          style={[
-            styles.drawerContainer,
-            {
-              backgroundColor: theme.colors.cardBackground,
-              borderRightColor: theme.colors.cardBorder,
-            },
-          ]}
-          edges={['top', 'bottom', 'left']}
-        >
-          {/* Drawer Header */}
-          <View style={[styles.header, { borderBottomColor: theme.colors.cardBorder }]}>
-            <View style={styles.brandRow}>
-              <Image
-                source={require('../../assets/icon.png')}
-                style={styles.logoImage}
-                resizeMode="cover"
-              />
-              <Text style={[styles.brandTitle, { color: theme.colors.text }]}>Lists</Text>
-            </View>
-            <TouchableOpacity
-              testID="drawer-close-btn"
-              style={styles.closeBtn}
-              onPress={onClose}
-            >
-              <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
-            </TouchableOpacity>
-          </View>
+      {/* Drawer Header */}
+      <View style={[styles.header, { borderBottomColor: theme.colors.cardBorder }]}>
+        <View style={styles.brandRow}>
+          <Image
+            source={require('../../assets/icon.png')}
+            style={styles.logoImage}
+            resizeMode="cover"
+          />
+          <Text style={[styles.brandTitle, { color: theme.colors.text }]}>Lists</Text>
+        </View>
+        {!inline && (
+          <TouchableOpacity
+            testID="drawer-close-btn"
+            style={styles.closeBtn}
+            onPress={onClose}
+          >
+            <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
           {/* Project List */}
           <ScrollView style={styles.projectList}>
@@ -240,7 +237,35 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             </TouchableOpacity>
           </View>
         </SafeAreaView>
+  );
 
+  if (inline) {
+    return (
+      <View style={styles.inlineRoot}>
+        {drawerContent}
+        <SettingsModal
+          visible={showSettings}
+          onClose={() => setShowSettings(false)}
+          onLogout={onLogout}
+          onOpenLabelManagement={() => setShowLabels(true)}
+        />
+        <LabelManagementModal
+          visible={showLabels}
+          onClose={() => setShowLabels(false)}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.overlay}>
+        {drawerContent}
         <TouchableWithoutFeedback testID="drawer-backdrop" onPress={onClose}>
           <View style={styles.backdrop} />
         </TouchableWithoutFeedback>
@@ -264,6 +289,16 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
 };
 
 const styles = StyleSheet.create({
+  inlineRoot: {
+    flex: 1,
+    width: '100%',
+  },
+  inlineContainer: {
+    flex: 1,
+    width: '100%',
+    borderRightWidth: 1,
+    display: 'flex',
+  },
   overlay: {
     flex: 1,
     flexDirection: 'row',

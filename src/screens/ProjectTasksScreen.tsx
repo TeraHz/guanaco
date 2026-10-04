@@ -23,8 +23,9 @@ import { TaskDetailModal } from '../components/TaskDetailModal';
 import { LabelManagementModal } from '../components/LabelManagementModal';
 import { sortTasks, SortOption } from '../utils/sorting';
 import { isShoppingList } from '../utils/smartClassifier';
-import { isAICoreSupported, classifyTaskWithAI, classifyTasksWithAIAsync } from '../utils/aiCore';
+import { isAICoreSupported, classifyTaskWithAI } from '../utils/aiCore';
 import { MY_TASKS_PROJECT_ID, MY_TASKS_PROJECT, isTaskAssignedToUser } from '../utils/taskFilters';
+import { useFilteredSortedTasks, FilterType } from '../hooks/useFilteredSortedTasks';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
@@ -34,9 +35,8 @@ import { Task } from '../types/vikunja';
 interface ProjectTasksScreenProps {
   onOpenDrawer?: () => void;
   onSelectTask?: (task: Task) => void;
+  hideDrawerButton?: boolean;
 }
-
-type FilterType = 'all' | 'active' | 'done';
 
 const SORT_LABELS: Record<SortOption, string> = {
   default: 'Default Order',
@@ -52,6 +52,7 @@ const SORT_LABELS: Record<SortOption, string> = {
 export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   onOpenDrawer,
   onSelectTask,
+  hideDrawerButton = false,
 }) => {
   const theme = useAppTheme();
   const {
@@ -94,19 +95,6 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const [refreshing, setRefreshing] = useState(false);
 
   const safeProjects = Array.isArray(projects) ? projects.filter((p) => p.id > 0) : [];
-  const safeTasks = Array.isArray(tasks) ? tasks : [];
-
-  const isAllTasksView = selectedProjectId === null;
-  const isMyTasksView = selectedProjectId === MY_TASKS_PROJECT_ID;
-  const activeProject = isMyTasksView
-    ? MY_TASKS_PROJECT
-    : isAllTasksView
-    ? { id: 0, title: 'All Tasks', hex_color: '#007AFF' }
-    : safeProjects.find((p) => p.id === selectedProjectId) ||
-      safeProjects[0] ||
-      { id: 0, title: 'All Tasks', hex_color: '#007AFF' };
-
-  const isShopping = isShoppingList(activeProject?.title);
 
   // Fetch tasks on mount & when active project changes (Regression Issue #1)
   useEffect(() => {
@@ -123,65 +111,29 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     setRefreshing(false);
   };
 
-  // Extract all available labels across tasks and store labels
-  const availableLabels = Array.from(
-    new Set([
-      ...(storeLabels || []).map((l) => l.title),
-      ...safeTasks.flatMap((t) => (t.labels || []).map((l) => l.title)),
-    ].filter(Boolean))
-  );
-
-  // Filter tasks belonging to current active project (or all tasks in All Tasks / My Tasks view)
-  const projectTasks = isMyTasksView
-    ? safeTasks.filter((t) => isTaskAssignedToUser(t, currentUser))
-    : isAllTasksView
-    ? safeTasks
-    : safeTasks.filter((t) => t.project_id === activeProject.id);
-
-  // Done tasks for quick add suggestions & re-enabling
-  const doneTasks = projectTasks.filter((t) => t.done);
-
-  // Apply filters
-  const filteredTasks = useMemo(() => {
-    return projectTasks.filter((task) => {
-      if (filter === 'active' && task.done) return false;
-      if (filter === 'done' && !task.done) return false;
-      if (selectedLabel) {
-        const hasLabel = task.labels?.some(
-          (l) => l.title.toLowerCase() === selectedLabel.toLowerCase()
-        );
-        if (!hasLabel) return false;
-      }
-      return true;
-    });
-  }, [projectTasks, filter, selectedLabel]);
+  const {
+    activeProject,
+    isAllTasksView,
+    isMyTasksView,
+    isShopping,
+    availableLabels,
+    projectTasks,
+    doneTasks,
+    filteredTasks,
+    sortedTasks,
+    activeCount,
+  } = useFilteredSortedTasks({
+    projects,
+    tasks,
+    labels: storeLabels,
+    selectedProjectId,
+    currentUser,
+    filter,
+    selectedLabel,
+    sortBy,
+  });
 
   const hasAICore = isAICoreSupported();
-  const [aiVersion, setAiVersion] = useState(0);
-
-  const tasksSignature = useMemo(
-    () => filteredTasks.map((t) => `${t.id}:${t.title}`).join('|'),
-    [filteredTasks]
-  );
-
-  useEffect(() => {
-    let isMounted = true;
-    if (sortBy === 'aiSmart' && filteredTasks.length > 0) {
-      classifyTasksWithAIAsync(filteredTasks, activeProject?.title)
-        .then((cats) => {
-          if (isMounted && cats && Object.keys(cats).length > 0) {
-            setAiVersion((v) => v + 1);
-          }
-        })
-        .catch(() => {});
-    }
-    return () => {
-      isMounted = false;
-    };
-  }, [sortBy, tasksSignature, activeProject?.title]);
-
-  // Apply intelligent sorting with priority preserved (aiVersion ensures reactive re-sort)
-  const sortedTasks = sortTasks(filteredTasks, sortBy, activeProject?.title);
 
   const handleMoveTaskPosition = (taskId: number, direction: 'up' | 'down') => {
     safeHaptics.selection();
@@ -211,10 +163,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     }
   };
 
-  const activeCount = projectTasks.filter((t) => !t.done).length;
-
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]}>
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
+      edges={hideDrawerButton ? ['top', 'bottom', 'right'] : ['top', 'bottom', 'left', 'right']}
+    >
       <StatusBar
         barStyle={theme.isDark ? 'light-content' : 'dark-content'}
         backgroundColor={theme.colors.background}
@@ -234,14 +187,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             },
           ]}
         >
-          <TouchableOpacity
-            testID="drawer-toggle-btn"
-            style={styles.drawerBtn}
-            onPress={onOpenDrawer}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.drawerIcon, { color: theme.colors.text }]}>☰</Text>
-          </TouchableOpacity>
+          {!hideDrawerButton && (
+            <TouchableOpacity
+              testID="drawer-toggle-btn"
+              style={styles.drawerBtn}
+              onPress={onOpenDrawer}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.drawerIcon, { color: theme.colors.text }]}>☰</Text>
+            </TouchableOpacity>
+          )}
 
         <View style={styles.projectInfo}>
           <View style={styles.projectTitleRow}>

@@ -838,6 +838,48 @@ describe('VikunjaClient', () => {
 
       await expect(fastTimeoutClient.getProjects()).rejects.toThrow(/timed out|timeout|aborted/i);
     });
+
+    it('setTaskLabels should rethrow unexpected errors so sync queue can retry', async () => {
+      // Return 500 error when trying to attach label
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 100, title: 'Task 100', labels: [] }),
+        } as Response) // getTask
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 5, title: 'Urgent' }],
+        } as Response) // getLabels
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          json: async () => ({ message: 'Database failure' }),
+        } as Response); // addLabelToTask
+
+      await expect(
+        client.setTaskLabels(100, [{ id: 5, title: 'Urgent' }])
+      ).rejects.toThrow('Database failure');
+    });
+
+    it('setTaskAssignees should rethrow unexpected errors so sync queue can retry', async () => {
+      // Return network failure when trying to add assignee
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 502,
+          statusText: 'Bad Gateway',
+          json: async () => ({ message: 'Upstream gateway error' }),
+        } as Response);
+
+      await expect(
+        client.setTaskAssignees(100, [{ id: 9, username: 'charlie' }], [])
+      ).rejects.toThrow('Upstream gateway error');
+    });
   });
 });
 

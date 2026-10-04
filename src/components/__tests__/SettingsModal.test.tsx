@@ -32,7 +32,7 @@ describe('SettingsModal', () => {
     );
 
     expect(getByText('Settings')).toBeTruthy();
-    expect(getByText(/tasks\.geodar\.com/)).toBeTruthy();
+    expect(getByText(/vikunja\.example\.com/)).toBeTruthy();
     expect(getByText(/Version/)).toBeTruthy();
     expect(getAllByText(new RegExp(APP_VERSION)).length).toBeGreaterThanOrEqual(1);
     expect(getByText(/Task Item Size/)).toBeTruthy();

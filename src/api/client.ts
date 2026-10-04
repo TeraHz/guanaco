@@ -87,6 +87,10 @@ export class VikunjaClient {
         signal: controller.signal,
       });
 
+      if (!response) {
+        throw new Error('No response received');
+      }
+
       let data: any = null;
       const contentType = response.headers?.get?.('content-type') || '';
       if (contentType.includes('application/json') || response.json) {
@@ -394,7 +398,16 @@ export class VikunjaClient {
       if (rem.id > 0) {
         try {
           await this.removeLabelFromTask(taskId, rem.id);
-        } catch (_) {}
+        } catch (err: any) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('[VikunjaClient] removeLabelFromTask error:', err);
+          }
+          if (err instanceof VikunjaApiError && err.status === 404) {
+            // Label already detached or doesn't exist
+          } else {
+            throw err;
+          }
+        }
       }
     }
 
@@ -406,7 +419,10 @@ export class VikunjaClient {
     let existingLabels: Label[] = [];
     try {
       existingLabels = await this.getLabels();
-    } catch (_) {
+    } catch (err) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn('[VikunjaClient] getLabels error:', err);
+      }
       existingLabels = [];
     }
 
@@ -430,7 +446,10 @@ export class VikunjaClient {
         try {
           finalLabel = await this.createLabel(l.title.trim(), l.hex_color);
           existingLabels.push(finalLabel);
-        } catch (_) {
+        } catch (err) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('[VikunjaClient] createLabel error:', err);
+          }
           finalLabel = l;
         }
       }
@@ -438,7 +457,16 @@ export class VikunjaClient {
       if (finalLabel && finalLabel.id > 0) {
         try {
           await this.addLabelToTask(taskId, finalLabel.id);
-        } catch (_) {}
+        } catch (err: any) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('[VikunjaClient] addLabelToTask error:', err);
+          }
+          if (err instanceof VikunjaApiError && (err.status === 409 || err.status === 400)) {
+            // Already attached
+          } else {
+            throw err;
+          }
+        }
       }
 
       resolvedLabels.push(finalLabel);
@@ -483,6 +511,12 @@ export class VikunjaClient {
       }
     }
 
+    const prevIds = new Set(
+      currentAssignees.filter((u) => u.id > 0).map((u) => u.id)
+    );
+    const prevUsernames = new Set(
+      currentAssignees.map((u) => u.username.toLowerCase())
+    );
     const nextIds = new Set(
       nextAssignees.filter((u) => u.id > 0).map((u) => u.id)
     );
@@ -498,13 +532,30 @@ export class VikunjaClient {
       if (!kept && prev.id > 0) {
         try {
           await this.removeAssigneeFromTask(taskId, prev.id);
-        } catch (_) {}
+        } catch (err: any) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('[VikunjaClient] removeAssigneeFromTask error:', err);
+          }
+          if (err instanceof VikunjaApiError && err.status === 404) {
+            // Already removed or doesn't exist
+          } else {
+            throw err;
+          }
+        }
       }
     }
 
-    // 2. Add new assignees
+    // 2. Add new assignees (skipping ones already assigned)
     const resolvedAssignees: User[] = [];
     for (const u of nextAssignees) {
+      const alreadyAssigned =
+        (u.id > 0 && prevIds.has(u.id)) ||
+        prevUsernames.has(u.username.toLowerCase());
+
+      if (alreadyAssigned) {
+        resolvedAssignees.push(u);
+        continue;
+      }
       let finalUser = u;
       if (finalUser.id <= 0) {
         // Try to search user by username
@@ -516,13 +567,26 @@ export class VikunjaClient {
           if (matched) {
             finalUser = matched;
           }
-        } catch (_) {}
+        } catch (err) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('[VikunjaClient] searchUsers error:', err);
+          }
+        }
       }
 
       if (finalUser.id > 0) {
         try {
           await this.addAssigneeToTask(taskId, finalUser.id);
-        } catch (_) {}
+        } catch (err: any) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('[VikunjaClient] addAssigneeToTask error:', err);
+          }
+          if (err instanceof VikunjaApiError && (err.status === 409 || err.status === 400)) {
+            // Already assigned
+          } else {
+            throw err;
+          }
+        }
       }
       resolvedAssignees.push(finalUser);
     }

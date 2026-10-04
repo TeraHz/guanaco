@@ -264,15 +264,16 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <SafeAreaView
-        testID="task-detail-modal-root"
-        style={[
-          styles.modalRoot,
-          {
-            backgroundColor: theme.colors.background,
-          },
-        ]}
-      >
+      <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.background }]}>
+        <SafeAreaView
+          testID="task-detail-modal-root"
+          style={[
+            styles.modalRoot,
+            {
+              backgroundColor: theme.colors.background,
+            },
+          ]}
+        >
         <KeyboardAvoidingView
           style={styles.keyboardView}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -907,13 +908,21 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
+  modalBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   modalRoot: {
     flex: 1,
+    width: '100%',
+    maxWidth: 680,
   },
   keyboardView: {
     flex: 1,

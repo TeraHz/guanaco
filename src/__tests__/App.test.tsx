@@ -131,4 +131,27 @@ describe('App Root Integration & Session Persistence', () => {
     expect(await findByText('Cached Grocery Item')).toBeTruthy();
     expect(await findByText('Newly Synced Remote Task')).toBeTruthy();
   });
+
+  it('renders dual-pane sidebar layout when screen width >= 768 (tablets / foldables)', async () => {
+    const ReactNative = require('react-native');
+    const spy = jest.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({
+      width: 1024,
+      height: 768,
+      scale: 2,
+      fontScale: 1,
+    });
+
+    await setStoredAuth('stored-valid-token', 'https://try.vikunja.io');
+
+    const { findByTestId, queryByTestId } = render(<App />);
+
+    await findByTestId('drawer-project-1');
+
+    // In tablet mode, drawer toggle button is hidden because sidebar is permanent
+    expect(queryByTestId('drawer-toggle-btn')).toBeNull();
+    // And permanent sidebar settings button is present
+    expect(await findByTestId('drawer-settings-btn')).toBeTruthy();
+
+    spy.mockRestore();
+  });
 });

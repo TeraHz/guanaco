@@ -1,6 +1,6 @@
 {
   "name": "guanaco",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "main": "index.js",
   "scripts": {
     "start": "EXPO_NO_TELEMETRY=1 expo start",
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "build:bundle": "bash scripts/build-android-bundle.sh",
     "publish:play": "node scripts/publish-play-store.js",
+    "bump": "node scripts/bump-version.js",
     "deploy": "npm run build:bundle && npm run publish:play"
   },
   "dependencies": {
