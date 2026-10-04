@@ -84,17 +84,23 @@ async function main() {
     const editId = editRes.data.id;
     console.log(`   Edit ID: ${editId}`);
 
-    // 6. Upload the AAB bundle
-    console.log('🚀 Uploading App Bundle (.aab) to Google Play...');
-    const uploadRes = await publisher.edits.bundles.upload({
-      editId,
-      packageName,
-      media: {
-        mimeType: 'application/octet-stream',
-        body: fs.createReadStream(aabPath),
-      },
-    });
-    console.log(`   Uploaded bundle version code: ${uploadRes.data.versionCode}`);
+    // 6. Check existing bundles or upload the AAB bundle
+    const bundlesRes = await publisher.edits.bundles.list({ editId, packageName });
+    const existingCodes = (bundlesRes.data.bundles || []).map(b => b.versionCode);
+    if (existingCodes.includes(versionCode)) {
+      console.log(`📦 Bundle version code ${versionCode} is already uploaded in Google Play. Reusing existing bundle.`);
+    } else {
+      console.log('🚀 Uploading App Bundle (.aab) to Google Play...');
+      const uploadRes = await publisher.edits.bundles.upload({
+        editId,
+        packageName,
+        media: {
+          mimeType: 'application/octet-stream',
+          body: fs.createReadStream(aabPath),
+        },
+      });
+      console.log(`   Uploaded bundle version code: ${uploadRes.data.versionCode}`);
+    }
 
     // Upload deobfuscation mapping file if available
     const mappingPath = path.resolve(__dirname, '../android/app/build/outputs/mapping/release/mapping.txt');
@@ -119,27 +125,58 @@ async function main() {
 
     // 7. Assign to target track
     console.log(`🚚 Assigning release to "${track}" track...`);
-    await publisher.edits.tracks.update({
-      editId,
-      packageName,
-      track,
-      requestBody: {
-        releases: [
-          {
-            name: `v${versionName} (${versionCode})`,
-            versionCodes: [versionCode.toString()],
-            status: 'completed',
-          },
-        ],
-      },
-    });
+    let releaseStatus = 'completed';
+    const assignRelease = (status) =>
+      publisher.edits.tracks.update({
+        editId,
+        packageName,
+        track,
+        requestBody: {
+          releases: [
+            {
+              name: `v${versionName} (${versionCode})`,
+              versionCodes: [versionCode.toString()],
+              status,
+            },
+          ],
+        },
+      });
+
+    try {
+      await assignRelease(releaseStatus);
+      console.log(`   Assigned as "${releaseStatus}".`);
+    } catch (trackErr) {
+      if (trackErr.message?.includes('draft') || trackErr.response?.data?.error?.message?.includes('draft')) {
+        console.log('   App is in draft state; assigning release as "draft" status...');
+        releaseStatus = 'draft';
+        await assignRelease(releaseStatus);
+      } else {
+        throw trackErr;
+      }
+    }
 
     // 8. Commit the edit
     console.log('✅ Committing release to Google Play...');
-    await publisher.edits.commit({
-      editId,
-      packageName,
-    });
+    try {
+      await publisher.edits.commit({
+        editId,
+        packageName,
+      });
+    } catch (commitErr) {
+      if (
+        commitErr.message?.includes('status draft may be created on draft app') ||
+        commitErr.response?.data?.error?.message?.includes('status draft may be created on draft app')
+      ) {
+        console.log('   App requires draft status. Re-assigning as "draft" and committing...');
+        await assignRelease('draft');
+        await publisher.edits.commit({
+          editId,
+          packageName,
+        });
+      } else {
+        throw commitErr;
+      }
+    }
 
     console.log('\n🎉 Successfully published to Google Play!');
     console.log(`👉 Check release: https://play.google.com/console/developers/app/${packageName}/tracks/${track}\n`);
