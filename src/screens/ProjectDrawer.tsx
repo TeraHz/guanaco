@@ -9,6 +9,7 @@ import {
   TouchableWithoutFeedback,
   Platform,
   StatusBar,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTaskStore } from '../store/taskStore';
@@ -77,9 +78,11 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           {/* Drawer Header */}
           <View style={[styles.header, { borderBottomColor: theme.colors.cardBorder }]}>
             <View style={styles.brandRow}>
-              <View style={styles.logoBadge}>
-                <Text style={styles.logoText}>V</Text>
-              </View>
+              <Image
+                source={require('../../assets/icon.png')}
+                style={styles.logoImage}
+                resizeMode="cover"
+              />
               <Text style={[styles.brandTitle, { color: theme.colors.text }]}>Lists</Text>
             </View>
             <TouchableOpacity
@@ -290,18 +293,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  logoBadge: {
+  logoImage: {
     width: 28,
     height: 28,
     borderRadius: 8,
-    backgroundColor: '#007AFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 16,
   },
   brandTitle: {
     fontSize: 20,

@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -91,9 +92,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* Logo / Header */}
           <View style={styles.header}>
-            <View style={styles.logoBadge}>
-              <Text style={styles.logoText}>G</Text>
-            </View>
+            <Image
+              source={require('../../assets/icon.png')}
+              style={styles.logoImage}
+              resizeMode="cover"
+            />
             <Text style={styles.title}>Guanaco</Text>
             <Text style={styles.subtitle}>
               Connect your self-hosted or cloud Vikunja instance
@@ -189,24 +192,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 32,
   },
-  logoBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: '#007AFF',
-    alignItems: 'center',
-    justifyContent: 'center',
+  logoImage: {
+    width: 76,
+    height: 76,
+    borderRadius: 22,
     marginBottom: 16,
-    shadowColor: '#007AFF',
+    shadowColor: '#8B5CF6',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.45,
     shadowRadius: 16,
-    elevation: 8,
-  },
-  logoText: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: '900',
   },
   title: {
     fontSize: 26,
