@@ -111,5 +111,5 @@ npm run publish:play
 
 ## 📄 License
 
-Guanaco is open source software licensed under the [MIT License](LICENSE).
+Guanaco is open source software licensed under the [GNU General Public License v3.0 (GPL-3.0-or-later)](LICENSE).
 Vikunja is an open-source project created by Kolaente.

@@ -35,7 +35,7 @@ Requirements:
 Guanaco is a client app and requires an accessible Vikunja server (self-hosted or hosted). It does not provide standalone task storage without a server.
 
 Open Source:
-Guanaco is free, open-source software licensed under the MIT License.
+Guanaco is free, open-source software licensed under the GNU General Public License v3.0 (GPL-3.0).
 Source code: https://github.com/TeraHz/guanaco
 ```
 
