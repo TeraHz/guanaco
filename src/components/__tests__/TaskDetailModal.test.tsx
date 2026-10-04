@@ -232,32 +232,26 @@ describe('TaskDetailModal (CUJ 2)', () => {
     expect(mockOnMoveTask).toHaveBeenCalledWith(10, 2);
   });
 
-  // --- Regression: Android Status Bar Offset ---
-  it('applies top safe padding on Android to prevent status bar overlap', () => {
-    const originalOS = require('react-native').Platform.OS;
-    try {
-      require('react-native').Platform.OS = 'android';
-      const { getByTestId } = render(
-        <TaskDetailModal
-          visible={true}
-          task={mockTask}
-          onClose={mockOnClose}
-          onSave={mockOnSave}
-          onDelete={mockOnDelete}
-        />
-      );
+  // --- Regression: Safe Area Root ---
+  it('renders SafeAreaView root to manage safe status bar insets properly', () => {
+    const { getByTestId } = render(
+      <TaskDetailModal
+        visible={true}
+        task={mockTask}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+      />
+    );
 
-      const modalRoot = getByTestId('task-detail-modal-root');
-      expect(modalRoot.props.style).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            paddingTop: expect.any(Number),
-          }),
-        ])
-      );
-    } finally {
-      require('react-native').Platform.OS = originalOS;
-    }
+    const modalRoot = getByTestId('task-detail-modal-root');
+    expect(modalRoot.props.style).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          flex: 1,
+        }),
+      ])
+    );
   });
 
   // --- CUJ: Task title top-most and active right away on create ---

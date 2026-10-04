@@ -58,14 +58,10 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <TouchableWithoutFeedback onPress={onClose}>
-          <View style={styles.backdrop} />
-        </TouchableWithoutFeedback>
-
         <SafeAreaView
           style={[
             styles.drawerContainer,
@@ -74,6 +70,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
               borderRightColor: theme.colors.cardBorder,
             },
           ]}
+          edges={['top', 'bottom', 'left']}
         >
           {/* Drawer Header */}
           <View style={[styles.header, { borderBottomColor: theme.colors.cardBorder }]}>
@@ -243,6 +240,10 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             </TouchableOpacity>
           </View>
         </SafeAreaView>
+
+        <TouchableWithoutFeedback testID="drawer-backdrop" onPress={onClose}>
+          <View style={styles.backdrop} />
+        </TouchableWithoutFeedback>
       </View>
 
       {/* Dedicated Settings Modal */}
@@ -277,14 +278,13 @@ const styles = StyleSheet.create({
     borderRightWidth: 1,
     borderRightColor: '#2C2C2E',
     display: 'flex',
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#2C2C2E',
   },

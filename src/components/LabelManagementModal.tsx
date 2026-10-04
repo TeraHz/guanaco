@@ -107,7 +107,6 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
           styles.modalRoot,
           {
             backgroundColor: theme.colors.background,
-            paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
           },
         ]}
       >

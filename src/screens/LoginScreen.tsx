@@ -26,7 +26,7 @@ const STORAGE_KEY_USERNAME = '@vikunja_username';
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onConnect,
-  defaultServerUrl = 'https://vikunja.example.com',
+  defaultServerUrl = '',
 }) => {
   const [serverUrl, setServerUrl] = useState(defaultServerUrl);
   const [username, setUsername] = useState('');

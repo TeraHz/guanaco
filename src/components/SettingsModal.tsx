@@ -61,7 +61,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [resetSuccess, setResetSuccess] = useState(false);
   const resetTimerRef = React.useRef<any>(null);
 
-  const serverUrl = client ? client.getBaseApiUrl().replace(/\/api\/v1$/, '') : 'https://vikunja.example.com';
+  const serverUrl = client ? client.getBaseApiUrl().replace(/\/api\/v1$/, '') : '';
   const displayUsername =
     storeCurrentUser?.username ||
     savedUsername ||
@@ -142,7 +142,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           styles.modalRoot,
           {
             backgroundColor: theme.colors.background,
-            paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
           },
         ]}
       >

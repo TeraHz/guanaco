@@ -270,7 +270,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
           styles.modalRoot,
           {
             backgroundColor: theme.colors.background,
-            paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
           },
         ]}
       >
