@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, AppState, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useTaskStore } from './store/taskStore';
 import { LoginScreen } from './screens/LoginScreen';
@@ -143,23 +144,25 @@ export default function App() {
   }, []);
 
   return (
-    <GestureHandlerRootView
-      style={[styles.root, { backgroundColor: theme.colors.background }]}
-    >
-      <StatusBar style={theme.isDark ? 'light' : 'dark'} />
-      {!isAuthenticated ? (
-        <LoginScreen onConnect={handleConnect} />
-      ) : (
-        <View style={styles.content}>
-          <ProjectTasksScreen onOpenDrawer={() => setIsDrawerOpen(true)} />
-          <ProjectDrawer
-            visible={isDrawerOpen}
-            onClose={() => setIsDrawerOpen(false)}
-            onLogout={handleLogout}
-          />
-        </View>
-      )}
-    </GestureHandlerRootView>
+    <SafeAreaProvider style={{ flex: 1 }}>
+      <GestureHandlerRootView
+        style={[styles.root, { backgroundColor: theme.colors.background }]}
+      >
+        <StatusBar style={theme.isDark ? 'light' : 'dark'} />
+        {!isAuthenticated ? (
+          <LoginScreen onConnect={handleConnect} />
+        ) : (
+          <View style={styles.content}>
+            <ProjectTasksScreen onOpenDrawer={() => setIsDrawerOpen(true)} />
+            <ProjectDrawer
+              visible={isDrawerOpen}
+              onClose={() => setIsDrawerOpen(false)}
+              onLogout={handleLogout}
+            />
+          </View>
+        )}
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }
 
