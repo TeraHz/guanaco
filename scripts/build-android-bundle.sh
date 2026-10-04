@@ -35,6 +35,19 @@ if [ -f "guanaco-release.keystore" ] && [ ! -f "android/app/guanaco-release.keys
   cp guanaco-release.keystore android/app/guanaco-release.keystore
 fi
 
+# Sync version and versionCode from app.json to android/app/build.gradle
+node -e "
+const fs = require('fs');
+const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+const version = appJson.expo.version;
+const versionCode = appJson.expo.android.versionCode;
+let gradle = fs.readFileSync('android/app/build.gradle', 'utf8');
+gradle = gradle.replace(/versionCode \d+/, 'versionCode ' + versionCode);
+gradle = gradle.replace(/versionName \".*\"/, 'versionName \"' + version + '\"');
+fs.writeFileSync('android/app/build.gradle', gradle);
+console.log('Synced build.gradle to version ' + version + ' (' + versionCode + ')');
+"
+
 echo "2. Building release bundle (.aab)..."
 cd android
 ./gradlew bundleRelease
