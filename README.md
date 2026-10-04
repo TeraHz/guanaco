@@ -1,68 +1,115 @@
-# Vikunja Mobile (TickTick-Grade UX)
+# Guanaco — Mobile Client for Vikunja
 
-A modern, high-performance mobile client for the [Vikunja](https://vikunja.io) open-source task and project management backend. Built with React Native & Expo, engineered with **strict TDD**, and designed to deliver the tactile, zero-latency experience of **TickTick**.
+<p align="center">
+  <img src="assets/icon.png" width="128" height="128" alt="Guanaco Logo" style="border-radius: 28px;" />
+</p>
+
+<p align="center">
+  <strong>Fast, private, and intuitive mobile task management for your Vikunja server.</strong>
+</p>
+
+<p align="center">
+  <a href="#-features">Features</a> •
+  <a href="#-privacy--zero-telemetry">Privacy</a> •
+  <a href="#-architecture">Architecture</a> •
+  <a href="#-development--testing">Development</a> •
+  <a href="PRIVACY_POLICY.md">Privacy Policy</a> •
+  <a href="LICENSE">License</a>
+</p>
 
 ---
 
-## 🎯 Key UX Features (TickTick Standards)
+## 🎯 Key Features
 
-1. **0ms Optimistic UI & Offline Sync Engine**:
+1. **0ms Optimistic UI & Offline-First Sync**:
    - Ticking off tasks, creating tasks, and moving items happen instantly with 0ms UI latency.
-   - Background mutation queue persists changes and synchronizes with Vikunja's REST API with automatic error recovery and retry backoff.
+   - Robust persistent mutation queue automatically retries and syncs changes with your Vikunja server.
+   - Smart active-window polling preserves battery and bandwidth.
+
 2. **Rapid Chained Task Entry (`QuickAddBar`)**:
    - Persistent bottom input bar designed for rapid consecutive capture.
-   - Typing and pressing return adds the task immediately and keeps the keyboard ready for the next task.
-   - Quick priority cycling flags (`!`, `!!`, `!!!`, `!!!!`).
+   - Natural language shortcut syntax:
+     - `#tag` for label tagging
+     - `!urgent`, `!high`, `!medium`, `!low` for priority
+     - `@date` (`@today`, `@tomorrow`, etc.) for deadlines
+     - `@user` for assignment
+   - Real-time autocomplete suggestions and 1-tap priority cycling.
+
 3. **Tactile Gestures & Haptics (`SwipeableTaskItem`)**:
-   - Swipe Right: Instant task toggle completion with green checkmark animation and success haptics.
-   - Swipe Left: Reveals "Move to List" and "Delete" actions.
-   - Priority strip indicator color-coded by task urgency.
-4. **1-Tap List Reallocation (`MoveListModal`)**:
-   - Effortlessly relocate any task to another project/list in a single tap without nested modal navigation.
-5. **Fast List Switching Drawer (`ProjectDrawer`)**:
-   - Slide-in list switcher showing active task counts, custom project colors, and project navigation.
+   - **Swipe Right**: Instant completion toggle with haptic feedback.
+   - **Swipe Left**: Quick actions for moving between projects or deletion.
+
+4. **Multi-Project Navigation & Smart Views**:
+   - Drawer with live task count badges.
+   - Consolidated **All Tasks** and **My Open Tasks** views.
+   - Custom project colors and 1-tap task list relocation.
+
+5. **Deep Task Details & Organization**:
+   - Subtasks, percentage progress tracking, assignees, dates, reminders, and Markdown notes.
 
 ---
 
-## 🛠️ Tech Stack & Architecture
+## 🔒 Privacy & Zero Telemetry
 
-- **Mobile Framework**: React Native + Expo (TypeScript)
-- **State & Optimistic Store**: Zustand + local mutation sync queue
+Guanaco is built strictly for personal privacy and data sovereignty:
+- **Direct Connection:** All traffic travels exclusively between your device and your self-hosted Vikunja instance.
+- **Zero Third-Party SDKs:** No Google Analytics, no Firebase, no Sentry, no crashlytics, and no ad trackers.
+- **Hardware-Backed Encryption:** Server credentials and API tokens are encrypted on-device via `expo-secure-store` / Android Keystore.
+- **Biometric App Lock:** Optional fingerprint and Face ID protection powered entirely by native Android hardware.
+
+See our full [Privacy Policy](PRIVACY_POLICY.md).
+
+---
+
+## 🛠️ Architecture & Tech Stack
+
+- **Framework**: React Native & Expo (TypeScript)
+- **State & Sync Queue**: Zustand + `@react-native-async-storage/async-storage`
+- **Secure Storage**: `expo-secure-store` (Android Keystore)
 - **Gestures & Animations**: `react-native-gesture-handler` + `react-native-reanimated` + `expo-haptics`
-- **Networking**: Typed Vikunja REST API Client (v1)
-- **Testing**: Jest + `@testing-library/react-native` (Full TDD coverage)
+- **Icons**: `lucide-react-native`
+- **Compiler & Dex Optimization**: Android R8 full-mode code shrinking with deobfuscation mapping pipeline
+- **Testing**: Jest + `@testing-library/react-native` (Full TDD suite with 288 passing tests)
 
 ---
 
-## 🧪 Testing (TDD)
-
-Run the full unit and integration test suite:
+## 🧪 Development & Testing
 
 ```bash
-# Run all tests
+# Install dependencies
+npm install
+
+# Run full test suite (288 tests across 27 suites)
 npm test
 
 # Run tests with code coverage
 npm run test:coverage
 
-# TypeScript verification
+# TypeScript type check
 npm run typecheck
-```
 
----
-
-## 🚀 Running the App
-
-```bash
-# Start development server
+# Start local dev server
 npm start
-
-# Run on Android (device or emulator)
-npm run android
-
-# Run on iOS (simulator or device)
-npm run ios
 
 # Run web preview
 npm run web
 ```
+
+---
+
+## 📦 Building & Publishing
+
+```bash
+# Build production Android App Bundle (.aab) with R8 optimization locally
+npm run build:bundle
+
+# Publish bundle to Google Play Console via developer API
+npm run publish:play
+```
+
+---
+
+## 📄 License
+
+Guanaco is open source software licensed under the [MIT License](LICENSE).
+Vikunja is an open-source project created by Kolaente.
