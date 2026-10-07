@@ -1,9 +1,23 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.1.1` (Build 10)
+- **Current Version:** `1.1.2` (Build 11)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🎨 Phase 5C: List Editing Discoverability & Header Quick Actions (v1.1.2)
+
+### 1. Intuitive List Editing & Management
+- [x] **Project Header Action Button & Title Tap (`ProjectTasksScreen.tsx`)**:
+  - Made active list header title clickable with chevron (`▾`) and subtle `"• Tap to edit list"` guidance.
+  - Added dedicated `⋯` list options button directly in the main header for instant access to Edit List, Share List, and Favorite toggles.
+  - Integrated `ProjectEditorModal` and `ProjectSharingModal` directly into the tasks screen so users never need to open the drawer just to edit or configure the current list.
+- [x] **Drawer List Options Visibility & Gestures (`ProjectDrawer.tsx`)**:
+  - Fixed row layout (`flex: 1` on item) ensuring `⋯` button is always clearly visible and never pushed off-screen by long list titles.
+  - Added long-press gesture with haptic feedback to open list settings on any list in the drawer.
+  - Added explicit section header with hint: `MY LISTS (Tap ⋯ or long-press to edit)`.
 
 ---
 

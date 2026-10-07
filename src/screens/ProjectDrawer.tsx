@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTaskStore } from '../store/taskStore';
+import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { useAppTheme } from '../utils/theme';
 import { SettingsModal } from '../components/SettingsModal';
@@ -162,6 +163,15 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             </TouchableOpacity>
 
             {/* Individual Lists with Tree Hierarchy */}
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
+                MY LISTS
+              </Text>
+              <Text style={[styles.sectionHeaderHint, { color: theme.colors.textSecondary }]}>
+                (Tap ⋯ or long-press to edit)
+              </Text>
+            </View>
+
             {(() => {
               const visibleProjects = safeProjects.filter((p) => p.id > 0 && !p.is_archived);
               const treeNodes = buildProjectTree(visibleProjects);
@@ -192,6 +202,10 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         { paddingLeft: 12 + indentPadding },
                       ]}
                       onPress={() => handleSelect(proj.id)}
+                      onLongPress={() => {
+                        safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                        setActionSheetProject(proj);
+                      }}
                       activeOpacity={0.7}
                     >
                       <View
@@ -229,7 +243,8 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         safeHaptics.selection();
                         setActionSheetProject(proj);
                       }}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      accessibilityLabel={`Options for ${proj.title}`}
                     >
                       <Text style={[styles.optionsBtnText, { color: theme.colors.textSecondary }]}>⋯</Text>
                     </TouchableOpacity>
@@ -483,12 +498,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   projectItem: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 12,
-    marginBottom: 4,
   },
   projectItemSelected: {
     backgroundColor: '#2C2C2E',
@@ -615,6 +630,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  sectionHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  sectionHeaderHint: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
   projectItemWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -624,12 +657,15 @@ const styles = StyleSheet.create({
   optionsBtn: {
     paddingHorizontal: 12,
     paddingVertical: 10,
+    marginRight: 4,
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: 8,
   },
   optionsBtnText: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 20,
+    fontWeight: '700',
+    lineHeight: 20,
   },
   actionSheetBackdrop: {
     flex: 1,

@@ -411,5 +411,24 @@ describe('ProjectTasksScreen', () => {
         })
       );
     });
+
+    it('opens project options action sheet and editor modal when header options button is pressed', () => {
+      const { getByTestId } = render(
+        <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+      );
+
+      const optionsBtn = getByTestId('project-header-options-btn');
+      expect(optionsBtn).toBeTruthy();
+
+      fireEvent.press(optionsBtn);
+
+      const editOption = getByTestId('project-option-edit');
+      expect(editOption).toBeTruthy();
+
+      fireEvent.press(editOption);
+
+      expect(getByTestId('project-modal-title-input')).toBeTruthy();
+      expect(getByTestId('project-modal-save-btn')).toBeTruthy();
+    });
   });
 });

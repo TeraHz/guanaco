@@ -143,5 +143,18 @@ describe('ProjectDrawer', () => {
     expect(getByTestId('drawer-option-share')).toBeTruthy();
     expect(getByTestId('drawer-option-favorite')).toBeTruthy();
   });
+
+  it('opens project options action sheet when list item is long-pressed', () => {
+    const { getByTestId } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    const projectItem = getByTestId('drawer-project-1');
+    fireEvent(projectItem, 'longPress');
+
+    expect(getByTestId('drawer-option-edit')).toBeTruthy();
+    expect(getByTestId('drawer-option-share')).toBeTruthy();
+    expect(getByTestId('drawer-option-favorite')).toBeTruthy();
+  });
 });
 

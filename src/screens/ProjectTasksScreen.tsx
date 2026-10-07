@@ -21,6 +21,8 @@ import { MoveListModal } from '../components/MoveListModal';
 import { QuickLabelModal } from '../components/QuickLabelModal';
 import { TaskDetailModal } from '../components/TaskDetailModal';
 import { LabelManagementModal } from '../components/LabelManagementModal';
+import { ProjectEditorModal } from '../components/ProjectEditorModal';
+import { ProjectSharingModal } from '../components/ProjectSharingModal';
 import { sortTasks, SortOption } from '../utils/sorting';
 import { isShoppingList } from '../utils/smartClassifier';
 import { isAICoreSupported, classifyTaskWithAI } from '../utils/aiCore';
@@ -30,7 +32,7 @@ import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
 import { useAppTheme } from '../utils/theme';
-import { Task } from '../types/vikunja';
+import { Task, Project } from '../types/vikunja';
 
 interface ProjectTasksScreenProps {
   onOpenDrawer?: () => void;
@@ -80,6 +82,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     retrySync,
     syncAll,
     fetchAllTasks,
+    toggleProjectFavorite,
   } = useTaskStore();
 
   const [filter, setFilter] = useState<FilterType>('active');
@@ -92,6 +95,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const [editingLabelsTask, setEditingLabelsTask] = useState<Task | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
+  const [actionSheetProject, setActionSheetProject] = useState<Project | null>(null);
+  const [editorProject, setEditorProject] = useState<Project | null>(null);
+  const [showEditor, setShowEditor] = useState(false);
+  const [sharingProject, setSharingProject] = useState<Project | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const safeProjects = Array.isArray(projects) ? projects.filter((p) => p.id > 0) : [];
@@ -198,7 +205,18 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             </TouchableOpacity>
           )}
 
-        <View style={styles.projectInfo}>
+        <TouchableOpacity
+          testID="project-header-title-btn"
+          style={styles.projectInfo}
+          disabled={!activeProject || activeProject.id <= 0}
+          onPress={() => {
+            if (activeProject && activeProject.id > 0) {
+              safeHaptics.selection();
+              setActionSheetProject(activeProject);
+            }
+          }}
+          activeOpacity={activeProject && activeProject.id > 0 ? 0.7 : 1}
+        >
           <View style={styles.projectTitleRow}>
             {activeProject?.hex_color ? (
               <View
@@ -209,13 +227,33 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               />
             ) : null}
             <Text style={[styles.projectTitle, { color: theme.colors.text }]} numberOfLines={1}>
+              {activeProject?.is_favorite ? '⭐ ' : ''}
               {activeProject?.title || 'Tasks'}
             </Text>
+            {activeProject && activeProject.id > 0 && (
+              <Text style={[styles.projectTitleChevron, { color: theme.colors.textSecondary }]}> ▾</Text>
+            )}
           </View>
           <Text style={[styles.taskCountSubtitle, { color: theme.colors.textSecondary }]}>
             {activeCount} active {activeCount === 1 ? 'task' : 'tasks'}
+            {activeProject && activeProject.id > 0 ? ' • Tap to edit list' : ''}
           </Text>
-        </View>
+        </TouchableOpacity>
+
+        {activeProject && activeProject.id > 0 && (
+          <TouchableOpacity
+            testID="project-header-options-btn"
+            style={styles.headerOptionsBtn}
+            onPress={() => {
+              safeHaptics.selection();
+              setActionSheetProject(activeProject);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel={`Options for ${activeProject.title}`}
+          >
+            <Text style={[styles.headerOptionsIcon, { color: theme.colors.text }]}>⋯</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Live Sync Status Indicator */}
         <TouchableOpacity
@@ -660,6 +698,105 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           </SafeAreaView>
         </View>
       </Modal>
+
+      {/* Project Editor Modal */}
+      <ProjectEditorModal
+        visible={showEditor}
+        project={editorProject}
+        allProjects={projects}
+        onClose={() => {
+          setShowEditor(false);
+          setEditorProject(null);
+        }}
+      />
+
+      {/* Project Sharing Modal */}
+      <ProjectSharingModal
+        visible={Boolean(sharingProject)}
+        project={sharingProject}
+        onClose={() => setSharingProject(null)}
+      />
+
+      {/* Project Options Action Sheet */}
+      {actionSheetProject && (
+        <Modal
+          visible={Boolean(actionSheetProject)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setActionSheetProject(null)}
+        >
+          <TouchableWithoutFeedback onPress={() => setActionSheetProject(null)}>
+            <View style={styles.actionSheetBackdrop}>
+              <TouchableWithoutFeedback>
+                <View
+                  style={[
+                    styles.actionSheetCard,
+                    {
+                      backgroundColor: theme.colors.card,
+                      borderColor: theme.colors.cardBorder,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.actionSheetTitle, { color: theme.colors.text }]}>
+                    {actionSheetProject.title}
+                  </Text>
+
+                  <TouchableOpacity
+                    testID="project-option-edit"
+                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                    onPress={() => {
+                      const p = actionSheetProject;
+                      setActionSheetProject(null);
+                      setEditorProject(p);
+                      setShowEditor(true);
+                    }}
+                  >
+                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                      ✏️ Edit List
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="project-option-share"
+                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                    onPress={() => {
+                      const p = actionSheetProject;
+                      setActionSheetProject(null);
+                      setSharingProject(p);
+                    }}
+                  >
+                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                      👥 Share List
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="project-option-favorite"
+                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                    onPress={() => {
+                      toggleProjectFavorite(actionSheetProject.id);
+                      setActionSheetProject(null);
+                    }}
+                  >
+                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                      {actionSheetProject.is_favorite ? '⭐ Remove Favorite' : '☆ Mark as Favorite'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.actionSheetCancel}
+                    onPress={() => setActionSheetProject(null)}
+                  >
+                    <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 };
@@ -971,5 +1108,65 @@ const styles = StyleSheet.create({
   categorySectionTextLarge: {
     fontSize: 16,
     letterSpacing: 0.8,
+  },
+  projectTitleChevron: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  headerOptionsBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginRight: 6,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerOptionsIcon: {
+    fontSize: 20,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  actionSheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  actionSheetCard: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+    paddingVertical: 8,
+  },
+  actionSheetTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(128,128,128,0.2)',
+  },
+  actionSheetOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  actionSheetOptionText: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  actionSheetCancel: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  actionSheetCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
