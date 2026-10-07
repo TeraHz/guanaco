@@ -23,12 +23,15 @@ const DEFAULT_AAB_PATH = fs.existsSync(ROOT_AAB_PATH)
 const args = process.argv.slice(2);
 let track = 'internal';
 let aabPath = DEFAULT_AAB_PATH;
+let releaseNotes = null;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--track' && args[i + 1]) {
     track = args[++i];
   } else if (args[i] === '--aab' && args[i + 1]) {
     aabPath = path.resolve(process.cwd(), args[++i]);
+  } else if (args[i] === '--notes' && args[i + 1]) {
+    releaseNotes = args[++i];
   }
 }
 
@@ -126,21 +129,29 @@ async function main() {
     // 7. Assign to target track
     console.log(`🚚 Assigning release to "${track}" track...`);
     let releaseStatus = 'completed';
-    const assignRelease = (status) =>
-      publisher.edits.tracks.update({
+    const assignRelease = (status) => {
+      const releaseObj = {
+        name: `v${versionName} (${versionCode})`,
+        versionCodes: [versionCode.toString()],
+        status,
+      };
+      if (releaseNotes) {
+        releaseObj.releaseNotes = [
+          {
+            language: 'en-US',
+            text: releaseNotes,
+          },
+        ];
+      }
+      return publisher.edits.tracks.update({
         editId,
         packageName,
         track,
         requestBody: {
-          releases: [
-            {
-              name: `v${versionName} (${versionCode})`,
-              versionCodes: [versionCode.toString()],
-              status,
-            },
-          ],
+          releases: [releaseObj],
         },
       });
+    };
 
     try {
       await assignRelease(releaseStatus);

@@ -118,5 +118,30 @@ describe('ProjectDrawer', () => {
     // SettingsModal opens with close button
     expect(getByTestId('close-settings-btn')).toBeTruthy();
   });
+
+  it('opens ProjectEditorModal when "New List" button is pressed', () => {
+    const { getByTestId, getByText } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    const addListBtn = getByTestId('drawer-add-list-btn');
+    fireEvent.press(addListBtn);
+
+    expect(getByTestId('project-modal-title-input')).toBeTruthy();
+    expect(getByTestId('project-modal-save-btn')).toBeTruthy();
+  });
+
+  it('opens project options action sheet when list options button is pressed', () => {
+    const { getByTestId, getByText } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    const optionsBtn = getByTestId('drawer-project-options-1');
+    fireEvent.press(optionsBtn);
+
+    expect(getByTestId('drawer-option-edit')).toBeTruthy();
+    expect(getByTestId('drawer-option-share')).toBeTruthy();
+    expect(getByTestId('drawer-option-favorite')).toBeTruthy();
+  });
 });
 

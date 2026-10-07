@@ -271,4 +271,35 @@ describe('TaskDetailModal (CUJ 2)', () => {
     expect(titleInput).toBeTruthy();
     expect(titleInput.props.autoFocus).toBe(true);
   });
+
+  // --- Schedule, Due Date & Repeat Integration ---
+  it('saves task with due date, repeat mode, and reminders', () => {
+    const { getByTestId } = render(
+      <TaskDetailModal
+        visible={true}
+        task={mockTask}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+      />
+    );
+
+    // Apply Today preset
+    fireEvent.press(getByTestId('preset-today'));
+
+    // Set Weekly repeat
+    fireEvent.press(getByTestId('repeat-preset-weekly'));
+
+    // Save
+    fireEvent.press(getByTestId('task-detail-save-btn'));
+
+    expect(mockOnSave).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        due_date: expect.any(String),
+        repeat_after: 604800,
+        repeat_mode: 0,
+      })
+    );
+  });
 });

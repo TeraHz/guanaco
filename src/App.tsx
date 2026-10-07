@@ -16,6 +16,7 @@ import {
   isBiometricEnabled,
   authenticateWithBiometrics,
 } from './utils/biometrics';
+import { initNotifications } from './services/localNotifications';
 
 export default function App() {
   const theme = useAppTheme();
@@ -25,6 +26,10 @@ export default function App() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   const { initialize, syncAll } = useTaskStore();
+
+  useEffect(() => {
+    initNotifications().catch(() => {});
+  }, []);
 
   // Auto-restore session from stored token and check biometrics (Reload & App launch)
   useEffect(() => {

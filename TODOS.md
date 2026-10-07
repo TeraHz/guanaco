@@ -1,9 +1,42 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.0.9` (Build 8)
+- **Current Version:** `1.1.0` (Build 9)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🎯 Phase 5: List Management, Project Sharing & Task Scheduling (v1.1.0)
+
+### 1. List (Project) Creation & Configuration
+- [x] **Project Creation & Editing**:
+  - Full project creation (`+ New List` in drawer) and editing modal (`ProjectEditorModal`).
+  - Color swatches with custom color picker support.
+  - Parent project selector with recursive cycle prevention (`wouldCreateProjectCycle`).
+  - Online guard with polite feedback when attempting to create/modify lists offline.
+- [x] **Project Management Actions**:
+  - Duplicate project endpoint (`/projects/{id}/duplicate`).
+  - Archive/Unarchive project toggling.
+  - Delete project with confirmation safety.
+  - Favorite/unfavorite toggling with immediate UI response.
+- [x] **Project Sharing & Team Collaboration**:
+  - Direct user sharing (`/projects/{id}/users`) and team sharing (`/projects/{id}/teams`).
+  - Permission level management: Read (0), Read & Write (1), Admin (2).
+  - Search/add and revoke user/team project access modal (`ProjectSharingModal`).
+
+### 2. Task Scheduling & Zero-Telemetry Reminders
+- [x] **Comprehensive Task Scheduling (`TaskScheduleSection`)**:
+  - Due date & time picker with quick presets (Today, Tomorrow, Weekend, Next Week).
+  - Start date & end date range pickers.
+  - Repeat mode support: From Due Date (0), Monthly (1), From Completion (2) with interval settings.
+  - Relative reminder rules (e.g., At due date, 15m before, 1h before, 1d before, custom relative).
+- [x] **Local On-Device Reminders (`localNotifications.ts`)**:
+  - Zero-telemetry notification scheduling with `expo-notifications`.
+  - Android notification channel setup with exact alarm permissions (`SCHEDULE_EXACT_ALARM`, `POST_NOTIFICATIONS`).
+  - Completely stripped Firebase/FCM to guarantee 100% offline, privacy-first on-device alarm execution without external token transmission.
+- [x] **Task Badges**:
+  - 🔁 (Repeat) and 🔔 (Reminder) indicator badges directly on task items.
 
 ---
 
@@ -40,7 +73,7 @@
 
 ---
 
-## 📋 Feature Wishlist (Post-v1.0)
+## 📋 Feature Wishlist (Post-v1.1)
 
 ### 1. Kanban Board View (Vikunja Buckets)
 - [ ] **Vikunja Buckets API Integration**:
@@ -53,9 +86,5 @@
   - Header view switch toggle: `[ ≡ List ]  [ ⊞ Board ]`.
 
 ### 2. Vikunja Server Features
-- [ ] **Project Color & Icon Customization**:
-  - Allow creating and editing project hex colors and icons directly from the mobile app.
-- [ ] **Custom Reminders**:
-  - Support setting explicit reminder timestamps (separate from due dates) with local Android notifications.
 - [ ] **Task Comments**:
   - View and post task comments/activity directly in `TaskDetailModal`.

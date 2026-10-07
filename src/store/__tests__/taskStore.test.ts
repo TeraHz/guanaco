@@ -894,6 +894,107 @@ describe('useTaskStore', () => {
       expect(queue?.getQueue()).toHaveLength(1);
       expect(queue?.getQueue()[0].id).toBe('persisted-mutation');
     });
+
+    describe('Project Management Actions', () => {
+      it('createProject() should call client and append to projects array', async () => {
+        const mockClient = {
+          createProject: jest.fn().mockResolvedValue({ id: 9, title: 'Vacation', hex_color: '#3498db' }),
+        };
+        useTaskStore.setState({ client: mockClient as any, projects: [] });
+
+        const created = await useTaskStore.getState().createProject({ title: 'Vacation', hex_color: '#3498db' });
+        expect(created.id).toBe(9);
+        expect(useTaskStore.getState().projects).toEqual([created]);
+        expect(mockClient.createProject).toHaveBeenCalledWith({ title: 'Vacation', hex_color: '#3498db' });
+      });
+
+      it('updateProject() should call client and update project in state', async () => {
+        const mockClient = {
+          updateProject: jest.fn().mockResolvedValue({ id: 1, title: 'Work Updated', hex_color: '#ff0000' }),
+        };
+        useTaskStore.setState({
+          client: mockClient as any,
+          projects: [{ id: 1, title: 'Work', hex_color: '#00ff00' } as any],
+        });
+
+        const updated = await useTaskStore.getState().updateProject(1, { title: 'Work Updated', hex_color: '#ff0000' });
+        expect(updated.title).toBe('Work Updated');
+        expect(useTaskStore.getState().projects[0].title).toBe('Work Updated');
+      });
+
+      it('deleteProject() should remove project, clean tasks, and reset active selection if deleted', async () => {
+        const mockClient = {
+          deleteProject: jest.fn().mockResolvedValue({ message: 'deleted' }),
+        };
+        useTaskStore.setState({
+          client: mockClient as any,
+          projects: [{ id: 1, title: 'Work' } as any, { id: 2, title: 'Personal' } as any],
+          tasks: [
+            { id: 10, title: 'Task 1', project_id: 1 } as any,
+            { id: 20, title: 'Task 2', project_id: 2 } as any,
+          ],
+          selectedProjectId: 1,
+        });
+
+        await useTaskStore.getState().deleteProject(1);
+
+        expect(useTaskStore.getState().projects.map((p) => p.id)).toEqual([2]);
+        expect(useTaskStore.getState().tasks.map((t) => t.id)).toEqual([20]);
+        expect(useTaskStore.getState().selectedProjectId).toBeNull();
+      });
+
+      it('archiveProject() should toggle archive and reset active selection if archived', async () => {
+        const mockClient = {
+          updateProject: jest.fn().mockResolvedValue({ id: 1, title: 'Work', is_archived: true }),
+        };
+        useTaskStore.setState({
+          client: mockClient as any,
+          projects: [{ id: 1, title: 'Work', is_archived: false } as any],
+          selectedProjectId: 1,
+        });
+
+        await useTaskStore.getState().archiveProject(1, true);
+
+        expect(useTaskStore.getState().projects[0].is_archived).toBe(true);
+        expect(useTaskStore.getState().selectedProjectId).toBeNull();
+      });
+
+      it('toggleProjectFavorite() should invert favorite status', async () => {
+        const mockClient = {
+          updateProject: jest.fn().mockResolvedValue({ id: 1, title: 'Work', is_favorite: true }),
+        };
+        useTaskStore.setState({
+          client: mockClient as any,
+          projects: [{ id: 1, title: 'Work', is_favorite: false } as any],
+        });
+
+        await useTaskStore.getState().toggleProjectFavorite(1);
+
+        expect(useTaskStore.getState().projects[0].is_favorite).toBe(true);
+      });
+
+      it('duplicateProject() should call client and append duplicate to projects', async () => {
+        const mockClient = {
+          duplicateProject: jest.fn().mockResolvedValue({ id: 50, title: 'Work Copy' }),
+        };
+        useTaskStore.setState({
+          client: mockClient as any,
+          projects: [{ id: 1, title: 'Work' } as any],
+        });
+
+        const dup = await useTaskStore.getState().duplicateProject(1);
+        expect(dup.id).toBe(50);
+        expect(useTaskStore.getState().projects).toHaveLength(2);
+      });
+
+      it('throws when trying to manage projects offline without client', async () => {
+        useTaskStore.setState({ client: null });
+
+        await expect(
+          useTaskStore.getState().createProject({ title: 'Offline' })
+        ).rejects.toThrow('Network connection required to manage lists');
+      });
+    });
   });
 });
 

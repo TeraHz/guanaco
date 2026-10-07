@@ -17,7 +17,9 @@ import { safeHaptics } from '../utils/haptics';
 import { useAppTheme } from '../utils/theme';
 import { getLabelBadgeStyles } from '../utils/colors';
 import { getUserSuggestions } from '../utils/userSuggestions';
-import { Label, Project, Task, User } from '../types/vikunja';
+import { Label, Project, Task, User, RepeatMode, TaskReminder } from '../types/vikunja';
+import { TaskScheduleSection } from './TaskScheduleSection';
+import { scheduleTaskReminders, cancelTaskReminders } from '../services/localNotifications';
 
 interface TaskDetailModalProps {
   visible: boolean;
@@ -85,7 +87,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [percentDone, setPercentDone] = useState(0);
   const [color, setColor] = useState('');
   const [repeatAfter, setRepeatAfter] = useState<number | undefined>(undefined);
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>(RepeatMode.FromDueDate);
   const [dueDate, setDueDate] = useState<string | null>(null);
+  const [startDate, setStartDate] = useState<string | null>(null);
+  const [endDate, setEndDate] = useState<string | null>(null);
+  const [reminders, setReminders] = useState<TaskReminder[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [assignees, setAssignees] = useState<User[]>([]);
   const [projectId, setProjectId] = useState<number>(
@@ -126,7 +132,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
         setColor(task.color || '');
         setRepeatAfter(task.repeat_after || 0);
+        setRepeatMode((task.repeat_mode ?? RepeatMode.FromDueDate) as RepeatMode);
         setDueDate(task.due_date || null);
+        setStartDate(task.start_date || null);
+        setEndDate(task.end_date || null);
+        setReminders(task.reminders ? [...task.reminders] : []);
         setLabels(task.labels ? [...task.labels] : []);
         setAssignees(task.assignees ? [...task.assignees] : []);
         setProjectId(task.project_id);
@@ -138,8 +148,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         setPriority(0);
         setPercentDone(0);
         setColor('');
-        setRepeatAfter(undefined);
+        setRepeatAfter(0);
+        setRepeatMode(RepeatMode.FromDueDate);
         setDueDate(null);
+        setStartDate(null);
+        setEndDate(null);
+        setReminders([]);
         setLabels([]);
         setAssignees([]);
         setProjectId(defaultProjectId || availableProjects[0]?.id || 1);
@@ -154,20 +168,26 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     if (!title.trim()) return;
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
 
+    const taskPayload = {
+      title: title.trim(),
+      description: description.trim() || undefined,
+      done,
+      priority,
+      percent_done: percentDone,
+      color: color || undefined,
+      repeat_after: repeatAfter,
+      repeat_mode: repeatMode,
+      due_date: dueDate,
+      start_date: startDate,
+      end_date: endDate,
+      reminders,
+      project_id: projectId,
+      labels,
+      assignees,
+    };
+
     if (!task) {
-      onCreateTask?.({
-        title: title.trim(),
-        description: description.trim() || undefined,
-        done,
-        priority,
-        percent_done: percentDone,
-        color: color || undefined,
-        repeat_after: repeatAfter,
-        due_date: dueDate,
-        project_id: projectId,
-        labels,
-        assignees,
-      });
+      onCreateTask?.(taskPayload);
       onClose();
       return;
     }
@@ -176,25 +196,15 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       onMoveTask(task.id, projectId);
     }
 
-    onSave(task.id, {
-      title: title.trim(),
-      description: description.trim() || undefined,
-      done,
-      priority,
-      percent_done: percentDone,
-      color: color || undefined,
-      repeat_after: repeatAfter,
-      due_date: dueDate,
-      project_id: projectId,
-      labels,
-      assignees,
-    });
+    onSave(task.id, taskPayload);
+    scheduleTaskReminders({ ...task, ...taskPayload } as Task).catch(() => {});
     onClose();
   };
 
   const handleDelete = () => {
     if (!task) return;
     safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
+    cancelTaskReminders(task.id).catch(() => {});
     onDelete(task.id);
     onClose();
   };
@@ -840,7 +850,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               </View>
             </View>
 
-            {/* Recurrence / Repeat */}
+            {/* Schedule, Repeat & Reminders */}
             <View
               style={[
                 styles.sectionCard,
@@ -850,48 +860,22 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 },
               ]}
             >
-              <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                RECURRENCE
-              </Text>
-              <View style={styles.chipRow}>
-                {REPEAT_PRESETS.map((preset) => {
-                  const isSelected = (repeatAfter || 0) === preset.value;
-                  return (
-                    <TouchableOpacity
-                      key={preset.value}
-                      style={[
-                        styles.chip,
-                        {
-                          backgroundColor: isSelected
-                            ? '#0A84FF'
-                            : theme.isDark
-                            ? '#2C2C2E'
-                            : '#E5E5EA',
-                        },
-                      ]}
-                      onPress={() => {
-                        safeHaptics.selection();
-                        setRepeatAfter(preset.value);
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          {
-                            color: isSelected
-                              ? '#FFFFFF'
-                              : theme.isDark
-                              ? '#D1D1D6'
-                              : '#3A3A3C',
-                          },
-                        ]}
-                      >
-                        {preset.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              <TaskScheduleSection
+                dueDate={dueDate}
+                startDate={startDate}
+                endDate={endDate}
+                repeatAfter={repeatAfter}
+                repeatMode={repeatMode}
+                reminders={reminders}
+                onChangeDueDate={setDueDate}
+                onChangeStartDate={setStartDate}
+                onChangeEndDate={setEndDate}
+                onChangeRepeat={(after, mode) => {
+                  setRepeatAfter(after);
+                  setRepeatMode(mode);
+                }}
+                onChangeReminders={setReminders}
+              />
             </View>
 
             {/* Delete Button (Only for existing tasks) */}

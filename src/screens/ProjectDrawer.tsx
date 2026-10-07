@@ -17,6 +17,10 @@ import { safeHaptics } from '../utils/haptics';
 import { useAppTheme } from '../utils/theme';
 import { SettingsModal } from '../components/SettingsModal';
 import { LabelManagementModal } from '../components/LabelManagementModal';
+import { ProjectEditorModal } from '../components/ProjectEditorModal';
+import { ProjectSharingModal } from '../components/ProjectSharingModal';
+import { Project } from '../types/vikunja';
+import { buildProjectTree, flattenProjectTree } from '../utils/projectTree';
 
 import { MY_TASKS_PROJECT_ID, isTaskAssignedToUser } from '../utils/taskFilters';
 
@@ -42,10 +46,15 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     currentUser,
     selectedProjectId,
     setSelectedProjectId,
+    toggleProjectFavorite,
   } = useTaskStore();
 
   const [showSettings, setShowSettings] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
+  const [editorProject, setEditorProject] = useState<Project | null>(null);
+  const [sharingProject, setSharingProject] = useState<Project | null>(null);
+  const [actionSheetProject, setActionSheetProject] = useState<Project | null>(null);
 
   const handleSelect = (id: number | null) => {
     safeHaptics.selection();
@@ -152,72 +161,103 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
               </Text>
             </TouchableOpacity>
 
-            {/* Individual Lists */}
-            {safeProjects.filter((p) => p.id > 0).map((proj) => {
-              const isSelected = proj.id === selectedProjectId;
-              const activeTasks = safeTasks.filter(
-                (t) => t.project_id === proj.id && !t.done
-              ).length;
+            {/* Individual Lists with Tree Hierarchy */}
+            {(() => {
+              const visibleProjects = safeProjects.filter((p) => p.id > 0 && !p.is_archived);
+              const treeNodes = buildProjectTree(visibleProjects);
+              const flattened = flattenProjectTree(treeNodes);
 
-              return (
-                <TouchableOpacity
-                  key={proj.id}
-                  testID={`drawer-project-${proj.id}`}
-                  style={[
-                    styles.projectItem,
-                    isSelected && {
-                      backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                    },
-                  ]}
-                  onPress={() => handleSelect(proj.id)}
-                  activeOpacity={0.7}
-                >
+              return flattened.map((node) => {
+                const proj = node.project;
+                const isSelected = proj.id === selectedProjectId;
+                const activeTasks = safeTasks.filter(
+                  (t) => t.project_id === proj.id && !t.done
+                ).length;
+                const indentPadding = Math.min(node.depth * 14, 42);
+
+                return (
                   <View
+                    key={proj.id}
                     style={[
-                      styles.colorDot,
-                      { backgroundColor: proj.hex_color ? `#${proj.hex_color.replace(/^#/, '')}` : '#007AFF' },
+                      styles.projectItemWrapper,
+                      isSelected && {
+                        backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                      },
                     ]}
-                  />
-                  <Text
-                    style={[
-                      styles.projectTitle,
-                      { color: theme.colors.text },
-                      isSelected && styles.projectTitleSelected,
-                    ]}
-                    numberOfLines={1}
                   >
-                    {proj.title}
-                  </Text>
-                  {activeTasks > 0 && (
-                    <Text
-                      testID={`drawer-count-${proj.id}`}
-                      style={styles.badgeCount}
+                    <TouchableOpacity
+                      testID={`drawer-project-${proj.id}`}
+                      style={[
+                        styles.projectItem,
+                        { paddingLeft: 12 + indentPadding },
+                      ]}
+                      onPress={() => handleSelect(proj.id)}
+                      activeOpacity={0.7}
                     >
-                      {activeTasks}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
+                      <View
+                        style={[
+                          styles.colorDot,
+                          { backgroundColor: proj.hex_color ? `#${proj.hex_color.replace(/^#/, '')}` : '#007AFF' },
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.projectTitle,
+                          { color: theme.colors.text },
+                          isSelected && styles.projectTitleSelected,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {proj.is_favorite ? '⭐ ' : ''}
+                        {proj.title}
+                      </Text>
+                      {activeTasks > 0 && (
+                        <Text
+                          testID={`drawer-count-${proj.id}`}
+                          style={styles.badgeCount}
+                        >
+                          {activeTasks}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+
+                    {/* List Options Menu Trigger */}
+                    <TouchableOpacity
+                      testID={`drawer-project-options-${proj.id}`}
+                      style={styles.optionsBtn}
+                      onPress={() => {
+                        safeHaptics.selection();
+                        setActionSheetProject(proj);
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={[styles.optionsBtnText, { color: theme.colors.textSecondary }]}>⋯</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              });
+            })()}
           </ScrollView>
 
           {/* Quick Add List button */}
-          {onAddNewList && (
-            <TouchableOpacity
-              testID="drawer-add-list-btn"
-              style={[styles.addListBtn, { borderTopColor: theme.colors.cardBorder }]}
-              onPress={() => {
-                safeHaptics.selection();
+          <TouchableOpacity
+            testID="drawer-add-list-btn"
+            style={[styles.addListBtn, { borderTopColor: theme.colors.cardBorder }]}
+            onPress={() => {
+              safeHaptics.selection();
+              if (onAddNewList) {
                 onAddNewList();
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.addListIcon}>＋</Text>
-              <Text style={styles.addListText}>New List</Text>
-            </TouchableOpacity>
-          )}
+              } else {
+                setEditorProject(null);
+                setShowEditor(true);
+              }
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.addListIcon}>＋</Text>
+            <Text style={styles.addListText}>New List</Text>
+          </TouchableOpacity>
 
-          {/* Settings & Biometrics Section */}
           {/* Settings Section at bottom */}
           <View style={[styles.footerSection, { borderTopColor: theme.colors.cardBorder }]}>
             <TouchableOpacity
@@ -239,20 +279,124 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         </SafeAreaView>
   );
 
+  const sharedModals = (
+    <>
+      <SettingsModal
+        visible={showSettings}
+        onClose={() => setShowSettings(false)}
+        onLogout={onLogout}
+        onOpenLabelManagement={() => setShowLabels(true)}
+      />
+
+      <LabelManagementModal
+        visible={showLabels}
+        onClose={() => setShowLabels(false)}
+      />
+
+      <ProjectEditorModal
+        visible={showEditor}
+        project={editorProject}
+        allProjects={safeProjects}
+        onClose={() => {
+          setShowEditor(false);
+          setEditorProject(null);
+        }}
+      />
+
+      <ProjectSharingModal
+        visible={Boolean(sharingProject)}
+        project={sharingProject}
+        onClose={() => setSharingProject(null)}
+      />
+
+      {/* Project Options Action Sheet */}
+      {actionSheetProject && (
+        <Modal
+          visible={Boolean(actionSheetProject)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setActionSheetProject(null)}
+        >
+          <TouchableWithoutFeedback onPress={() => setActionSheetProject(null)}>
+            <View style={styles.actionSheetBackdrop}>
+              <TouchableWithoutFeedback>
+                <View
+                  style={[
+                    styles.actionSheetCard,
+                    {
+                      backgroundColor: theme.colors.card,
+                      borderColor: theme.colors.cardBorder,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.actionSheetTitle, { color: theme.colors.text }]}>
+                    {actionSheetProject.title}
+                  </Text>
+
+                  <TouchableOpacity
+                    testID="drawer-option-edit"
+                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                    onPress={() => {
+                      const p = actionSheetProject;
+                      setActionSheetProject(null);
+                      setEditorProject(p);
+                      setShowEditor(true);
+                    }}
+                  >
+                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                      ✏️ Edit List
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="drawer-option-share"
+                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                    onPress={() => {
+                      const p = actionSheetProject;
+                      setActionSheetProject(null);
+                      setSharingProject(p);
+                    }}
+                  >
+                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                      👥 Share List
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="drawer-option-favorite"
+                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                    onPress={() => {
+                      toggleProjectFavorite(actionSheetProject.id);
+                      setActionSheetProject(null);
+                    }}
+                  >
+                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                      {actionSheetProject.is_favorite ? '⭐ Remove Favorite' : '☆ Mark as Favorite'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.actionSheetCancel}
+                    onPress={() => setActionSheetProject(null)}
+                  >
+                    <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+      )}
+    </>
+  );
+
   if (inline) {
     return (
       <View style={styles.inlineRoot}>
         {drawerContent}
-        <SettingsModal
-          visible={showSettings}
-          onClose={() => setShowSettings(false)}
-          onLogout={onLogout}
-          onOpenLabelManagement={() => setShowLabels(true)}
-        />
-        <LabelManagementModal
-          visible={showLabels}
-          onClose={() => setShowLabels(false)}
-        />
+        {sharedModals}
       </View>
     );
   }
@@ -270,20 +414,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           <View style={styles.backdrop} />
         </TouchableWithoutFeedback>
       </View>
-
-      {/* Dedicated Settings Modal */}
-      <SettingsModal
-        visible={showSettings}
-        onClose={() => setShowSettings(false)}
-        onLogout={onLogout}
-        onOpenLabelManagement={() => setShowLabels(true)}
-      />
-
-      {/* Global Label Management Modal */}
-      <LabelManagementModal
-        visible={showLabels}
-        onClose={() => setShowLabels(false)}
-      />
+      {sharedModals}
     </Modal>
   );
 };
@@ -481,6 +612,65 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   settingsText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  projectItemWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  optionsBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  optionsBtnText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  actionSheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  actionSheetCard: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+    paddingVertical: 8,
+  },
+  actionSheetTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(128,128,128,0.2)',
+  },
+  actionSheetOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  actionSheetOptionText: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  actionSheetCancel: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  actionSheetCancelText: {
     fontSize: 15,
     fontWeight: '600',
   },

@@ -129,3 +129,46 @@ jest.mock('react-native-safe-area-context', () => {
     useSafeAreaFrame: () => ({ x: 0, y: 0, width: 390, height: 844 }),
   };
 });
+
+// Mock DateTimePicker
+jest.mock('@react-native-community/datetimepicker', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  const MockDateTimePicker = (props: any) => {
+    return React.createElement(View, { testID: props.testID || 'datetime-picker', ...props });
+  };
+  return {
+    __esModule: true,
+    default: MockDateTimePicker,
+    DateTimePickerAndroid: {
+      open: jest.fn(),
+      dismiss: jest.fn(),
+    },
+  };
+});
+
+// Mock Expo Notifications
+jest.mock('expo-notifications', () => ({
+  scheduleNotificationAsync: jest.fn().mockResolvedValue('notif-123'),
+  cancelScheduledNotificationAsync: jest.fn().mockResolvedValue(undefined),
+  getAllScheduledNotificationsAsync: jest.fn().mockResolvedValue([]),
+  cancelAllScheduledNotificationsAsync: jest.fn().mockResolvedValue(undefined),
+  requestPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted', granted: true }),
+  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted', granted: true }),
+  setNotificationHandler: jest.fn(),
+  setNotificationChannelAsync: jest.fn().mockResolvedValue(undefined),
+  AndroidImportance: {
+    HIGH: 4,
+    DEFAULT: 3,
+    MAX: 5,
+  },
+  SchedulableTriggerInputTypes: {
+    DATE: 'date',
+    TIME_INTERVAL: 'timeInterval',
+    DAILY: 'daily',
+    WEEKLY: 'weekly',
+    MONTHLY: 'monthly',
+    YEARLY: 'yearly',
+  },
+}));
+

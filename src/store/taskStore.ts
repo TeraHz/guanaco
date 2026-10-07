@@ -1,7 +1,16 @@
 import { create } from 'zustand';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CreateTaskInput, Label, Project, Task, UpdateTaskInput, User } from '../types/vikunja';
+import {
+  CreateProjectInput,
+  CreateTaskInput,
+  Label,
+  Project,
+  Task,
+  UpdateProjectInput,
+  UpdateTaskInput,
+  User,
+} from '../types/vikunja';
 import { VikunjaClient } from '../api/client';
 import { SyncQueue, SyncStatus, SYNC_QUEUE_STORAGE_KEY } from './syncQueue';
 import { safeHaptics } from '../utils/haptics';
@@ -99,6 +108,14 @@ export interface TaskState {
   moveTask: (taskId: number, targetProjectId: number) => void;
   reorderTasks: (projectId: number, orderedTaskIds: number[]) => void;
   deleteTask: (taskId: number) => void;
+
+  // Project Management Actions
+  createProject: (input: CreateProjectInput) => Promise<Project>;
+  updateProject: (projectId: number, input: UpdateProjectInput) => Promise<Project>;
+  deleteProject: (projectId: number) => Promise<void>;
+  archiveProject: (projectId: number, isArchived: boolean) => Promise<Project>;
+  duplicateProject: (projectId: number) => Promise<Project>;
+  toggleProjectFavorite: (projectId: number) => Promise<Project>;
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
@@ -372,6 +389,97 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     } catch (err: any) {
       set({ error: err.message || 'Failed to fetch projects', isLoading: false });
     }
+  },
+
+  createProject: async (input: CreateProjectInput): Promise<Project> => {
+    const { client, projects } = get();
+    if (!client) {
+      throw new Error('Network connection required to manage lists.');
+    }
+    const created = await client.createProject(input);
+    const updatedProjects = [...(projects || []), created];
+    set({ projects: updatedProjects });
+    persistProjectsDebounced(updatedProjects, true);
+    return created;
+  },
+
+  updateProject: async (projectId: number, input: UpdateProjectInput): Promise<Project> => {
+    const { client, projects } = get();
+    if (!client) {
+      throw new Error('Network connection required to manage lists.');
+    }
+    const updated = await client.updateProject(projectId, input);
+    const updatedProjects = (projects || []).map((p) => (p.id === projectId ? { ...p, ...updated } : p));
+    set({ projects: updatedProjects });
+    persistProjectsDebounced(updatedProjects, true);
+    return updated;
+  },
+
+  deleteProject: async (projectId: number): Promise<void> => {
+    const { client, projects, tasks, selectedProjectId } = get();
+    if (!client) {
+      throw new Error('Network connection required to manage lists.');
+    }
+    await client.deleteProject(projectId);
+    const updatedProjects = (projects || []).filter((p) => p.id !== projectId);
+    const updatedTasks = (tasks || []).filter((t) => t.project_id !== projectId);
+    const newSelectedId = selectedProjectId === projectId ? null : selectedProjectId;
+
+    set({
+      projects: updatedProjects,
+      tasks: updatedTasks,
+      selectedProjectId: newSelectedId,
+    });
+    persistProjectsDebounced(updatedProjects, true);
+    persistTasksDebounced(updatedTasks, true);
+    if (selectedProjectId === projectId) {
+      AsyncStorage.removeItem(CACHE_KEY_LAST_PROJECT).catch(() => {});
+    }
+  },
+
+  archiveProject: async (projectId: number, isArchived: boolean): Promise<Project> => {
+    const { client, projects, selectedProjectId } = get();
+    if (!client) {
+      throw new Error('Network connection required to manage lists.');
+    }
+    const updated = await client.updateProject(projectId, { is_archived: isArchived });
+    const updatedProjects = (projects || []).map((p) => (p.id === projectId ? { ...p, ...updated } : p));
+    const newSelectedId = isArchived && selectedProjectId === projectId ? null : selectedProjectId;
+
+    set({
+      projects: updatedProjects,
+      selectedProjectId: newSelectedId,
+    });
+    persistProjectsDebounced(updatedProjects, true);
+    if (isArchived && selectedProjectId === projectId) {
+      AsyncStorage.removeItem(CACHE_KEY_LAST_PROJECT).catch(() => {});
+    }
+    return updated;
+  },
+
+  toggleProjectFavorite: async (projectId: number): Promise<Project> => {
+    const { client, projects } = get();
+    if (!client) {
+      throw new Error('Network connection required to manage lists.');
+    }
+    const current = (projects || []).find((p) => p.id === projectId);
+    const updated = await client.updateProject(projectId, { is_favorite: !current?.is_favorite });
+    const updatedProjects = (projects || []).map((p) => (p.id === projectId ? { ...p, ...updated } : p));
+    set({ projects: updatedProjects });
+    persistProjectsDebounced(updatedProjects, true);
+    return updated;
+  },
+
+  duplicateProject: async (projectId: number): Promise<Project> => {
+    const { client, projects } = get();
+    if (!client) {
+      throw new Error('Network connection required to manage lists.');
+    }
+    const dup = await client.duplicateProject(projectId);
+    const updatedProjects = [...(projects || []), dup];
+    set({ projects: updatedProjects });
+    persistProjectsDebounced(updatedProjects, true);
+    return dup;
   },
 
   fetchTasks: async (projectId: number) => {

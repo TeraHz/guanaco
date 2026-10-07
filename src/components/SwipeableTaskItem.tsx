@@ -442,6 +442,20 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
             </View>
           )}
 
+          {/* Repeat Icon */}
+          {Boolean(task.repeat_after && task.repeat_after > 0) && (
+            <View testID={`task-repeat-icon-${task.id}`} style={styles.iconBadge}>
+              <Text style={{ fontSize: Math.round(10.5 * scale) }}>🔁</Text>
+            </View>
+          )}
+
+          {/* Reminder Icon */}
+          {Boolean(task.reminders && task.reminders.length > 0) && (
+            <View testID={`task-reminder-icon-${task.id}`} style={styles.iconBadge}>
+              <Text style={{ fontSize: Math.round(10.5 * scale) }}>🔔</Text>
+            </View>
+          )}
+
           {/* Assignees */}
           {task.assignees &&
             task.assignees.map((user) => (
@@ -789,6 +803,11 @@ const styles = StyleSheet.create({
   dueDateTextOverdue: {
     color: '#FF453A',
     fontWeight: '700',
+  },
+  iconBadge: {
+    paddingHorizontal: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   labelPill: {
     flexDirection: 'row',

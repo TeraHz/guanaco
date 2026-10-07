@@ -204,6 +204,152 @@ describe('VikunjaClient', () => {
         expect.objectContaining({ method: 'DELETE' })
       );
     });
+
+    it('should fetch archived projects with ?is_archived=true', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [{ id: 5, title: 'Archived', is_archived: true }],
+      } as Response);
+
+      const archived = await client.getProjects({ is_archived: true });
+      expect(archived).toHaveLength(1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects?is_archived=true',
+        expect.anything()
+      );
+    });
+
+    it('should duplicate project with PUT /projects/{id}/duplicate', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 6, title: 'Personal Copy' }),
+      } as Response);
+
+      const dup = await client.duplicateProject(1);
+      expect(dup.id).toBe(6);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects/1/duplicate',
+        expect.objectContaining({ method: 'PUT' })
+      );
+    });
+
+    it('should manage project user sharing (GET, PUT, POST, DELETE)', async () => {
+      // 1. GET /projects/1/users
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{ id: 10, username: 'alice', permission: 1 }],
+      } as Response);
+      const users = await client.getProjectUsers(1);
+      expect(users).toHaveLength(1);
+      expect(users[0].username).toBe('alice');
+
+      // 2. PUT /projects/1/users (add user with permission)
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'ok' }),
+      } as Response);
+      await client.addProjectUser(1, 10, 1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects/1/users',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ user_id: 10, permission: 1 }),
+        })
+      );
+
+      // 3. POST /projects/1/users/10 (update permission)
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'ok' }),
+      } as Response);
+      await client.updateProjectUser(1, 10, 2);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects/1/users/10',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ permission: 2 }),
+        })
+      );
+
+      // 4. DELETE /projects/1/users/10
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'ok' }),
+      } as Response);
+      await client.removeProjectUser(1, 10);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects/1/users/10',
+        expect.objectContaining({ method: 'DELETE' })
+      );
+    });
+
+    it('should manage project team sharing (GET /teams, GET/PUT/POST/DELETE /projects/{id}/teams)', async () => {
+      // 1. GET /teams
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{ id: 20, name: 'Engineers' }],
+      } as Response);
+      const teams = await client.getTeams();
+      expect(teams[0].name).toBe('Engineers');
+
+      // 2. GET /projects/1/teams
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{ id: 20, name: 'Engineers', permission: 2 }],
+      } as Response);
+      const projectTeams = await client.getProjectTeams(1);
+      expect(projectTeams[0].permission).toBe(2);
+
+      // 3. PUT /projects/1/teams
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'ok' }),
+      } as Response);
+      await client.addProjectTeam(1, 20, 1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects/1/teams',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ team_id: 20, permission: 1 }),
+        })
+      );
+
+      // 4. POST /projects/1/teams/20
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'ok' }),
+      } as Response);
+      await client.updateProjectTeam(1, 20, 2);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects/1/teams/20',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ permission: 2 }),
+        })
+      );
+
+      // 5. DELETE /projects/1/teams/20
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'ok' }),
+      } as Response);
+      await client.removeProjectTeam(1, 20);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects/1/teams/20',
+        expect.objectContaining({ method: 'DELETE' })
+      );
+    });
   });
 
   describe('Tasks API (TickTick style operations)', () => {

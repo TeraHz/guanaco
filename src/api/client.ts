@@ -3,8 +3,12 @@ import {
   CreateProjectInput,
   CreateTaskInput,
   Label,
+  Permission,
   Project,
+  ProjectTeamShare,
+  ProjectUserShare,
   Task,
+  Team,
   UpdateProjectInput,
   UpdateTaskInput,
   User,
@@ -156,8 +160,12 @@ export class VikunjaClient {
   }
 
   // --- Projects Endpoints ---
-  public async getProjects(): Promise<Project[]> {
-    const res = await this.request<any>('/projects', { method: 'GET' });
+  public async getProjects(params?: { is_archived?: boolean }): Promise<Project[]> {
+    let endpoint = '/projects';
+    if (params?.is_archived) {
+      endpoint += '?is_archived=true';
+    }
+    const res = await this.request<any>(endpoint, { method: 'GET' });
     return this.normalizeListResponse<Project>(res);
   }
 
@@ -181,6 +189,109 @@ export class VikunjaClient {
 
   public async deleteProject(projectId: number): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/projects/${projectId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  public async duplicateProject(projectId: number): Promise<Project> {
+    return this.request<Project>(`/projects/${projectId}/duplicate`, {
+      method: 'PUT',
+    });
+  }
+
+  // --- Project Sharing (Users) ---
+  public async getProjectUsers(projectId: number): Promise<ProjectUserShare[]> {
+    const res = await this.request<any>(`/projects/${projectId}/users`, { method: 'GET' });
+    return this.normalizeListResponse<ProjectUserShare>(res);
+  }
+
+  public async addProjectUser(
+    projectId: number,
+    userIdOrInput: number | { user_id?: number; username?: string; permission?: Permission },
+    permission?: Permission
+  ): Promise<any> {
+    if (typeof userIdOrInput === 'object') {
+      let resolvedUserId = userIdOrInput.user_id;
+      if (!resolvedUserId && userIdOrInput.username) {
+        try {
+          const users = await this.searchUsers(userIdOrInput.username);
+          const found = users.find(
+            (u) => u.username.toLowerCase() === userIdOrInput.username?.toLowerCase()
+          );
+          if (found) resolvedUserId = found.id;
+        } catch (_) {}
+      }
+      const perm = userIdOrInput.permission ?? permission ?? 1;
+      return this.request<any>(`/projects/${projectId}/users`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          user_id: resolvedUserId,
+          username: userIdOrInput.username,
+          permission: perm,
+        }),
+      });
+    }
+
+    return this.request<any>(`/projects/${projectId}/users`, {
+      method: 'PUT',
+      body: JSON.stringify({ user_id: userIdOrInput, permission: permission ?? 1 }),
+    });
+  }
+
+  public async updateProjectUser(
+    projectId: number,
+    userId: number,
+    permission: Permission
+  ): Promise<any> {
+    return this.request<any>(`/projects/${projectId}/users/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify({ permission }),
+    });
+  }
+
+  public async removeProjectUser(projectId: number, userId: number): Promise<any> {
+    return this.request<any>(`/projects/${projectId}/users/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // --- Project Sharing (Teams) ---
+  public async getTeams(): Promise<Team[]> {
+    const res = await this.request<any>('/teams', { method: 'GET' });
+    return this.normalizeListResponse<Team>(res);
+  }
+
+  public async getProjectTeams(projectId: number): Promise<ProjectTeamShare[]> {
+    const res = await this.request<any>(`/projects/${projectId}/teams`, { method: 'GET' });
+    return this.normalizeListResponse<ProjectTeamShare>(res);
+  }
+
+  public async addProjectTeam(
+    projectId: number,
+    teamIdOrInput: number | { team_id: number; permission?: Permission },
+    permission?: Permission
+  ): Promise<any> {
+    const teamId = typeof teamIdOrInput === 'object' ? teamIdOrInput.team_id : teamIdOrInput;
+    const perm = typeof teamIdOrInput === 'object' ? teamIdOrInput.permission ?? 0 : permission ?? 0;
+    return this.request<any>(`/projects/${projectId}/teams`, {
+      method: 'PUT',
+      body: JSON.stringify({ team_id: teamId, permission: perm }),
+    });
+  }
+
+  public async updateProjectTeam(
+    projectId: number,
+    teamId: number,
+    permission: Permission
+  ): Promise<any> {
+    return this.request<any>(`/projects/${projectId}/teams/${teamId}`, {
+      method: 'POST',
+      body: JSON.stringify({ permission }),
+    });
+  }
+
+  public async removeProjectTeam(projectId: number, teamId: number): Promise<any> {
+    return this.request<any>(`/projects/${projectId}/teams/${teamId}`, {
       method: 'DELETE',
     });
   }
