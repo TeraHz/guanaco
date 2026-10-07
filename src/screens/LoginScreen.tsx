@@ -15,6 +15,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
+import {
+  getStoredAuth,
+  isBiometricEnabled,
+  authenticateWithBiometrics,
+} from '../utils/biometrics';
 
 interface LoginScreenProps {
   onConnect: (serverUrl: string, username: string, pass: string) => Promise<void>;
@@ -33,21 +38,67 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [canBiometricUnlock, setCanBiometricUnlock] = useState(false);
+  const [savedAuthData, setSavedAuthData] = useState<{
+    serverUrl: string;
+    username: string;
+    password: string;
+  } | null>(null);
 
-  // Restore saved URL and Username on mount (Regression Issue #3)
+  // Restore saved URL, Username, and check Biometric Unlock capability on mount
   useEffect(() => {
+    let mounted = true;
     const loadSavedCredentials = async () => {
       try {
-        const [savedUrl, savedUser] = await Promise.all([
-          AsyncStorage.getItem(STORAGE_KEY_URL),
-          AsyncStorage.getItem(STORAGE_KEY_USERNAME),
-        ]);
-        if (savedUrl) setServerUrl(savedUrl);
-        if (savedUser) setUsername(savedUser);
+        const stored = await getStoredAuth();
+        if (!mounted) return;
+
+        if (stored.serverUrl) setServerUrl(stored.serverUrl);
+        if (stored.username) setUsername(stored.username);
+
+        const biometricActive = await isBiometricEnabled();
+        if (
+          biometricActive &&
+          stored.serverUrl &&
+          stored.username &&
+          stored.password
+        ) {
+          setCanBiometricUnlock(true);
+          setSavedAuthData({
+            serverUrl: stored.serverUrl,
+            username: stored.username,
+            password: stored.password,
+          });
+        }
       } catch (_) {}
     };
     loadSavedCredentials();
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  const handleBiometricUnlock = async () => {
+    if (!savedAuthData) return;
+    setErrorMessage(null);
+    try {
+      const passed = await authenticateWithBiometrics('Unlock Guanaco');
+      if (passed) {
+        setLoading(true);
+        await onConnect(
+          savedAuthData.serverUrl,
+          savedAuthData.username,
+          savedAuthData.password
+        );
+        safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Biometric authentication failed');
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async () => {
     setErrorMessage(null);
@@ -154,6 +205,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               />
             </View>
 
+            {canBiometricUnlock && (
+              <TouchableOpacity
+                testID="login-biometric-btn"
+                style={[styles.biometricButton, loading && styles.buttonDisabled]}
+                onPress={handleBiometricUnlock}
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.biometricButtonText}>🔒 Unlock with Biometrics</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               testID="login-submit-btn"
               style={[styles.button, loading && styles.buttonDisabled]}
@@ -250,6 +313,19 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     color: '#FFFFFF',
     fontSize: 15,
+  },
+  biometricButton: {
+    backgroundColor: '#30D158',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  biometricButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
   button: {
     backgroundColor: '#007AFF',

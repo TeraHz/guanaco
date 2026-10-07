@@ -1,9 +1,24 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.1.0` (Build 9)
+- **Current Version:** `1.1.1` (Build 10)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🔐 Phase 5B: Hardware Keystore Auth Persistence & Biometric Renewal (v1.1.1)
+
+### 1. Robust Authentication & Token Lifecycle
+- [x] **Secure Hardware Keystore Credential Storage (`biometrics.ts`)**:
+  - Saved credentials (`username` and `password`) encrypted in device hardware keystore via Expo `SecureStore` (Android Keystore / iOS Keychain).
+  - Explicit logout cleans all credentials and tokens; session expiration no longer wipes credentials.
+- [x] **Transparent Token Refresh & Retry on 401 (`client.ts` & `taskStore.ts`)**:
+  - When Vikunja's server JWT expires (short-lived JWT), `VikunjaClient` triggers `onTokenRefresh` to seamlessly re-authenticate with stored credentials in the background.
+  - Automatically updates the active token and transparently retries the failed request without disturbing the user or aborting background sync.
+- [x] **Passwordless Biometric Unlock (`LoginScreen.tsx` & `App.tsx`)**:
+  - Auto-prompts for biometric unlock on app open and automatically re-authenticates if token expired while the app was closed.
+  - Added dedicated `[ 🔒 Unlock with Biometrics ]` button on `LoginScreen` for instant one-touch login with zero manual typing.
 
 ---
 

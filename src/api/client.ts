@@ -18,6 +18,8 @@ export interface VikunjaClientConfig {
   baseUrl: string;
   token?: string;
   timeoutMs?: number;
+  onUnauthorized?: () => void;
+  onTokenRefresh?: () => Promise<string | null>;
 }
 
 export class VikunjaApiError extends Error {
@@ -32,6 +34,8 @@ export class VikunjaClient {
   private token: string | null = null;
   private timeoutMs: number;
   public onUnauthorized?: () => void;
+  public onTokenRefresh?: () => Promise<string | null>;
+  private refreshPromise: Promise<string | null> | null = null;
 
   constructor(config: VikunjaClientConfig) {
     this.baseApiUrl = this.normalizeUrl(config.baseUrl);
@@ -39,6 +43,8 @@ export class VikunjaClient {
       this.token = config.token;
     }
     this.timeoutMs = config.timeoutMs ?? 15000;
+    this.onUnauthorized = config.onUnauthorized;
+    this.onTokenRefresh = config.onTokenRefresh;
   }
 
   private normalizeUrl(url: string): string {
@@ -61,7 +67,10 @@ export class VikunjaClient {
     return this.token;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit & { _isRetry?: boolean } = {}
+  ): Promise<T> {
     const url = `${this.baseApiUrl}${endpoint}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -106,6 +115,32 @@ export class VikunjaClient {
       }
 
       if (!response.ok) {
+        // Attempt transparent token refresh on 401 (excluding login and already retried requests)
+        if (
+          response.status === 401 &&
+          !options._isRetry &&
+          this.onTokenRefresh &&
+          !endpoint.startsWith('/login')
+        ) {
+          try {
+            if (!this.refreshPromise) {
+              this.refreshPromise = this.onTokenRefresh().finally(() => {
+                this.refreshPromise = null;
+              });
+            }
+            const newToken = await this.refreshPromise;
+            if (newToken) {
+              this.setToken(newToken);
+              return await this.request<T>(endpoint, {
+                ...options,
+                _isRetry: true,
+              });
+            }
+          } catch (_) {
+            // Token refresh failed, continue to onUnauthorized below
+          }
+        }
+
         if (response.status === 401 && this.onUnauthorized) {
           this.onUnauthorized();
         }

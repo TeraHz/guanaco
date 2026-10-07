@@ -947,10 +947,62 @@ describe('VikunjaClient', () => {
       );
     });
 
-    it('should invoke onUnauthorized callback when API responds with 401', async () => {
+    it('should invoke onUnauthorized callback when API responds with 401 and no refresh handler', async () => {
       client.setToken('expired-token');
       const onUnauthorized = jest.fn();
       client.onUnauthorized = onUnauthorized;
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Token is expired' }),
+      } as Response);
+
+      await expect(client.getProjects()).rejects.toThrow('Token is expired');
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    });
+
+    it('should automatically refresh token and retry request on 401 when onTokenRefresh is provided', async () => {
+      client.setToken('expired-token');
+      const onUnauthorized = jest.fn();
+      client.onUnauthorized = onUnauthorized;
+      const onTokenRefresh = jest.fn().mockResolvedValue('fresh-new-token');
+      client.onTokenRefresh = onTokenRefresh;
+
+      let callCount = 0;
+      global.fetch = jest.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // First call: 401 Unauthorized
+          return Promise.resolve({
+            ok: false,
+            status: 401,
+            statusText: 'Unauthorized',
+            json: async () => ({ message: 'Token is expired' }),
+          } as Response);
+        }
+        // Second call (retry): Success
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 1, title: 'Refreshed Project' }],
+        } as Response);
+      });
+
+      const projects = await client.getProjects();
+      expect(projects).toEqual([{ id: 1, title: 'Refreshed Project' }]);
+      expect(onTokenRefresh).toHaveBeenCalledTimes(1);
+      expect(client.getToken()).toBe('fresh-new-token');
+      expect(onUnauthorized).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('should call onUnauthorized when onTokenRefresh fails or returns null', async () => {
+      client.setToken('expired-token');
+      const onUnauthorized = jest.fn();
+      client.onUnauthorized = onUnauthorized;
+      client.onTokenRefresh = jest.fn().mockResolvedValue(null);
 
       global.fetch = jest.fn().mockResolvedValue({
         ok: false,

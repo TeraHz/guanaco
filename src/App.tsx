@@ -31,11 +31,11 @@ export default function App() {
     initNotifications().catch(() => {});
   }, []);
 
-  // Auto-restore session from stored token and check biometrics (Reload & App launch)
+  // Auto-restore session from stored token/credentials and check biometrics (Reload & App launch)
   useEffect(() => {
     async function restoreSession() {
       const stored = await getStoredAuth();
-      if (!stored.token || !stored.serverUrl) return;
+      if (!stored.serverUrl || (!stored.token && !stored.password)) return;
 
       const biometricActive = await isBiometricEnabled();
       if (biometricActive) {
@@ -43,8 +43,23 @@ export default function App() {
         if (!passed) return;
       }
 
+      let activeToken = stored.token;
+      // If token is missing but credentials exist, login silently
+      if (!activeToken && stored.username && stored.password) {
+        try {
+          const tempClient = new VikunjaClient({ baseUrl: stored.serverUrl });
+          const auth = await tempClient.login(stored.username, stored.password);
+          if (auth.token) {
+            activeToken = auth.token;
+            await setStoredAuth(activeToken, stored.serverUrl, stored.username, stored.password);
+          }
+        } catch (_) {}
+      }
+
+      if (!activeToken) return;
+
       // Load cached data first for 0ms immediate offline rendering
-      await initialize(stored.serverUrl, stored.token);
+      await initialize(stored.serverUrl, activeToken);
       setIsAuthenticated(true);
 
       // Trigger bi-directional sync (push outbound queue, pull all remote tasks & lists)
@@ -122,8 +137,8 @@ export default function App() {
     const tempClient = new VikunjaClient({ baseUrl: serverUrl });
     const auth = await tempClient.login(username, pass);
 
-    // Save token & URL to persistent storage
-    await setStoredAuth(auth.token, serverUrl);
+    // Save token, URL, and credentials to persistent secure storage
+    await setStoredAuth(auth.token, serverUrl, username, pass);
 
     // Initialize task store with authenticated client & sync queue
     await initialize(serverUrl, auth.token);

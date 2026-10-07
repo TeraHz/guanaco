@@ -66,6 +66,8 @@ describe('Biometrics & Auth Persistence', () => {
       expect(auth).toEqual({
         token: 'jwt-xyz',
         serverUrl: 'https://vikunja.myorg.com',
+        username: null,
+        password: null,
       });
     });
 
@@ -94,6 +96,31 @@ describe('Biometrics & Auth Persistence', () => {
       // Legacy token should have been moved into SecureStore and removed from AsyncStorage
       expect(await SecureStore.getItemAsync('vikunja_auth_token')).toBe('legacy-secret-token');
       expect(await AsyncStorage.getItem('@vikunja_auth_token')).toBeNull();
+    });
+
+    it('saves, retrieves, and clears credentials (username & password) securely', async () => {
+      await setStoredAuth(
+        'jwt-secret-123',
+        'https://vikunja.myorg.com',
+        'alice',
+        'supersecretpassword'
+      );
+
+      const auth = await getStoredAuth();
+      expect(auth).toEqual({
+        token: 'jwt-secret-123',
+        serverUrl: 'https://vikunja.myorg.com',
+        username: 'alice',
+        password: 'supersecretpassword',
+      });
+
+      // Clear auth on explicit logout
+      await clearStoredAuth();
+      const cleared = await getStoredAuth();
+      expect(cleared.token).toBeNull();
+      expect(cleared.username).toBeNull();
+      expect(cleared.password).toBeNull();
+      expect(cleared.serverUrl).toBe('https://vikunja.myorg.com');
     });
   });
 });

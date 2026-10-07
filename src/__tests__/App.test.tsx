@@ -154,4 +154,35 @@ describe('App Root Integration & Session Persistence', () => {
 
     spy.mockRestore();
   });
+
+  it('restores session seamlessly using stored credentials when token is missing/expired', async () => {
+    // Stored credentials without active token
+    await setStoredAuth('', 'https://try.vikunja.io', 'alice', 'secretpass');
+
+    const { findByText } = render(<App />);
+
+    const projectTitle = await findByText('Main Project');
+    expect(projectTitle).toBeTruthy();
+  });
+
+  it('allows unlocking with biometrics button on LoginScreen when enabled and initial prompt cancelled', async () => {
+    await setStoredAuth('', 'https://try.vikunja.io', 'alice', 'secretpass');
+    await setBiometricEnabled(true);
+
+    // Initial launch prompt is cancelled / declined by user
+    (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: false });
+
+    const { findByTestId, findByText } = render(<App />);
+
+    // Now LoginScreen is shown with the biometric unlock button
+    const bioBtn = await findByTestId('login-biometric-btn');
+    expect(bioBtn).toBeTruthy();
+
+    // User taps the biometric button and authenticates successfully
+    (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+    fireEvent.press(bioBtn);
+
+    const projectTitle = await findByText('Main Project');
+    expect(projectTitle).toBeTruthy();
+  });
 });

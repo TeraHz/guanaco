@@ -895,6 +895,29 @@ describe('useTaskStore', () => {
       expect(queue?.getQueue()[0].id).toBe('persisted-mutation');
     });
 
+    it('initialize should configure client.onTokenRefresh to silently renew token with stored credentials', async () => {
+      const { setStoredAuth, getStoredAuth } = require('../../utils/biometrics');
+      await setStoredAuth('old-expired-token', 'https://try.vikunja.io', 'bob', 'pass123');
+      await useTaskStore.getState().initialize('https://try.vikunja.io', 'old-expired-token');
+
+      const client = useTaskStore.getState().client;
+      expect(client).not.toBeNull();
+      expect(client?.onTokenRefresh).toBeDefined();
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'brand-new-refreshed-token' }),
+      } as Response);
+
+      const refreshed = await client?.onTokenRefresh!();
+      expect(refreshed).toBe('brand-new-refreshed-token');
+      expect(client?.getToken()).toBe('brand-new-refreshed-token');
+
+      const storedAfter = await getStoredAuth();
+      expect(storedAfter.token).toBe('brand-new-refreshed-token');
+    });
+
     describe('Project Management Actions', () => {
       it('createProject() should call client and append to projects array', async () => {
         const mockClient = {

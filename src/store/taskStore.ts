@@ -15,6 +15,7 @@ import { VikunjaClient } from '../api/client';
 import { SyncQueue, SyncStatus, SYNC_QUEUE_STORAGE_KEY } from './syncQueue';
 import { safeHaptics } from '../utils/haptics';
 import { MY_TASKS_PROJECT_ID } from '../utils/taskFilters';
+import { getStoredAuth, setStoredAuth } from '../utils/biometrics';
 
 const CACHE_KEY_PROJECTS = '@vikunja_cached_projects';
 const CACHE_KEY_TASKS = '@vikunja_cached_tasks';
@@ -142,6 +143,26 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     syncQueue.onStatusChange((syncStatus, pendingSyncCount) => {
       set({ syncStatus, pendingSyncCount });
     });
+
+    client.onTokenRefresh = async () => {
+      try {
+        const stored = await getStoredAuth();
+        if (stored.serverUrl && stored.username && stored.password) {
+          const tempClient = new VikunjaClient({ baseUrl: stored.serverUrl });
+          const auth = await tempClient.login(stored.username, stored.password);
+          if (auth?.token) {
+            await setStoredAuth(auth.token, stored.serverUrl, stored.username, stored.password);
+            client.setToken(auth.token);
+            return auth.token;
+          }
+        }
+      } catch (err) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('[taskStore] Silent token refresh failed:', err);
+        }
+      }
+      return null;
+    };
 
     client.onUnauthorized = () => {
       get().clearSession().catch(() => {});
