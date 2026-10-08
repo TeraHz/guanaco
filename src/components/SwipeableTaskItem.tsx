@@ -34,6 +34,7 @@ interface SwipeableTaskItemProps {
   canMoveDown?: boolean;
   isLarge?: boolean;
   scale?: number;
+  textScale?: number;
 }
 
 const PRIORITY_COLORS: Record<number, string> = {
@@ -64,128 +65,140 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   canMoveDown = false,
   isLarge: isLargeProp,
   scale: scaleProp,
+  textScale: textScaleProp,
 }) => {
   const theme = useAppTheme();
-  const storeScale = useTaskStore((state) => state.taskItemScale);
+  const storeBoxScale = useTaskStore((state) => state.taskItemScale);
+  const storeTextScale = useTaskStore((state) => state.taskItemTextScale);
   const storeLarge = useTaskStore((state) => state.largeTaskItems);
 
-  // Compute effective scale multiplier (1.0 = 100%, 1.25 = 125%, 1.5 = 150%, etc.)
-  const scalePercent =
+  // Compute effective scale multipliers (1.0 = 100%, 1.25 = 125%, 1.5 = 150%, etc.)
+  const boxScalePercent =
     scaleProp !== undefined
       ? scaleProp
       : isLargeProp !== undefined
       ? isLargeProp
         ? 150
         : 100
-      : storeScale ?? (storeLarge ? 150 : 100);
-  const scale = (scalePercent || 100) / 100;
-  const isLarge = scale > 1.0;
+      : storeBoxScale ?? (storeLarge ? 150 : 100);
+  const boxScale = (boxScalePercent || 100) / 100;
+  const isLarge = boxScale > 1.0;
+
+  const textScalePercent =
+    textScaleProp !== undefined
+      ? textScaleProp
+      : isLargeProp !== undefined
+      ? isLargeProp
+        ? 150
+        : 100
+      : storeTextScale ?? 100;
+  const textScale = (textScalePercent || 100) / 100;
 
   const dynamicStyles = React.useMemo(() => {
-    if (scale === 1) return null;
+    if (boxScale === 1 && textScale === 1) return null;
     return {
       card: {
-        borderRadius: scale === 1.5 ? 10 : Math.round(7 * (1 + (scale - 1) * 0.7)),
-        marginVertical: scale === 1.5 ? 3 : Math.round(1.5 * scale),
-        paddingVertical: scale === 1.5 ? 9 : Math.round(5.5 * scale),
-        paddingHorizontal: scale === 1.5 ? 12 : Math.round(8 * (1 + (scale - 1) * 0.7)),
-        minHeight: scale === 1.5 ? 52 : Math.round(35 * scale),
+        borderRadius: boxScale === 1.5 ? 10 : Math.round(7 * (1 + (boxScale - 1) * 0.7)),
+        marginVertical: boxScale === 1.5 ? 3 : Math.round(1.5 * boxScale),
+        paddingVertical: boxScale === 1.5 ? 9 : Math.round(5.5 * boxScale),
+        paddingHorizontal: boxScale === 1.5 ? 12 : Math.round(8 * (1 + (boxScale - 1) * 0.7)),
+        minHeight: boxScale === 1.5 ? 52 : Math.round(35 * boxScale),
       },
       priorityStrip: {
-        width: scale === 1.5 ? 5 : Math.round(3.5 * scale),
+        width: boxScale === 1.5 ? 5 : Math.round(3.5 * boxScale),
       },
       checkbox: {
-        width: scale === 1.5 ? 28 : Math.round(19 * scale),
-        height: scale === 1.5 ? 28 : Math.round(19 * scale),
-        borderRadius: scale === 1.5 ? 14 : Math.round(9.5 * scale),
-        borderWidth: scale >= 1.4 ? 2 : 1.5,
-        marginRight: scale === 1.5 ? 12 : Math.round(8 * scale),
+        width: boxScale === 1.5 ? 28 : Math.round(19 * boxScale),
+        height: boxScale === 1.5 ? 28 : Math.round(19 * boxScale),
+        borderRadius: boxScale === 1.5 ? 14 : Math.round(9.5 * boxScale),
+        borderWidth: boxScale >= 1.4 ? 2 : 1.5,
+        marginRight: boxScale === 1.5 ? 12 : Math.round(8 * boxScale),
       },
       checkmark: {
-        fontSize: scale === 1.5 ? 16 : Math.round(10.5 * scale),
+        fontSize: textScale === 1 ? 10.5 : textScale === 1.5 ? 16 : Math.round(10.5 * textScale),
       },
       title: {
-        fontSize: scale === 1.5 ? 20 : Math.round(13.5 * scale),
-        marginRight: scale === 1.5 ? 9 : Math.round(6 * scale),
-        lineHeight: scale === 1.5 ? 26 : Math.round(18 * scale),
+        fontSize: textScale === 1 ? 13.5 : textScale === 1.5 ? 20 : Math.round(13.5 * textScale),
+        marginRight: boxScale === 1.5 ? 9 : Math.round(6 * boxScale),
+        lineHeight: textScale === 1 ? 18 : textScale === 1.5 ? 26 : Math.round(18 * textScale),
       },
       metaRow: {
-        gap: Math.round(4 * scale),
+        gap: Math.round(4 * boxScale),
       },
       progressBadge: {
-        paddingHorizontal: Math.round(4 * scale),
-        paddingVertical: Math.round(1 * scale),
-        borderRadius: Math.round(4 * scale),
+        paddingHorizontal: Math.round(4 * boxScale),
+        paddingVertical: Math.round(1 * boxScale),
+        borderRadius: Math.round(4 * boxScale),
       },
       progressText: {
-        fontSize: Math.round(10 * scale),
+        fontSize: Math.round(10 * textScale),
       },
       dateBadge: {
-        paddingHorizontal: Math.round(5 * scale),
-        paddingVertical: Math.round(1 * scale),
-        borderRadius: Math.round(4 * scale),
+        paddingHorizontal: Math.round(5 * boxScale),
+        paddingVertical: Math.round(1 * boxScale),
+        borderRadius: Math.round(4 * boxScale),
       },
       dueDateText: {
-        fontSize: Math.round(10.5 * scale),
+        fontSize: textScale === 1 ? 10.5 : Math.round(10.5 * textScale),
       },
       labelPill: {
-        borderRadius: Math.round(5 * (1 + (scale - 1) * 0.5)),
-        paddingHorizontal: Math.round(5 * scale),
-        paddingVertical: Math.round(1.5 * scale),
+        borderRadius: Math.round(5 * (1 + (boxScale - 1) * 0.5)),
+        paddingHorizontal: Math.round(5 * boxScale),
+        paddingVertical: Math.round(1.5 * boxScale),
       },
       labelText: {
-        fontSize: Math.round(10.5 * scale),
+        fontSize: textScale === 1 ? 10.5 : Math.round(10.5 * textScale),
       },
       assigneeBadge: {
-        paddingHorizontal: Math.round(5 * scale),
-        paddingVertical: Math.round(1 * scale),
-        borderRadius: Math.round(5 * scale),
+        paddingHorizontal: Math.round(5 * boxScale),
+        paddingVertical: Math.round(1 * boxScale),
+        borderRadius: Math.round(5 * boxScale),
       },
       assigneeText: {
-        fontSize: Math.round(10.5 * scale),
+        fontSize: textScale === 1 ? 10.5 : Math.round(10.5 * textScale),
       },
       addLabelLink: {
-        marginLeft: Math.round(6 * scale),
-        paddingHorizontal: Math.round(4 * scale),
-        paddingVertical: Math.round(1 * scale),
-        borderRadius: Math.round(4 * scale),
+        marginLeft: Math.round(6 * boxScale),
+        paddingHorizontal: Math.round(4 * boxScale),
+        paddingVertical: Math.round(1 * boxScale),
+        borderRadius: Math.round(4 * boxScale),
       },
       addLabelLinkText: {
-        fontSize: Math.round(10 * scale),
+        fontSize: Math.round(10 * textScale),
       },
       leftSwipeAction: {
-        borderRadius: Math.round(7 * (1 + (scale - 1) * 0.7)),
-        marginVertical: Math.round(1.5 * scale),
-        paddingLeft: Math.round(18 * scale),
+        borderRadius: Math.round(7 * (1 + (boxScale - 1) * 0.7)),
+        marginVertical: Math.round(1.5 * boxScale),
+        paddingLeft: Math.round(18 * boxScale),
       },
       rightSwipeAction: {
-        borderRadius: Math.round(7 * (1 + (scale - 1) * 0.7)),
-        marginVertical: Math.round(1.5 * scale),
-        paddingRight: Math.round(18 * scale),
+        borderRadius: Math.round(7 * (1 + (boxScale - 1) * 0.7)),
+        marginVertical: Math.round(1.5 * boxScale),
+        paddingRight: Math.round(18 * boxScale),
       },
       swipeActionIcon: {
-        fontSize: Math.round(14 * scale),
+        fontSize: Math.round(14 * textScale),
       },
       swipeActionText: {
-        fontSize: Math.round(12 * scale),
+        fontSize: Math.round(12 * textScale),
       },
       reorderBtn: {
-        paddingHorizontal: Math.round(8 * scale),
-        paddingVertical: Math.round(5 * scale),
-        borderRadius: Math.round(8 * scale),
+        paddingHorizontal: Math.round(8 * boxScale),
+        paddingVertical: Math.round(5 * boxScale),
+        borderRadius: Math.round(8 * boxScale),
       },
       reorderBtnText: {
-        fontSize: Math.round(13 * scale),
+        fontSize: Math.round(13 * textScale),
       },
       dragHandle: {
-        paddingHorizontal: Math.round(8 * scale),
-        paddingVertical: Math.round(6 * scale),
+        paddingHorizontal: Math.round(8 * boxScale),
+        paddingVertical: Math.round(6 * boxScale),
       },
       dragHandleText: {
-        fontSize: Math.round(18 * scale),
+        fontSize: Math.round(18 * textScale),
       },
     };
-  }, [scale]);
+  }, [boxScale, textScale]);
 
   const swipeableRef = React.useRef<Swipeable>(null);
   const isSwipingActionRef = React.useRef(false);
@@ -373,153 +386,229 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
       </TouchableOpacity>
 
       {/* Title & Metadata */}
-      <View style={styles.singleRow}>
-        <Text
-          testID={`task-title-${task.id}`}
-          style={[
-            styles.title,
-            isLarge && styles.titleLarge,
-            dynamicStyles?.title,
-            { color: theme.colors.text },
-            task.done && styles.titleDone,
-            task.done && { color: theme.colors.textSecondary },
-          ]}
-          numberOfLines={1}
-        >
-          {task.title}
-        </Text>
+      {(() => {
+        const hasMetadata = Boolean(
+          (task.percent_done !== undefined && task.percent_done > 0) ||
+            formattedDueDate ||
+            (task.repeat_after && task.repeat_after > 0) ||
+            (task.reminders && task.reminders.length > 0) ||
+            (task.assignees && task.assignees.length > 0) ||
+            (task.labels && task.labels.length > 0)
+        );
+        const isLongTitle = (task.title || '').length > 26;
 
-        {/* Metadata badges row */}
-        <View style={[styles.metaRow, isLarge && styles.metaRowLarge, dynamicStyles?.metaRow]}>
-          {/* Progress % */}
-          {task.percent_done !== undefined && task.percent_done > 0 && (
-            <View
-              testID={`task-progress-${task.id}`}
-              style={[styles.progressBadge, isLarge && styles.progressBadgeLarge, dynamicStyles?.progressBadge]}
-            >
-              <Text
-                style={[
-                  styles.progressText,
-                  isLarge && styles.progressTextLarge,
-                  dynamicStyles?.progressText,
-                  {
-                    color:
-                      task.percent_done === 1 || task.percent_done === 100
-                        ? '#30D158'
-                        : '#007AFF',
-                  },
-                ]}
-              >
-                {task.percent_done <= 1 && task.percent_done > 0
-                  ? Math.round(task.percent_done * 100)
-                  : Math.round(task.percent_done)}
-                %
-              </Text>
-            </View>
-          )}
-
-          {/* Due Date */}
-          {formattedDueDate && (
-            <View
-              style={[
-                styles.dateBadge,
-                isLarge && styles.dateBadgeLarge,
-                dynamicStyles?.dateBadge,
-                isOverdue && styles.dateBadgeOverdue,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.dueDateText,
-                  isLarge && styles.dueDateTextLarge,
-                  dynamicStyles?.dueDateText,
-                  isOverdue && styles.dueDateTextOverdue,
-                ]}
-              >
-                {isOverdue ? '⚠️ ' : '📅 '}
-                {formattedDueDate}
-              </Text>
-            </View>
-          )}
-
-          {/* Repeat Icon */}
-          {Boolean(task.repeat_after && task.repeat_after > 0) && (
-            <View testID={`task-repeat-icon-${task.id}`} style={styles.iconBadge}>
-              <Text style={{ fontSize: Math.round(10.5 * scale) }}>🔁</Text>
-            </View>
-          )}
-
-          {/* Reminder Icon */}
-          {Boolean(task.reminders && task.reminders.length > 0) && (
-            <View testID={`task-reminder-icon-${task.id}`} style={styles.iconBadge}>
-              <Text style={{ fontSize: Math.round(10.5 * scale) }}>🔔</Text>
-            </View>
-          )}
-
-          {/* Assignees */}
-          {task.assignees &&
-            task.assignees.map((user) => (
+        const metadataBadges = (
+          <>
+            {/* Progress % */}
+            {task.percent_done !== undefined && task.percent_done > 0 && (
               <View
-                key={user.id || user.username}
-                testID={`task-assignee-${task.id}-${user.username}`}
+                testID={`task-progress-${task.id}`}
+                style={[styles.progressBadge, isLarge && styles.progressBadgeLarge, dynamicStyles?.progressBadge]}
+              >
+                <Text
+                  style={[
+                    styles.progressText,
+                    isLarge && styles.progressTextLarge,
+                    dynamicStyles?.progressText,
+                    {
+                      color:
+                        task.percent_done === 1 || task.percent_done === 100
+                          ? '#30D158'
+                          : '#007AFF',
+                    },
+                  ]}
+                >
+                  {task.percent_done <= 1 && task.percent_done > 0
+                    ? Math.round(task.percent_done * 100)
+                    : Math.round(task.percent_done)}
+                  %
+                </Text>
+              </View>
+            )}
+
+            {/* Due Date */}
+            {formattedDueDate && (
+              <View
                 style={[
-                  styles.assigneeBadge,
-                  isLarge && styles.assigneeBadgeLarge,
-                  dynamicStyles?.assigneeBadge,
+                  styles.dateBadge,
+                  isLarge && styles.dateBadgeLarge,
+                  dynamicStyles?.dateBadge,
+                  isOverdue && styles.dateBadgeOverdue,
                   {
-                    backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                    borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                    backgroundColor: isOverdue
+                      ? 'rgba(255, 69, 58, 0.15)'
+                      : theme.isDark
+                      ? '#2C2C2E'
+                      : '#E5E5EA',
                   },
                 ]}
               >
                 <Text
                   style={[
-                    styles.assigneeText,
-                    isLarge && styles.assigneeTextLarge,
-                    dynamicStyles?.assigneeText,
-                    { color: theme.colors.textSecondary },
-                  ]}
-                >
-                  @{user.username}
-                </Text>
-              </View>
-            ))}
-
-          {/* Label Pills (Clean without tag icon) */}
-          {task.labels &&
-            task.labels.map((label) => {
-              const badgeStyle = getLabelBadgeStyles(label, labelDefinitions);
-              return (
-                <TouchableOpacity
-                  key={label.id || label.title}
-                  testID={`task-label-${task.id}-${label.title}`}
-                  style={[
-                    styles.labelPill,
-                    isLarge && styles.labelPillLarge,
-                    dynamicStyles?.labelPill,
+                    styles.dueDateText,
+                    isLarge && styles.dueDateTextLarge,
+                    dynamicStyles?.dueDateText,
+                    isOverdue && styles.dueDateTextOverdue,
                     {
-                      backgroundColor: badgeStyle.backgroundColor,
-                      borderColor: badgeStyle.borderColor,
+                      color: isOverdue ? '#FF453A' : theme.colors.textSecondary,
                     },
                   ]}
-                  onPress={() => onSelectLabel && onSelectLabel(label.title)}
-                  activeOpacity={0.7}
+                >
+                  {isOverdue ? '⚠️ ' : '📅 '}
+                  {formattedDueDate}
+                </Text>
+              </View>
+            )}
+
+            {/* Repeat Icon */}
+            {Boolean(task.repeat_after && task.repeat_after > 0) && (
+              <View testID={`task-repeat-icon-${task.id}`} style={styles.iconBadge}>
+                <Text style={{ fontSize: Math.round(10.5 * textScale) }}>🔁</Text>
+              </View>
+            )}
+
+            {/* Reminder Icon */}
+            {Boolean(task.reminders && task.reminders.length > 0) && (
+              <View testID={`task-reminder-icon-${task.id}`} style={styles.iconBadge}>
+                <Text style={{ fontSize: Math.round(10.5 * textScale) }}>🔔</Text>
+              </View>
+            )}
+
+            {/* Assignees */}
+            {task.assignees &&
+              task.assignees.map((user) => (
+                <View
+                  key={user.id || user.username}
+                  testID={`task-assignee-${task.id}-${user.username}`}
+                  style={[
+                    styles.assigneeBadge,
+                    isLarge && styles.assigneeBadgeLarge,
+                    dynamicStyles?.assigneeBadge,
+                    {
+                      backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                      borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                    },
+                  ]}
                 >
                   <Text
                     style={[
-                      styles.labelText,
-                      isLarge && styles.labelTextLarge,
-                      dynamicStyles?.labelText,
-                      { color: badgeStyle.textColor },
+                      styles.assigneeText,
+                      isLarge && styles.assigneeTextLarge,
+                      dynamicStyles?.assigneeText,
+                      { color: theme.colors.textSecondary },
                     ]}
                   >
-                    #{label.title}
+                    @{user.username}
                   </Text>
-                </TouchableOpacity>
-              );
-            })}
-        </View>
-      </View>
+                </View>
+              ))}
+
+            {/* Label Pills (Clean without tag icon) */}
+            {task.labels &&
+              task.labels.map((label) => {
+                const badgeStyle = getLabelBadgeStyles(label, labelDefinitions);
+                return (
+                  <TouchableOpacity
+                    key={label.id || label.title}
+                    testID={`task-label-${task.id}-${label.title}`}
+                    style={[
+                      styles.labelPill,
+                      isLarge && styles.labelPillLarge,
+                      dynamicStyles?.labelPill,
+                      {
+                        backgroundColor: badgeStyle.backgroundColor,
+                        borderColor: badgeStyle.borderColor,
+                      },
+                    ]}
+                    onPress={() => onSelectLabel && onSelectLabel(label.title)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.labelText,
+                        isLarge && styles.labelTextLarge,
+                        dynamicStyles?.labelText,
+                        { color: badgeStyle.textColor },
+                      ]}
+                    >
+                      #{label.title}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+          </>
+        );
+
+        if (hasMetadata && isLongTitle) {
+          return (
+            <View style={styles.contentColumn}>
+              <Text
+                testID={`task-title-${task.id}`}
+                style={[
+                  styles.title,
+                  isLarge && styles.titleLarge,
+                  dynamicStyles?.title,
+                  { color: theme.colors.text },
+                  task.done && styles.titleDone,
+                  task.done && { color: theme.colors.textSecondary },
+                ]}
+                numberOfLines={3}
+                ellipsizeMode="tail"
+              >
+                {task.title}
+              </Text>
+              <View style={[styles.metaRowStacked, isLarge && styles.metaRowLarge, dynamicStyles?.metaRow]}>
+                {metadataBadges}
+              </View>
+            </View>
+          );
+        }
+
+        if (hasMetadata) {
+          return (
+            <View style={styles.singleRow}>
+              <Text
+                testID={`task-title-${task.id}`}
+                style={[
+                  styles.title,
+                  isLarge && styles.titleLarge,
+                  dynamicStyles?.title,
+                  { color: theme.colors.text },
+                  task.done && styles.titleDone,
+                  task.done && { color: theme.colors.textSecondary },
+                ]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {task.title}
+              </Text>
+              <View style={[styles.metaRow, isLarge && styles.metaRowLarge, dynamicStyles?.metaRow]}>
+                {metadataBadges}
+              </View>
+            </View>
+          );
+        }
+
+        return (
+          <View style={styles.singleRow}>
+            <Text
+              testID={`task-title-${task.id}`}
+              style={[
+                styles.title,
+                isLarge && styles.titleLarge,
+                dynamicStyles?.title,
+                { color: theme.colors.text },
+                task.done && styles.titleDone,
+                task.done && { color: theme.colors.textSecondary },
+              ]}
+              numberOfLines={3}
+              ellipsizeMode="tail"
+            >
+              {task.title}
+            </Text>
+          </View>
+        );
+      })()}
 
       {/* Small subtle "+#" link or Drag Handle / Reorder Controls on the right of the item */}
       {isReordering ? (
@@ -649,8 +738,8 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     <Swipeable
       ref={swipeableRef}
       friction={2.5}
-      leftThreshold={Math.round(115 * scale)}
-      rightThreshold={Math.round(65 * scale)}
+      leftThreshold={Math.round(115 * boxScale)}
+      rightThreshold={Math.round(65 * boxScale)}
       overshootLeft={false}
       overshootRight={false}
       animationOptions={{
@@ -735,6 +824,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     overflow: 'hidden',
+  },
+  contentColumn: {
+    flex: 1,
+    flexDirection: 'column',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    paddingVertical: 1,
+  },
+  metaRowStacked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 3,
   },
   title: {
     flexShrink: 1,

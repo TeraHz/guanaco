@@ -14,19 +14,23 @@ const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
 const currentVersion = pkg.version;
 const parts = currentVersion.split('.').map(Number);
 
-let [major, minor, patch] = parts;
-if (type === 'major') {
-  major += 1;
-  minor = 0;
-  patch = 0;
-} else if (type === 'minor') {
-  minor += 1;
-  patch = 0;
+let nextVersion;
+if (type.includes('.')) {
+  nextVersion = type;
 } else {
-  patch += 1;
+  let [major, minor, patch] = parts;
+  if (type === 'major') {
+    major += 1;
+    minor = 0;
+    patch = 0;
+  } else if (type === 'minor') {
+    minor += 1;
+    patch = 0;
+  } else {
+    patch += 1;
+  }
+  nextVersion = `${major}.${minor}.${patch}`;
 }
-
-const nextVersion = `${major}.${minor}.${patch}`;
 
 // Read app.json for current versionCode
 const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));

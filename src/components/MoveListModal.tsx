@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Project } from '../types/vikunja';
+import { useAppTheme } from '../utils/theme';
 
 interface MoveListModalProps {
   visible: boolean;
@@ -26,6 +27,14 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
   onSelectProject,
   onClose,
 }) => {
+  const theme = useAppTheme();
+
+  const sortedProjects = React.useMemo(() => {
+    return [...projects].sort((a, b) =>
+      (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
+    );
+  }, [projects]);
+
   const handleSelect = (projectId: number) => {
     try {
       Haptics.selectionAsync?.();
@@ -44,26 +53,39 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            <View style={styles.sheet}>
-              <View style={styles.header}>
-                <Text style={styles.title}>Move to List</Text>
+            <View
+              style={[
+                styles.sheet,
+                {
+                  backgroundColor: theme.colors.card,
+                  borderColor: theme.colors.cardBorder,
+                },
+              ]}
+            >
+              <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+                <Text style={[styles.title, { color: theme.colors.text }]}>Move to List</Text>
                 <TouchableOpacity
                   testID="move-modal-close"
                   style={styles.closeBtn}
                   onPress={onClose}
                 >
-                  <Text style={styles.closeBtnText}>✕</Text>
+                  <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
                 </TouchableOpacity>
               </View>
 
               <ScrollView style={styles.list}>
-                {projects.map((proj) => {
+                {sortedProjects.map((proj) => {
                   const isCurrent = proj.id === currentProjectId;
                   return (
                     <TouchableOpacity
                       key={proj.id}
                       testID={`move-project-option-${proj.id}`}
-                      style={[styles.projectRow, isCurrent && styles.projectRowCurrent]}
+                      style={[
+                        styles.projectRow,
+                        isCurrent && {
+                          backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                        },
+                      ]}
                       onPress={() => handleSelect(proj.id)}
                       activeOpacity={0.7}
                     >
@@ -76,6 +98,7 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
                       <Text
                         style={[
                           styles.projectTitle,
+                          { color: theme.colors.text },
                           isCurrent && styles.projectTitleCurrent,
                         ]}
                       >

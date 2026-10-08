@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles, getLabelColor } from '../utils/colors';
 import { Label, Task } from '../types/vikunja';
+import { useAppTheme } from '../utils/theme';
 
 interface QuickLabelModalProps {
   visible: boolean;
@@ -33,6 +34,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
   onClose,
   onOpenManageLabels,
 }) => {
+  const theme = useAppTheme();
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [allLabels, setAllLabels] = useState<string[]>([]);
   const [newLabelText, setNewLabelText] = useState('');
@@ -115,11 +117,19 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
           <View style={styles.backdrop} />
         </TouchableWithoutFeedback>
 
-        <SafeAreaView style={styles.modalContent}>
+        <SafeAreaView
+          style={[
+            styles.modalContent,
+            {
+              backgroundColor: theme.colors.card,
+              borderColor: theme.colors.cardBorder,
+            },
+          ]}
+        >
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>Edit Labels</Text>
-              <Text style={styles.taskTitle} numberOfLines={1}>
+              <Text style={[styles.title, { color: theme.colors.text }]}>Edit Labels</Text>
+              <Text style={[styles.taskTitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
                 {task.title}
               </Text>
             </View>
@@ -137,9 +147,16 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
           <View style={styles.inputRow}>
             <TextInput
               testID="new-label-input"
-              style={styles.input}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                  borderColor: theme.colors.border,
+                },
+              ]}
               placeholder="New label name..."
-              placeholderTextColor="#8E8E93"
+              placeholderTextColor={theme.colors.textTertiary}
               value={newLabelText}
               onChangeText={setNewLabelText}
               onSubmitEditing={handleAddNewLabel}
@@ -160,7 +177,9 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
           </View>
 
           {/* Labels Grid / Chips */}
-          <Text style={styles.sectionHeading}>Tap to tag or move stores:</Text>
+          <Text style={[styles.sectionHeading, { color: theme.colors.textSecondary }]}>
+            Tap to tag or move stores:
+          </Text>
           <ScrollView style={styles.labelsList} contentContainerStyle={styles.chipsContainer}>
             {allLabels.map((label) => {
               const isSelected = selectedLabels.includes(label);
@@ -178,7 +197,10 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
                           backgroundColor: badgeStyle.backgroundColor,
                           borderColor: badgeStyle.textColor,
                         }
-                      : styles.chipUnselected,
+                      : {
+                          backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                          borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                        },
                   ]}
                   onPress={() => toggleLabel(label)}
                   activeOpacity={0.7}
@@ -188,7 +210,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
                       styles.chipText,
                       isSelected
                         ? { color: badgeStyle.textColor, fontWeight: '700' }
-                        : styles.chipTextUnselected,
+                        : { color: theme.colors.textSecondary },
                     ]}
                   >
                     #{label} {isSelected ? '✓' : ''}

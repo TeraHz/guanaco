@@ -46,6 +46,16 @@ describe('projectTree utils', () => {
       expect(tree[0].project.id).toBe(1); // Personal is favorite
       expect(tree[1].project.id).toBe(2); // Work is not favorite
     });
+
+    it('always sorts projects alphabetically by title regardless of position', () => {
+      const unordered: Project[] = [
+        { id: 10, title: 'Zebra', position: 1 },
+        { id: 11, title: 'Apple', position: 999 },
+        { id: 12, title: 'Mango', position: 50 },
+      ];
+      const tree = buildProjectTree(unordered);
+      expect(tree.map((n) => n.project.title)).toEqual(['Apple', 'Mango', 'Zebra']);
+    });
   });
 
   describe('flattenProjectTree', () => {

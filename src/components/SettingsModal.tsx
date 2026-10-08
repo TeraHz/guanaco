@@ -49,6 +49,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setLargeTaskItems,
     taskItemScale = 100,
     setTaskItemScale,
+    taskItemTextScale = 100,
+    setTaskItemTextScale,
     resetAndSyncFromServer,
     syncStatus,
     pendingSyncCount,
@@ -222,10 +224,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <View style={styles.settingRow}>
                 <View style={styles.settingTextCol}>
                   <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                    Task Item Size ({taskItemScale}%)
+                    Task Box Size ({taskItemScale}%)
                   </Text>
                   <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                    Scale list items, text, and tap targets ({taskItemScale > 100 ? `+${taskItemScale - 100}%` : 'Standard'})
+                    Scale box padding, height, and tap targets ({taskItemScale > 100 ? `+${taskItemScale - 100}%` : 'Standard'})
                   </Text>
                 </View>
                 <View style={styles.stepperContainer}>
@@ -280,7 +282,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </View>
               </View>
 
-              {/* Preset chips */}
+              {/* Preset chips for Box Size */}
               <View style={styles.presetChipsRow}>
                 {[100, 125, 150, 175, 200].map((preset) => {
                   const isSelected = taskItemScale === preset;
@@ -299,6 +301,107 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       ]}
                       onPress={() => {
                         setTaskItemScale(preset);
+                        safeHaptics.selection();
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.presetChipText,
+                          {
+                            color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
+                            fontWeight: isSelected ? '700' : '500',
+                          },
+                        ]}
+                      >
+                        {preset === 100 ? '100%' : `${preset}%`}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Task Text Size (Separate setting) */}
+              <View style={[styles.settingRow, { marginTop: 16 }]}>
+                <View style={styles.settingTextCol}>
+                  <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                    Task Text Size ({taskItemTextScale}%)
+                  </Text>
+                  <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
+                    Scale title and metadata font size ({taskItemTextScale > 100 ? `+${taskItemTextScale - 100}%` : 'Standard'})
+                  </Text>
+                </View>
+                <View style={styles.stepperContainer}>
+                  <TouchableOpacity
+                    testID="settings-text-scale-decrement"
+                    style={[styles.stepperBtn, taskItemTextScale <= 100 && styles.stepperBtnDisabled]}
+                    disabled={taskItemTextScale <= 100}
+                    onPress={() => {
+                      const newScale = Math.max(100, taskItemTextScale - 25);
+                      setTaskItemTextScale(newScale);
+                      safeHaptics.selection();
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text
+                      style={[
+                        styles.stepperBtnText,
+                        { color: taskItemTextScale <= 100 ? '#8E8E93' : '#007AFF' },
+                      ]}
+                    >
+                      −
+                    </Text>
+                  </TouchableOpacity>
+                  <View style={styles.stepperValueBadge}>
+                    <Text
+                      testID="settings-text-scale-value"
+                      style={[styles.stepperValueText, { color: theme.colors.text }]}
+                    >
+                      {taskItemTextScale}%
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    testID="settings-text-scale-increment"
+                    style={[styles.stepperBtn, taskItemTextScale >= 200 && styles.stepperBtnDisabled]}
+                    disabled={taskItemTextScale >= 200}
+                    onPress={() => {
+                      const newScale = Math.min(200, taskItemTextScale + 25);
+                      setTaskItemTextScale(newScale);
+                      safeHaptics.selection();
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text
+                      style={[
+                        styles.stepperBtnText,
+                        { color: taskItemTextScale >= 200 ? '#8E8E93' : '#007AFF' },
+                      ]}
+                    >
+                      +
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Preset chips for Text Size */}
+              <View style={styles.presetChipsRow}>
+                {[100, 125, 150, 175, 200].map((preset) => {
+                  const isSelected = taskItemTextScale === preset;
+                  return (
+                    <TouchableOpacity
+                      key={preset}
+                      testID={`settings-text-scale-preset-${preset}`}
+                      style={[
+                        styles.presetChip,
+                        isSelected
+                          ? { backgroundColor: '#007AFF', borderColor: '#007AFF' }
+                          : {
+                              backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                              borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                            },
+                      ]}
+                      onPress={() => {
+                        setTaskItemTextScale(preset);
                         safeHaptics.selection();
                       }}
                       activeOpacity={0.7}

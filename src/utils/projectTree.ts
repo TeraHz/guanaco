@@ -26,18 +26,14 @@ export function filterProjects(
 }
 
 /**
- * Sorts project nodes: favorites first, then by position or title.
+ * Sorts project nodes: favorites first, then alphabetically by title always.
  */
 function sortNodes(a: ProjectTreeNode, b: ProjectTreeNode): number {
   const aFav = a.project.is_favorite ? 1 : 0;
   const bFav = b.project.is_favorite ? 1 : 0;
   if (aFav !== bFav) return bFav - aFav;
 
-  const aPos = a.project.position ?? 0;
-  const bPos = b.project.position ?? 0;
-  if (aPos !== bPos) return aPos - bPos;
-
-  return (a.project.title || '').localeCompare(b.project.title || '');
+  return (a.project.title || '').localeCompare(b.project.title || '', undefined, { sensitivity: 'base' });
 }
 
 /**

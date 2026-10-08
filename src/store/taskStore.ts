@@ -26,6 +26,7 @@ const CACHE_KEY_SAVED_USERNAME = '@vikunja_saved_username';
 const CACHE_KEY_REENABLE_STAPLES = '@vikunja_reenable_staples';
 const CACHE_KEY_LARGE_TASK_ITEMS = '@vikunja_large_task_items';
 const CACHE_KEY_TASK_ITEM_SCALE = '@vikunja_task_item_scale';
+const CACHE_KEY_TASK_ITEM_TEXT_SCALE = '@vikunja_task_item_text_scale';
 const CACHE_KEY_LAST_PROJECT = '@vikunja_last_project_id';
 
 let persistTasksTimer: ReturnType<typeof setTimeout> | null = null;
@@ -78,6 +79,7 @@ export interface TaskState {
   reenableStaples: boolean;
   largeTaskItems: boolean;
   taskItemScale: number; // Percentage: 100, 125, 150, 175, 200 (default: 100)
+  taskItemTextScale: number; // Percentage: 100, 125, 150, 175, 200 (default: 100)
 
   // Actions
   initialize: (baseUrl: string, token?: string) => Promise<void>;
@@ -85,6 +87,7 @@ export interface TaskState {
   setReenableStaples: (enabled: boolean) => Promise<void>;
   setLargeTaskItems: (enabled: boolean) => Promise<void>;
   setTaskItemScale: (scale: number) => Promise<void>;
+  setTaskItemTextScale: (scale: number) => Promise<void>;
   retrySync: () => Promise<void>;
   setSelectedProjectId: (id: number | null) => void;
   fetchProjects: () => Promise<void>;
@@ -135,6 +138,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   reenableStaples: true,
   largeTaskItems: false,
   taskItemScale: 100,
+  taskItemTextScale: 100,
 
   initialize: async (baseUrl: string, token?: string) => {
     const client = new VikunjaClient({ baseUrl, token });
@@ -186,6 +190,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         reenableSettingRaw,
         largeItemsRaw,
         taskItemScaleRaw,
+        taskItemTextScaleRaw,
         lastProjectRaw,
       ] = await Promise.all([
         AsyncStorage.getItem(CACHE_KEY_PROJECTS),
@@ -197,6 +202,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         AsyncStorage.getItem(CACHE_KEY_REENABLE_STAPLES),
         AsyncStorage.getItem(CACHE_KEY_LARGE_TASK_ITEMS),
         AsyncStorage.getItem(CACHE_KEY_TASK_ITEM_SCALE),
+        AsyncStorage.getItem(CACHE_KEY_TASK_ITEM_TEXT_SCALE),
         AsyncStorage.getItem(CACHE_KEY_LAST_PROJECT),
       ]);
 
@@ -268,6 +274,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         updates.taskItemScale = isLarge ? 150 : 100;
       }
 
+      if (taskItemTextScaleRaw !== null) {
+        const parsedText = parseInt(taskItemTextScaleRaw, 10);
+        if (!isNaN(parsedText) && parsedText >= 100 && parsedText <= 200) {
+          updates.taskItemTextScale = parsedText;
+        }
+      }
+
       set(updates);
     } catch (e) {
       // Ignore cache load errors gracefully
@@ -326,6 +339,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     try {
       await AsyncStorage.setItem(CACHE_KEY_TASK_ITEM_SCALE, clamped.toString());
       await AsyncStorage.setItem(CACHE_KEY_LARGE_TASK_ITEMS, clamped > 100 ? 'true' : 'false');
+    } catch (e) {
+      // non-blocking
+    }
+  },
+
+  setTaskItemTextScale: async (scale: number) => {
+    const clamped = Math.max(100, Math.min(200, Math.round(scale)));
+    set({ taskItemTextScale: clamped });
+    try {
+      await AsyncStorage.setItem(CACHE_KEY_TASK_ITEM_TEXT_SCALE, clamped.toString());
     } catch (e) {
       // non-blocking
     }

@@ -811,6 +811,19 @@ describe('useTaskStore', () => {
       expect(useTaskStore.getState().taskItemScale).toBe(100);
       expect(useTaskStore.getState().largeTaskItems).toBe(false);
     });
+
+    it('should update taskItemTextScale independently and clamp between 100 and 200', async () => {
+      const { setTaskItemTextScale } = useTaskStore.getState();
+
+      await setTaskItemTextScale(150);
+      expect(useTaskStore.getState().taskItemTextScale).toBe(150);
+
+      await setTaskItemTextScale(250); // clamp to 200
+      expect(useTaskStore.getState().taskItemTextScale).toBe(200);
+
+      await setTaskItemTextScale(50); // clamp to 100
+      expect(useTaskStore.getState().taskItemTextScale).toBe(100);
+    });
   });
 
   describe('Phase 2 Reliability: Sync Locks, Storage Rehydration & Clear Session', () => {

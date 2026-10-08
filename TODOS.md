@@ -1,9 +1,35 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.1.2` (Build 11)
+- **Current Version:** `1.2.3` (Build 12)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🎨 Phase 6: Light Mode Contrast, Independent Text Size Scaling & Alphabetical Lists (v1.2.3)
+
+### 1. Light Theme Legibility & Color Audit
+- [x] **Light Mode Readability Audit Across Modals & Menus**:
+  - Fixed white-on-light-gray text in selected lists in `ProjectDrawer.tsx` (`styles.projectTitleSelected` now preserves theme text color `#000000` in light mode).
+  - Themed sorting menu (`ProjectTasksScreen.tsx`), filter pills, sort triggers, empty state text, and modals (`MoveListModal.tsx`, `QuickLabelModal.tsx`) with full dark/light tokens.
+  - Due date badge and other metadata chips now adapt cleanly to light backgrounds (`#E5E5EA`) with accessible text contrast.
+
+### 2. Independent Box Size vs. Text Size Scaling
+- [x] **Decoupled Task Box & Text Scaling (`taskStore.ts`, `SettingsModal.tsx`, `SwipeableTaskItem.tsx`)**:
+  - Added separate `taskItemTextScale` setting alongside `taskItemScale`.
+  - Users can now select larger task boxes/cards (e.g., 150%) for bigger tap targets and comfortable spacing while keeping task title and metadata text at standard 100% font size.
+  - Both settings are fully configurable in `SettingsModal` via dedicated steppers and quick percentage presets (100%–200%).
+
+### 3. Alphabetical List Ordering
+- [x] **Alphabetical Project Sorting (`projectTree.ts`, `MoveListModal.tsx`, `ProjectEditorModal.tsx`)**:
+  - Removed arbitrary server `position` integer sorting. Lists in the drawer, Move modal, and parent list selectors now always sort alphabetically by title (with favorites prioritized).
+
+### 4. Smart Multi-Line Handling for Long Task Titles
+- [x] **Adaptive Task Item Layout (`SwipeableTaskItem.tsx`)**:
+  - When task titles are long (> 26 characters), the card automatically stacks the title on top with up to 3 lines of text wrapping and places metadata badges beneath it, preventing aggressive single-line ellipsis cutoff.
+  - Simple tasks without metadata also wrap up to 3 lines across the full card width.
+  - Short tasks with metadata remain in the compact, single-row dense layout.
 
 ---
 

@@ -91,12 +91,16 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
     }
   }, [visible, project]);
 
-  // Filter valid parent projects (prevent self and descendants cycle)
-  const validParentProjects = allProjects.filter((p) => {
-    if (!isEditMode || !project) return true;
-    if (p.id === project.id) return false;
-    return !wouldCreateProjectCycle(allProjects, project.id, p.id);
-  });
+  // Filter valid parent projects (prevent self and descendants cycle) and sort alphabetically
+  const validParentProjects = React.useMemo(() => {
+    return allProjects
+      .filter((p) => {
+        if (!isEditMode || !project) return true;
+        if (p.id === project.id) return false;
+        return !wouldCreateProjectCycle(allProjects, project.id, p.id);
+      })
+      .sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
+  }, [allProjects, isEditMode, project]);
 
   const parentProjectName = allProjects.find((p) => p.id === parentProjectId)?.title || 'None (Top Level)';
 

@@ -35,7 +35,8 @@ describe('SettingsModal', () => {
     expect(getByText(/vikunja\.example\.com/)).toBeTruthy();
     expect(getByText(/Version/)).toBeTruthy();
     expect(getAllByText(new RegExp(APP_VERSION)).length).toBeGreaterThanOrEqual(1);
-    expect(getByText(/Task Item Size/)).toBeTruthy();
+    expect(getByText(/Task Box Size/)).toBeTruthy();
+    expect(getByText(/Task Text Size/)).toBeTruthy();
     expect(getByTestId('settings-large-items-switch')).toBeTruthy();
     expect(getByText('Re-enable Staple Tasks')).toBeTruthy();
     expect(getByTestId('settings-staples-switch')).toBeTruthy();
@@ -71,6 +72,36 @@ describe('SettingsModal', () => {
     fireEvent.press(preset100);
     expect(useTaskStore.getState().taskItemScale).toBe(100);
     expect(useTaskStore.getState().largeTaskItems).toBe(false);
+  });
+
+  it('allows configuring task text scale independently with stepper and presets', () => {
+    const { getByTestId } = render(
+      <SettingsModal
+        visible={true}
+        onClose={mockOnClose}
+        onLogout={mockOnLogout}
+      />
+    );
+
+    // Select 125% preset for text
+    const textPreset125 = getByTestId('settings-text-scale-preset-125');
+    fireEvent.press(textPreset125);
+    expect(useTaskStore.getState().taskItemTextScale).toBe(125);
+
+    // Increment text
+    const incBtn = getByTestId('settings-text-scale-increment');
+    fireEvent.press(incBtn);
+    expect(useTaskStore.getState().taskItemTextScale).toBe(150);
+
+    // Decrement text
+    const decBtn = getByTestId('settings-text-scale-decrement');
+    fireEvent.press(decBtn);
+    expect(useTaskStore.getState().taskItemTextScale).toBe(125);
+
+    // Reset text to 100%
+    const textPreset100 = getByTestId('settings-text-scale-preset-100');
+    fireEvent.press(textPreset100);
+    expect(useTaskStore.getState().taskItemTextScale).toBe(100);
   });
 
   it('allows toggling large items preference in task store', () => {

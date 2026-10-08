@@ -69,6 +69,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     reenableStaples,
     largeTaskItems,
     taskItemScale = 100,
+    taskItemTextScale = 100,
     toggleTask,
     reenableTask,
     updateTaskLabels,
@@ -293,7 +294,17 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             <TouchableOpacity
               key={f}
               testID={`filter-${f}`}
-              style={[styles.filterPill, filter === f && styles.filterPillActive]}
+              style={[
+                styles.filterPill,
+                {
+                  backgroundColor:
+                    filter === f
+                      ? theme.colors.accent
+                      : theme.isDark
+                      ? '#1C1C1E'
+                      : '#E5E5EA',
+                },
+              ]}
               onPress={() => {
                 safeHaptics.selection();
                 setFilter(filter === f && (f === 'done' || f === 'all') ? 'active' : f);
@@ -303,7 +314,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               <Text
                 style={[
                   styles.filterPillText,
-                  filter === f && styles.filterPillTextActive,
+                  {
+                    color: filter === f ? '#FFFFFF' : theme.colors.textSecondary,
+                  },
                 ]}
               >
                 {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -317,12 +330,31 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           testID="sort-trigger-btn"
           style={[
             styles.sortBtn,
-            sortBy !== 'default' && styles.sortBtnActive,
+            {
+              backgroundColor:
+                sortBy !== 'default'
+                  ? theme.isDark
+                    ? 'rgba(10, 132, 255, 0.2)'
+                    : 'rgba(0, 122, 255, 0.12)'
+                  : theme.isDark
+                  ? '#1C1C1E'
+                  : '#E5E5EA',
+              borderColor:
+                sortBy !== 'default' ? theme.colors.accent : theme.colors.border,
+            },
           ]}
           onPress={() => setShowSortModal(true)}
           activeOpacity={0.7}
         >
-          <Text style={styles.sortBtnText}>
+          <Text
+            style={[
+              styles.sortBtnText,
+              {
+                color:
+                  sortBy !== 'default' ? theme.colors.accent : theme.colors.text,
+              },
+            ]}
+          >
             ⇅ {sortBy === 'default' ? 'Sort' : SORT_LABELS[sortBy]}
           </Text>
         </TouchableOpacity>
@@ -481,6 +513,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 <SwipeableTaskItem
                   task={item}
                   scale={taskItemScale}
+                  textScale={taskItemTextScale}
                   isLarge={largeTaskItems}
                   labelDefinitions={storeLabels}
                   onToggle={toggleTask}
@@ -515,10 +548,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         ListEmptyComponent={
           <View style={styles.emptyView}>
             <Text style={styles.emptyEmoji}>✨</Text>
-            <Text style={styles.emptyTitle}>
+            <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
               {filter === 'done' ? 'No completed tasks yet' : 'All clear!'}
             </Text>
-            <Text style={styles.emptySubtitle}>
+            <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
               {filter === 'active'
                 ? 'Enjoy your free time or add a new task below.'
                 : 'Tap above to quickly capture what is on your mind.'}
@@ -627,14 +660,22 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             <View style={styles.modalBackdrop} />
           </TouchableWithoutFeedback>
 
-          <SafeAreaView style={styles.sortModalCard}>
+          <SafeAreaView
+            style={[
+              styles.sortModalCard,
+              {
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.cardBorder,
+              },
+            ]}
+          >
             <View style={styles.sortModalHeader}>
-              <Text style={styles.sortModalTitle}>Sort Tasks</Text>
+              <Text style={[styles.sortModalTitle, { color: theme.colors.text }]}>Sort Tasks</Text>
               <TouchableOpacity
                 onPress={() => setShowSortModal(false)}
                 style={styles.sortCloseBtn}
               >
-                <Text style={styles.sortCloseText}>✕</Text>
+                <Text style={[styles.sortCloseText, { color: theme.colors.textSecondary }]}>✕</Text>
               </TouchableOpacity>
             </View>
 
@@ -655,7 +696,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   testID={`sort-option-${option}`}
                   style={[
                     styles.sortOptionItem,
-                    isSelected && styles.sortOptionItemSelected,
+                    isSelected && {
+                      backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                    },
                   ]}
                   onPress={() => {
                     safeHaptics.selection();
@@ -667,7 +710,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   <Text
                     style={[
                       styles.sortOptionText,
-                      isSelected && styles.sortOptionTextSelected,
+                      {
+                        color: isSelected
+                          ? theme.colors.text
+                          : theme.colors.textSecondary,
+                        fontWeight: isSelected ? '700' : '500',
+                      },
                     ]}
                   >
                     {SORT_LABELS[option]}
@@ -681,7 +729,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               testID="sort-option-reorder"
               style={[
                 styles.sortOptionItem,
-                { borderTopWidth: 1, borderTopColor: '#3A3A3C', marginTop: 8 },
+                { borderTopWidth: 1, borderTopColor: theme.colors.border, marginTop: 8 },
               ]}
               onPress={() => {
                 safeHaptics.selection();
@@ -691,7 +739,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               }}
               activeOpacity={0.7}
             >
-              <Text style={[styles.sortOptionText, { color: '#007AFF', fontWeight: '700' }]}>
+              <Text style={[styles.sortOptionText, { color: theme.colors.accent, fontWeight: '700' }]}>
                 ↕ Reorder Tasks Manually
               </Text>
             </TouchableOpacity>

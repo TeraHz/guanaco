@@ -414,6 +414,61 @@ describe('SwipeableTaskItem', () => {
     expect(flattenedCheckbox.height).toBe(28);
     expect(flattenedTitle.fontSize).toBe(20);
   });
+
+  it('renders long task titles with 3 lines to prevent aggressive cutting off', () => {
+    const longTask: Task = {
+      ...mockTask,
+      id: 99,
+      title: 'Schedule quarterly dental checkup and purchase supplies for the office',
+    };
+
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={longTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+
+    const title = getByTestId('task-title-99');
+    expect(title.props.numberOfLines).toBe(3);
+  });
+
+  it('allows bigger boxes with standard text size via separate textScale prop', () => {
+    const { getByTestId } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+        scale={150}
+        textScale={100}
+      />
+    );
+
+    const card = getByTestId(`task-item-${mockTask.id}`);
+    const checkbox = getByTestId(`task-checkbox-${mockTask.id}`);
+    const title = getByTestId(`task-title-${mockTask.id}`);
+
+    const flattenedCard = Array.isArray(card.props.style)
+      ? Object.assign({}, ...card.props.style.filter(Boolean))
+      : card.props.style;
+    const flattenedCheckbox = Array.isArray(checkbox.props.style)
+      ? Object.assign({}, ...checkbox.props.style.filter(Boolean))
+      : checkbox.props.style;
+    const flattenedTitle = Array.isArray(title.props.style)
+      ? Object.assign({}, ...title.props.style.filter(Boolean))
+      : title.props.style;
+
+    // Card and checkbox are scaled to 150% (large box)
+    expect(flattenedCard.minHeight).toBe(52);
+    expect(flattenedCheckbox.width).toBe(28);
+    // But title is scaled to 100% (standard font size 13.5)
+    expect(flattenedTitle.fontSize).toBe(13.5);
+  });
 });
 
 

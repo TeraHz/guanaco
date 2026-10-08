@@ -521,7 +521,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   projectTitleSelected: {
-    color: '#FFFFFF',
     fontWeight: '700',
   },
   badgeCount: {
