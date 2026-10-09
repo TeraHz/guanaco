@@ -36,6 +36,7 @@ interface QuickAddBarProps {
   onAddTask: (input: CreateTaskInput) => void;
   onReenableTask?: (taskId: number) => void;
   placeholder?: string;
+  onDetailedAdd?: () => void;
 }
 
 const PRIORITY_LABELS: Record<number, { text: string; color: string; label: string }> = {
@@ -58,6 +59,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   onAddTask,
   onReenableTask,
   placeholder = 'Add a task...',
+  onDetailedAdd,
 }) => {
   const theme = useAppTheme();
   const [rawText, setRawText] = useState('');
@@ -312,41 +314,61 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         </View>
       )}
 
-      <View style={[styles.inputCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
-        <TextInput
-          ref={inputRef}
-          testID="quick-add-input"
-          style={[styles.input, { color: theme.colors.text }]}
-          placeholder={placeholder}
-          placeholderTextColor={theme.colors.textSecondary || '#8E8E93'}
-          value={rawText}
-          onChangeText={setRawText}
-          onSubmitEditing={handleSubmit}
-          returnKeyType="done"
-          blurOnSubmit={false}
-        />
-
-        <View style={styles.actionsRow}>
+      <View style={styles.dockRow}>
+        {onDetailedAdd && (
           <TouchableOpacity
-            testID="quick-add-priority"
-            style={[styles.priorityBadge, { borderColor: curPriority.color }]}
-            onPress={handleCyclePriority}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.priorityText, { color: curPriority.color }]}>
-              {curPriority.text}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            testID="quick-add-submit"
-            style={[styles.submitButton, !rawText.trim() && styles.submitButtonDisabled]}
-            onPress={handleSubmit}
-            disabled={!rawText.trim()}
+            testID="green-add-task-fab"
+            style={styles.detailedAddBtn}
+            onPress={() => {
+              safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+              onDetailedAdd();
+            }}
+            accessibilityLabel="Create task with details"
             activeOpacity={0.8}
           >
-            <Text style={styles.submitButtonText}>↑</Text>
+            <Text style={styles.detailedAddIcon}>＋</Text>
           </TouchableOpacity>
+        )}
+
+        <View style={[styles.inputCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+          <TextInput
+            ref={inputRef}
+            testID="quick-add-input"
+            style={[styles.input, { color: theme.colors.text }]}
+            placeholder={placeholder}
+            placeholderTextColor={theme.colors.textSecondary || '#8E8E93'}
+            value={rawText}
+            onChangeText={setRawText}
+            onSubmitEditing={handleSubmit}
+            returnKeyType="done"
+            blurOnSubmit={false}
+          />
+
+          <View style={styles.actionsRow}>
+            <TouchableOpacity
+              testID="quick-add-priority"
+              style={[styles.priorityBadge, { borderColor: curPriority.color }]}
+              onPress={handleCyclePriority}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.priorityText, { color: curPriority.color }]}>
+                {curPriority.text}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              testID="quick-add-submit"
+              style={[
+                styles.submitButton,
+                !rawText.trim() && (theme.isDark ? styles.submitButtonDisabled : { backgroundColor: '#D1D1D6' }),
+              ]}
+              onPress={handleSubmit}
+              disabled={!rawText.trim()}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.submitButtonText}>↑</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </View>
@@ -458,7 +480,32 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
+  dockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  detailedAddBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#30D158',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  detailedAddIcon: {
+    fontSize: 24,
+    color: '#FFFFFF',
+    fontWeight: '300',
+    lineHeight: 26,
+  },
   inputCard: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1C1C1E',

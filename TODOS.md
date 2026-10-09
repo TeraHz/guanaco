@@ -1,9 +1,26 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.2.4` (Build 13)
+- **Current Version:** `1.2.5` (Build 14)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🎨 Phase 8: Permanent Bottom Dock & Unobstructed Task List (v1.2.5)
+
+### 1. Permanent Bottom Dock & Ergonomic Input
+- [x] **Relocated Quick Add Bar to Bottom Dock (`ProjectTasksScreen.tsx`)**:
+  - Moved the Quick Add bar and suggestion chips from the top of the screen to a permanent, safe-area-aware bottom dock.
+  - Placed task input directly within the user's natural thumb zone.
+- [x] **Docked '+' Button Integration (`QuickAddBar.tsx` & `ProjectTasksScreen.tsx`)**:
+  - Replaced the floating FAB overlay with a docked circular green `＋` button beside the Quick Add input field.
+  - Eliminated task occlusion while scrolling or viewing lists.
+
+### 2. Task List Clearance & Modern Phone Geometry
+- [x] **Unobstructed Bottom Items (`ProjectTasksScreen.tsx`)**:
+  - Task list now occupies full `flex: 1` height above the bottom dock.
+  - Added bottom list padding so the bottom-most task stops cleanly above the dock and well clear of rounded phone bezels and gesture bars.
 
 ---
 

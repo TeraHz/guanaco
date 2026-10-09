@@ -286,5 +286,23 @@ describe('QuickAddBar', () => {
     fireEvent.press(storeChip);
     expect(input.props.value).toContain('*Costco');
   });
+
+  it('renders green detailed add button (+) when onDetailedAdd is provided and invokes callback', () => {
+    const mockOnDetailedAdd = jest.fn();
+    const { getByTestId } = render(
+      <QuickAddBar
+        activeProjectId={1}
+        onAddTask={mockOnAddTask}
+        onDetailedAdd={mockOnDetailedAdd}
+      />
+    );
+
+    const detailedBtn = getByTestId('green-add-task-fab');
+    expect(detailedBtn).toBeTruthy();
+
+    fireEvent.press(detailedBtn);
+    expect(mockOnDetailedAdd).toHaveBeenCalledTimes(1);
+  });
 });
+
 

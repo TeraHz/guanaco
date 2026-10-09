@@ -426,33 +426,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         </View>
       )}
 
-      {/* Quick Add Bar with Suggestions at TOP */}
-      <QuickAddBar
-        activeProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
-        availableProjects={safeProjects}
-        availableUsers={cachedUsers}
-        doneTasks={doneTasks}
-        historyTasks={projectTasks}
-        availableLabels={availableLabels}
-        reenableStaples={reenableStaples}
-        onAddTask={(taskInput) => {
-          if (isMyTasksView && currentUser) {
-            const hasAssignees = taskInput.assignees && taskInput.assignees.length > 0;
-            return addTask({
-              ...taskInput,
-              assignees: hasAssignees ? taskInput.assignees : [currentUser],
-            });
-          }
-          return addTask(taskInput);
-        }}
-        onReenableTask={(taskId) => reenableTask(taskId)}
-        placeholder={`Add a task to ${activeProject.title}...`}
-      />
-
       {/* Tasks List */}
       <DraggableFlatList
         data={sortedTasks}
         keyExtractor={(item) => item.id.toString()}
+        style={styles.taskList}
         onDragBegin={() => {
           safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
         }}
@@ -571,20 +549,44 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           </View>
         }
       />
-      </KeyboardAvoidingView>
 
-      {/* Green Floating Action Button (+) for Detailed Task Add */}
-      <TouchableOpacity
-        testID="green-add-task-fab"
-        style={[styles.fabBtn, { backgroundColor: '#30D158' }]}
-        onPress={() => {
-          safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-          setShowCreateTaskModal(true);
-        }}
-        activeOpacity={0.8}
+      {/* Permanent Bottom Dock: Quick Add Bar + Detailed Add (+) Button */}
+      <View
+        style={[
+          styles.bottomDock,
+          {
+            backgroundColor: theme.colors.cardBackground,
+            borderTopColor: theme.colors.cardBorder,
+          },
+        ]}
       >
-        <Text style={styles.fabIcon}>＋</Text>
-      </TouchableOpacity>
+        <QuickAddBar
+          activeProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
+          availableProjects={safeProjects}
+          availableUsers={cachedUsers}
+          doneTasks={doneTasks}
+          historyTasks={projectTasks}
+          availableLabels={availableLabels}
+          reenableStaples={reenableStaples}
+          onAddTask={(taskInput) => {
+            if (isMyTasksView && currentUser) {
+              const hasAssignees = taskInput.assignees && taskInput.assignees.length > 0;
+              return addTask({
+                ...taskInput,
+                assignees: hasAssignees ? taskInput.assignees : [currentUser],
+              });
+            }
+            return addTask(taskInput);
+          }}
+          onReenableTask={(taskId) => reenableTask(taskId)}
+          placeholder={`Add a task to ${activeProject.title}...`}
+          onDetailedAdd={() => {
+            safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+            setShowCreateTaskModal(true);
+          }}
+        />
+      </View>
+      </KeyboardAvoidingView>
 
       {/* Move Task Modal */}
       <MoveListModal
@@ -1019,8 +1021,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
   },
+  taskList: {
+    flex: 1,
+  },
   listContent: {
-    paddingVertical: 4,
+    paddingTop: 4,
+    paddingBottom: 20,
   },
   emptyContainer: {
     flexGrow: 1,
@@ -1110,28 +1116,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
-  fabBtn: {
-    position: 'absolute',
-    bottom: 24,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#30D158',
-    justifyContent: 'center',
-    alignItems: 'center',
+  bottomDock: {
+    borderTopWidth: 1,
+    paddingHorizontal: 4,
+    paddingTop: 6,
+    paddingBottom: Platform.OS === 'ios' ? 6 : 8,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 5,
-    elevation: 8,
-    zIndex: 100,
-  },
-  fabIcon: {
-    fontSize: 32,
-    color: '#FFFFFF',
-    fontWeight: '300',
-    lineHeight: 34,
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 4,
   },
   reorderBanner: {
     flexDirection: 'row',
