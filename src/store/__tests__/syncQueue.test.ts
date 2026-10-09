@@ -414,4 +414,47 @@ describe('SyncQueue', () => {
     expect(await AsyncStorage.getItem('@vikunja_sync_queue')).toBeNull();
     expect(queue.getQueue()).toHaveLength(0);
   });
+
+  describe('REORDER_TASK Deduplication & Processing', () => {
+    it('should deduplicate REORDER_TASK mutations in-place for the same task ID', () => {
+      queue.enqueue({
+        id: 'reorder-10-1',
+        type: 'REORDER_TASK',
+        payload: { taskId: 10, position: 1000, projectViewId: 5 },
+        timestamp: 100,
+      });
+
+      expect(queue.getQueue()).toHaveLength(1);
+      expect(queue.getQueue()[0].payload.position).toBe(1000);
+
+      // Reordering again while still queued updates the existing entry in-place
+      queue.enqueue({
+        id: 'reorder-10-2',
+        type: 'REORDER_TASK',
+        payload: { taskId: 10, position: 3000, projectViewId: 5 },
+        timestamp: 200,
+      });
+
+      expect(queue.getQueue()).toHaveLength(1);
+      expect(queue.getQueue()[0].payload.position).toBe(3000);
+      expect(queue.getQueue()[0].timestamp).toBe(200);
+    });
+
+    it('should call client.reorderTask and clear queue when processing REORDER_TASK', async () => {
+      mockClient.reorderTask.mockResolvedValueOnce({ success: true });
+
+      queue.enqueue({
+        id: 'reorder-42-1',
+        type: 'REORDER_TASK',
+        payload: { taskId: 42, position: 2000, projectViewId: 7 },
+        timestamp: 500,
+      });
+
+      await queue.processQueue();
+
+      expect(mockClient.reorderTask).toHaveBeenCalledWith(42, 2000, 7);
+      expect(queue.getQueue()).toHaveLength(0);
+      expect(queue.getStatus()).toBe('synced');
+    });
+  });
 });

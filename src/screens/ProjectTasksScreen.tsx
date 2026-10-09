@@ -165,6 +165,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
 
   const handleLongPressTask = (_task: Task) => {
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+    const hasPositions = sortedTasks.some((t) => t.position !== undefined && t.position > 0);
+    if (!hasPositions && sortedTasks.length > 0) {
+      reorderTasks(activeProject.id, sortedTasks.map((t) => t.id));
+    }
     setIsReordering(true);
     if (sortBy !== 'manual') {
       setSortBy('manual');
@@ -526,6 +530,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   }}
                   onLongPress={() => {
                     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                    const hasPositions = sortedTasks.some((t) => t.position !== undefined && t.position > 0);
+                    if (!hasPositions && sortedTasks.length > 0) {
+                      reorderTasks(activeProject.id, sortedTasks.map((t) => t.id));
+                    }
                     setIsReordering(true);
                     if (sortBy !== 'manual') {
                       setSortBy('manual');
@@ -535,6 +543,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   drag={drag}
                   isDragging={isActive}
                   isReordering={isReordering}
+                  onMoveUp={() => handleMoveTaskPosition(item.id, 'up')}
+                  onMoveDown={() => handleMoveTaskPosition(item.id, 'down')}
+                  canMoveUp={index !== undefined && index > 0}
+                  canMoveDown={index !== undefined && index < sortedTasks.length - 1}
                   onSelectLabel={(label) => setSelectedLabel(label)}
                   onEditLabels={(task) => setEditingLabelsTask(task)}
                 />
@@ -702,6 +714,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   ]}
                   onPress={() => {
                     safeHaptics.selection();
+                    if (option === 'manual') {
+                      const hasPositions = sortedTasks.some((t) => t.position !== undefined && t.position > 0);
+                      if (!hasPositions && sortedTasks.length > 0) {
+                        reorderTasks(activeProject.id, sortedTasks.map((t) => t.id));
+                      }
+                    }
                     setSortBy(option);
                     setShowSortModal(false);
                   }}
@@ -733,6 +751,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               ]}
               onPress={() => {
                 safeHaptics.selection();
+                const hasPositions = sortedTasks.some((t) => t.position !== undefined && t.position > 0);
+                if (!hasPositions && sortedTasks.length > 0) {
+                  reorderTasks(activeProject.id, sortedTasks.map((t) => t.id));
+                }
                 setSortBy('manual');
                 setIsReordering(true);
                 setShowSortModal(false);

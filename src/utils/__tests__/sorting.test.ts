@@ -185,6 +185,23 @@ describe('Task Sorting Utility', () => {
       const sorted = sortTasks(tasks, 'manual');
       expect(sorted.map((t) => t.title)).toEqual(['Active Task', 'Done Task']);
     });
+
+    it('places unpositioned active tasks after explicitly positioned tasks', () => {
+      const tasks: Task[] = [
+        { id: 1, title: 'Unpositioned Task B', done: false, priority: 1, project_id: 1 },
+        { id: 2, title: 'Positioned Task 2', done: false, priority: 1, project_id: 1, position: 2000 },
+        { id: 3, title: 'Positioned Task 1', done: false, priority: 1, project_id: 1, position: 1000 },
+        { id: 4, title: 'Unpositioned Task A', done: false, priority: 1, project_id: 1, position: 0 },
+      ];
+
+      const sorted = sortTasks(tasks, 'manual');
+      expect(sorted.map((t) => t.title)).toEqual([
+        'Positioned Task 1',
+        'Positioned Task 2',
+        'Unpositioned Task A',
+        'Unpositioned Task B',
+      ]);
+    });
   });
 
   describe('Department / Contextual Sort', () => {

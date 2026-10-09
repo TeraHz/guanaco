@@ -30,6 +30,7 @@ const CACHE_KEY_TASK_ITEM_TEXT_SCALE = '@vikunja_task_item_text_scale';
 const CACHE_KEY_LAST_PROJECT = '@vikunja_last_project_id';
 
 let persistTasksTimer: ReturnType<typeof setTimeout> | null = null;
+let reorderSyncTimer: ReturnType<typeof setTimeout> | null = null;
 const persistTasksDebounced = (tasks: Task[], immediate = false) => {
   if (persistTasksTimer) {
     clearTimeout(persistTasksTimer);
@@ -110,7 +111,7 @@ export interface TaskState {
   addTask: (input: CreateTaskInput) => Task;
   updateTaskDetails: (taskId: number, updates: UpdateTaskInput) => void;
   moveTask: (taskId: number, targetProjectId: number) => void;
-  reorderTasks: (projectId: number, orderedTaskIds: number[]) => void;
+  reorderTasks: (projectId: number, orderedTaskIds: number[], immediateSync?: boolean) => void;
   deleteTask: (taskId: number) => void;
 
   // Project Management Actions
@@ -546,23 +547,48 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         }
       });
 
-      const enrichedTasks = tasks.map((t) => ({
-        ...t,
-        labels: (t.labels || []).map((l) => {
-          const canonicalColor =
-            (l.id > 0 ? serverLabelsMap.get(`id:${l.id}`) : undefined) ||
-            serverLabelsMap.get(l.title.toLowerCase()) ||
-            l.hex_color ||
-            l.color;
-          return {
-            ...l,
-            hex_color: canonicalColor,
-            color: canonicalColor,
-          };
-        }),
-      }));
-
       const currentTasks = get().tasks || [];
+      const currentTaskMap = new Map<number, Task>(currentTasks.map((t) => [t.id, t]));
+      const syncQueue = get().syncQueue;
+
+      const resolvePosition = (remoteTask: Task, localTask?: Task): number | undefined => {
+        const hasPending =
+          typeof syncQueue?.hasPendingForTask === 'function'
+            ? syncQueue.hasPendingForTask(remoteTask.id, 'REORDER_TASK')
+            : false;
+        if (hasPending && localTask && localTask.position !== undefined) {
+          return localTask.position;
+        }
+        if (remoteTask.position && remoteTask.position > 0) {
+          return remoteTask.position;
+        }
+        if (localTask && localTask.position !== undefined && localTask.position > 0) {
+          return localTask.position;
+        }
+        return remoteTask.position !== undefined ? remoteTask.position : localTask?.position;
+      };
+
+      const enrichedTasks = tasks.map((t) => {
+        const local = currentTaskMap.get(t.id);
+        const resolvedPos = resolvePosition(t, local);
+        return {
+          ...t,
+          position: resolvedPos !== undefined ? resolvedPos : t.position,
+          labels: (t.labels || []).map((l) => {
+            const canonicalColor =
+              (l.id > 0 ? serverLabelsMap.get(`id:${l.id}`) : undefined) ||
+              serverLabelsMap.get(l.title.toLowerCase()) ||
+              l.hex_color ||
+              l.color;
+            return {
+              ...l,
+              hex_color: canonicalColor,
+              color: canonicalColor,
+            };
+          }),
+        };
+      });
+
       // Keep tasks for other projects and any local optimistic tasks
       const otherTasks = currentTasks.filter((t) => t.project_id !== projectId || t.id < 0);
       const merged = [...enrichedTasks, ...otherTasks];
@@ -644,17 +670,44 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         });
       };
 
+      const resolvePosition = (remoteTask: Task, localTask?: Task): number | undefined => {
+        const hasPending =
+          typeof syncQueue?.hasPendingForTask === 'function'
+            ? syncQueue.hasPendingForTask(remoteTask.id, 'REORDER_TASK')
+            : false;
+        if (hasPending && localTask && localTask.position !== undefined) {
+          return localTask.position;
+        }
+        if (remoteTask.position && remoteTask.position > 0) {
+          return remoteTask.position;
+        }
+        if (localTask && localTask.position !== undefined && localTask.position > 0) {
+          return localTask.position;
+        }
+        return remoteTask.position !== undefined ? remoteTask.position : localTask?.position;
+      };
+
       (allTasksRes || []).forEach((t) => {
         const local = currentTaskMap.get(t.id);
         const labels = resolveLabels(t, local);
-        taskMap.set(t.id, { ...t, labels });
+        const position = resolvePosition(t, local);
+        taskMap.set(t.id, {
+          ...t,
+          position: position !== undefined ? position : t.position,
+          labels,
+        });
       });
 
       projectTaskLists.forEach((list) => {
         (list || []).forEach((t) => {
           const local = currentTaskMap.get(t.id);
           const labels = resolveLabels(t, local);
-          taskMap.set(t.id, { ...t, labels });
+          const position = resolvePosition(t, local);
+          taskMap.set(t.id, {
+            ...t,
+            position: position !== undefined ? position : t.position,
+            labels,
+          });
         });
       });
 
@@ -1128,15 +1181,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
   },
 
-  reorderTasks: (projectId: number, orderedTaskIds: number[]) => {
-    const { tasks, projects, syncQueue } = get();
+  reorderTasks: (projectId: number, orderedTaskIds: number[], immediateSync = false) => {
+    const { tasks, projects, syncQueue, client } = get();
     const safeTasks = Array.isArray(tasks) ? tasks : [];
-    const project = (projects || []).find((p) => p.id === projectId);
-    const projectViewId =
-      project?.views?.find((v) => v.view_kind === 'list')?.id || project?.views?.[0]?.id;
+    const isGlobal = projectId <= 0;
 
+    // 1. Instantly update positions in memory and local storage
     const updatedTasks = safeTasks.map((t) => {
-      if (t.project_id !== projectId) return t;
+      if (!isGlobal && t.project_id !== projectId) return t;
       const index = orderedTaskIds.indexOf(t.id);
       if (index === -1) return t;
       return { ...t, position: (index + 1) * 1000 };
@@ -1147,16 +1199,68 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     safeHaptics.selection();
 
-    if (syncQueue) {
+    // 2. Fetch project view id asynchronously if not cached
+    const project = (projects || []).find((p) => p.id === projectId);
+    let projectViewId =
+      project?.views?.find((v) => v.view_kind === 'list')?.id || project?.views?.[0]?.id;
+
+    if (!projectViewId && client && projectId > 0 && typeof client.getProjectViews === 'function') {
+      client
+        .getProjectViews(projectId)
+        .then((views) => {
+          if (Array.isArray(views) && views.length > 0) {
+            const listV = views.find((v) => v.view_kind === 'list') || views[0];
+            const updatedProjects = (get().projects || []).map((p) =>
+              p.id === projectId ? { ...p, views } : p
+            );
+            set({ projects: updatedProjects });
+          }
+        })
+        .catch(() => {});
+    }
+
+    if (!syncQueue) return;
+
+    const performSync = () => {
+      const currentProjects = get().projects || [];
+      const currentProject = currentProjects.find((p) => p.id === projectId);
+      const resolvedViewId =
+        projectViewId ||
+        currentProject?.views?.find((v) => v.view_kind === 'list')?.id ||
+        currentProject?.views?.[0]?.id;
+
       orderedTaskIds.forEach((id, idx) => {
+        const newPos = (idx + 1) * 1000;
+        const taskObj = safeTasks.find((t) => t.id === id);
+        const taskProjectId = taskObj?.project_id || projectId;
+        const taskProject = currentProjects.find((p) => p.id === taskProjectId);
+        const taskViewId =
+          resolvedViewId ||
+          taskProject?.views?.find((v) => v.view_kind === 'list')?.id ||
+          taskProject?.views?.[0]?.id;
+
         syncQueue.enqueue({
           id: `reorder-${id}-${Date.now()}`,
           type: 'REORDER_TASK',
-          payload: { taskId: id, position: (idx + 1) * 1000, projectViewId },
+          payload: { taskId: id, position: newPos, projectViewId: taskViewId },
           timestamp: Date.now(),
         });
       });
       syncQueue.processQueue();
+    };
+
+    if (reorderSyncTimer) {
+      clearTimeout(reorderSyncTimer);
+      reorderSyncTimer = null;
+    }
+
+    if (immediateSync) {
+      performSync();
+    } else {
+      reorderSyncTimer = setTimeout(() => {
+        reorderSyncTimer = null;
+        performSync();
+      }, 400);
     }
   },
 

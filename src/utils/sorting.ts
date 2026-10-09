@@ -19,8 +19,16 @@ export function sortTasks(tasks: Task[], sortBy: SortOption, contextTitle?: stri
 
     switch (sortBy) {
       case 'manual': {
-        const posDiff = (a.position || 0) - (b.position || 0);
-        if (posDiff !== 0) return posDiff;
+        const hasPosA = a.position !== undefined && a.position > 0;
+        const hasPosB = b.position !== undefined && b.position > 0;
+        if (hasPosA && hasPosB) {
+          const posDiff = (a.position || 0) - (b.position || 0);
+          if (posDiff !== 0) return posDiff;
+        } else if (hasPosA && !hasPosB) {
+          return -1;
+        } else if (!hasPosA && hasPosB) {
+          return 1;
+        }
         return a.title.localeCompare(b.title);
       }
 

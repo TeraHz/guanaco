@@ -90,6 +90,28 @@ export class SyncQueue {
   }
 
   public enqueue(mutation: Mutation): void {
+    if (mutation.type === 'REORDER_TASK') {
+      const taskId = mutation.payload?.taskId;
+      const existingIdx = this.queue.findIndex(
+        (m) => m.type === 'REORDER_TASK' && m.payload?.taskId === taskId
+      );
+      if (existingIdx !== -1) {
+        this.queue[existingIdx] = {
+          ...this.queue[existingIdx],
+          payload: {
+            ...this.queue[existingIdx].payload,
+            position: mutation.payload.position,
+            projectViewId:
+              mutation.payload.projectViewId || this.queue[existingIdx].payload.projectViewId,
+          },
+          timestamp: mutation.timestamp,
+        };
+        this.setStatus('syncing');
+        this.persistQueue();
+        return;
+      }
+    }
+
     this.queue.push({
       ...mutation,
       retryCount: mutation.retryCount ?? 0,

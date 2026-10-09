@@ -7,6 +7,7 @@ import {
   Project,
   ProjectTeamShare,
   ProjectUserShare,
+  ProjectView,
   Task,
   Team,
   UpdateProjectInput,
@@ -234,6 +235,11 @@ export class VikunjaClient {
     });
   }
 
+  public async getProjectViews(projectId: number): Promise<ProjectView[]> {
+    const res = await this.request<any>(`/projects/${projectId}/views`, { method: 'GET' });
+    return this.normalizeListResponse<ProjectView>(res);
+  }
+
   // --- Project Sharing (Users) ---
   public async getProjectUsers(projectId: number): Promise<ProjectUserShare[]> {
     const res = await this.request<any>(`/projects/${projectId}/users`, { method: 'GET' });
@@ -456,7 +462,11 @@ export class VikunjaClient {
 
   public async reorderTask(taskId: number, position: number, projectViewId?: number): Promise<any> {
     if (projectViewId && projectViewId > 0) {
-      return this.setTaskPosition(taskId, projectViewId, position);
+      try {
+        return await this.setTaskPosition(taskId, projectViewId, position);
+      } catch (_) {
+        // Fallback to updating task if dedicated position endpoint fails
+      }
     }
     return this.updateTask(taskId, { position });
   }

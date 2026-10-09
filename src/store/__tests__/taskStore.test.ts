@@ -132,6 +132,81 @@ describe('useTaskStore', () => {
       expect(projectTasks[0].id).toBe(20);
       expect(projectTasks[1].id).toBe(10);
     });
+
+    it('should reorder tasks in global / multi-project views (projectId <= 0)', () => {
+      const { reorderTasks } = useTaskStore.getState();
+
+      useTaskStore.setState({
+        tasks: [
+          { id: 101, title: 'Task in List 1', done: false, priority: 1, project_id: 1, position: 1000 },
+          { id: 201, title: 'Task in List 2', done: false, priority: 1, project_id: 2, position: 2000 },
+        ],
+      });
+
+      // Move task 201 above task 101 in global "All Tasks" mode (projectId 0)
+      reorderTasks(0, [201, 101]);
+
+      const updatedTasks = useTaskStore.getState().tasks;
+      const t201 = updatedTasks.find((t) => t.id === 201);
+      const t101 = updatedTasks.find((t) => t.id === 101);
+
+      expect(t201?.position).toBe(1000);
+      expect(t101?.position).toBe(2000);
+    });
+
+    it('fetchTasks should NOT overwrite local task positions when server returns tasks without positions', async () => {
+      const mockClient = {
+        getTasks: jest.fn().mockResolvedValue([
+          // Server returns tasks without position (or position: 0)
+          { id: 10, title: 'Task 1', done: false, priority: 1, project_id: 1, position: 0 },
+          { id: 20, title: 'Task 2', done: true, priority: 2, project_id: 1, position: 0 },
+        ]),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        tasks: [
+          { id: 10, title: 'Task 1', done: false, priority: 1, project_id: 1, position: 2000 },
+          { id: 20, title: 'Task 2', done: true, priority: 2, project_id: 1, position: 1000 },
+        ],
+      });
+
+      const { fetchTasks } = useTaskStore.getState();
+      await fetchTasks(1);
+
+      const tasks = useTaskStore.getState().tasks;
+      const t10 = tasks.find((t) => t.id === 10);
+      const t20 = tasks.find((t) => t.id === 20);
+
+      // Local positions must be preserved!
+      expect(t10?.position).toBe(2000);
+      expect(t20?.position).toBe(1000);
+    });
+
+    it('fetchAllTasks should preserve local task positions when server returns tasks without positions', async () => {
+      const mockClient = {
+        getAllTasks: jest.fn().mockResolvedValue([
+          { id: 1, title: 'Task 1', done: false, priority: 1, project_id: 1, position: 0 },
+          { id: 2, title: 'Task 2', done: false, priority: 1, project_id: 1, position: 0 },
+        ]),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        projects: [{ id: 1, title: 'Main' }],
+        tasks: [
+          { id: 1, title: 'Task 1', done: false, priority: 1, project_id: 1, position: 3000 },
+          { id: 2, title: 'Task 2', done: false, priority: 1, project_id: 1, position: 1000 },
+        ],
+      });
+
+      const { fetchAllTasks } = useTaskStore.getState();
+      await fetchAllTasks();
+
+      const tasks = useTaskStore.getState().tasks;
+      expect(tasks.find((t) => t.id === 1)?.position).toBe(3000);
+      expect(tasks.find((t) => t.id === 2)?.position).toBe(1000);
+    });
   });
 
   describe('Deleting Tasks', () => {

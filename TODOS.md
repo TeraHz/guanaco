@@ -1,9 +1,30 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.2.3` (Build 12)
+- **Current Version:** `1.2.4` (Build 13)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🛠️ Phase 7: Manual Task Ordering Stability & Synchronization (v1.2.4)
+
+### 1. Manual Task Order Preservation
+- [x] **Preserve Local Task Positions Across Inbound Syncs (`taskStore.ts`)**:
+  - Implemented `resolvePosition` in both `fetchTasks()` and `fetchAllTasks()` to prevent incoming server task lists (which lack view-specific positions and default to 0) from wiping out local user-ordered positions.
+  - Active positions and pending reorder mutations are now strictly preserved across all background polls, project switches, and pull-to-refresh events.
+
+### 2. Mutation Deduplication & Debounced Sync
+- [x] **Eliminate Reorder Race Conditions (`syncQueue.ts` & `taskStore.ts`)**:
+  - `syncQueue.enqueue` now deduplicates pending `REORDER_TASK` mutations in-place for identical task IDs, ensuring rapid item moves do not queue redundant or out-of-order mutations.
+  - Local state updates and haptics fire immediately (0ms latency), while network sync is debounced by 400ms to batch rapid manual rearrangements into a single clean pass.
+
+### 3. Project View Discovery & Global Reordering
+- [x] **Project View Scoping (`client.ts` & `ProjectTasksScreen.tsx`)**:
+  - Added `getProjectViews()` to `VikunjaClient` to fetch and cache project view IDs for accurate `POST /tasks/{id}/position` scoping.
+  - Updated `reorderTasks()` to support global smart views (`All Tasks` and `My Tasks`).
+  - Added stepper controls (`onMoveUp`, `onMoveDown`) and automatic initial position generation when entering Custom Order mode.
+  - Enhanced manual sorting utility (`sorting.ts`) to prioritize explicitly positioned tasks over unpositioned ones.
 
 ---
 
