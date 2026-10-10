@@ -427,10 +427,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       )}
 
       {/* Tasks List */}
-      <DraggableFlatList
-        data={sortedTasks}
-        keyExtractor={(item) => item.id.toString()}
-        style={styles.taskList}
+      <View style={styles.listContainer}>
+        <DraggableFlatList
+          data={sortedTasks}
+          keyExtractor={(item) => item.id.toString()}
+          containerStyle={styles.draggableContainer}
+          style={styles.taskList}
         onDragBegin={() => {
           safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
         }}
@@ -549,9 +551,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           </View>
         }
       />
+      </View>
 
       {/* Permanent Bottom Dock: Quick Add Bar + Detailed Add (+) Button */}
       <View
+        testID="bottom-dock-container"
         style={[
           styles.bottomDock,
           {
@@ -1021,10 +1025,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
   },
+  listContainer: {
+    flex: 1,
+  },
+  draggableContainer: {
+    flex: 1,
+  },
   taskList: {
     flex: 1,
   },
   listContent: {
+    flexGrow: 1,
     paddingTop: 4,
     paddingBottom: 20,
   },

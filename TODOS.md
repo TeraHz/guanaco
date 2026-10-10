@@ -1,9 +1,20 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.2.5` (Build 14)
+- **Current Version:** `1.2.6` (Build 15)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🛠️ Phase 8.1: DraggableFlatList Flex Container Fix & Task Visibility (v1.2.6)
+
+### 1. Fix DraggableFlatList Collapsing & Task Visibility
+- [x] **`containerStyle` & `listContainer` Flex Layout (`ProjectTasksScreen.tsx`)**:
+  - Identified root cause of task list collapsing to height 0: `react-native-draggable-flatlist` wraps the inner list inside an outer `Animated.View` which requires `containerStyle={{ flex: 1 }}` to participate in flexbox column layouts with bottom docked siblings.
+  - Wrapped `DraggableFlatList` in a dedicated `listContainer` View (`flex: 1`) and explicitly passed `containerStyle={{ flex: 1 }}` so the list takes full vertical height between the header and the bottom dock.
+  - Updated Jest mock in `jest.setup.ts` to accurately preserve `props.containerStyle` on the outer View wrapper, preventing layout regression divergence between unit tests and physical devices.
+  - Added layout & task visibility unit tests in `ProjectTasksScreen.test.tsx`.
 
 ---
 

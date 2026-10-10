@@ -88,6 +88,29 @@ describe('ProjectTasksScreen', () => {
     expect(getByText('New Task')).toBeTruthy();
   });
 
+  it('renders tasks in a flex: 1 list container and docks bottom bar at the bottom with full clearance', () => {
+    const { getByTestId, getByText } = render(
+      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+    );
+
+    // Verify task is rendered and visible in the list
+    expect(getByText('Task in Inbox')).toBeTruthy();
+
+    // Verify draggable flatlist outer container has flex: 1
+    const listOuterContainer = getByTestId('draggable-flatlist-outer-container');
+    expect(listOuterContainer).toBeTruthy();
+    const flattenedListStyle = Array.isArray(listOuterContainer.props.style)
+      ? Object.assign({}, ...listOuterContainer.props.style)
+      : listOuterContainer.props.style;
+    expect(flattenedListStyle).toEqual(expect.objectContaining({ flex: 1 }));
+
+    // Verify bottom dock container is present with the input bar and green add button
+    const bottomDock = getByTestId('bottom-dock-container');
+    expect(bottomDock).toBeTruthy();
+    expect(getByTestId('quick-add-input')).toBeTruthy();
+    expect(getByTestId('green-add-task-fab')).toBeTruthy();
+  });
+
   it('adds task rapidly via QuickAddBar and shows it immediately in the list', () => {
     const { getByTestId, getByText } = render(
       <ProjectTasksScreen onOpenDrawer={jest.fn()} />
