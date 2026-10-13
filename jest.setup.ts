@@ -179,3 +179,26 @@ jest.mock('expo-notifications', () => ({
   },
 }));
 
+// Mock / enhance React Native Keyboard for event testing
+const { Keyboard } = require('react-native');
+const keyboardListeners: Record<string, ((...args: any[]) => void)[]> = {};
+
+Keyboard.addListener = jest.fn((event: string, callback: (...args: any[]) => void) => {
+  if (!keyboardListeners[event]) {
+    keyboardListeners[event] = [];
+  }
+  keyboardListeners[event].push(callback);
+  return {
+    remove: jest.fn(() => {
+      keyboardListeners[event] = (keyboardListeners[event] || []).filter((cb) => cb !== callback);
+    }),
+  };
+});
+
+Keyboard.emit = (event: string, data?: any) => {
+  (keyboardListeners[event] || []).forEach((cb) => cb(data));
+};
+
+Keyboard.dismiss = jest.fn();
+
+

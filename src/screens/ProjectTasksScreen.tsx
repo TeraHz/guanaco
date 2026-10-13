@@ -11,8 +11,11 @@ import {
   TouchableWithoutFeedback,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTaskStore } from '../store/taskStore';
 import { SwipeableTaskItem } from '../components/SwipeableTaskItem';
 import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
@@ -85,6 +88,41 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     fetchAllTasks,
     toggleProjectFavorite,
   } = useTaskStore();
+
+  const insets = useSafeAreaInsets();
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = (e: any) => {
+      const h = e?.endCoordinates?.height || 0;
+      if (Platform.OS === 'android' && h > 0) {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      }
+      setKeyboardHeight(h);
+    };
+
+    const onHide = () => {
+      if (Platform.OS === 'android') {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      }
+      setKeyboardHeight(0);
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const [filter, setFilter] = useState<FilterType>('active');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
@@ -175,6 +213,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     }
   };
 
+  const androidKeyboardOffset =
+    Platform.OS === 'android'
+      ? Math.max(0, keyboardHeight - (insets?.bottom || 0))
+      : 0;
+
   return (
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
@@ -186,7 +229,13 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       />
 
       <KeyboardAvoidingView
-        style={styles.keyboardContainer}
+        testID="keyboard-avoiding-container"
+        style={[
+          styles.keyboardContainer,
+          Platform.OS === 'android' && androidKeyboardOffset > 0 && {
+            paddingBottom: androidKeyboardOffset,
+          },
+        ]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Header Bar with Live Sync Status Indicator */}
@@ -433,7 +482,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           keyExtractor={(item) => item.id.toString()}
           containerStyle={styles.draggableContainer}
           style={styles.taskList}
-        onDragBegin={() => {
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          onDragBegin={() => {
           safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
         }}
         onDragEnd={({ data }) => {

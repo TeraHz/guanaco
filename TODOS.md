@@ -1,9 +1,21 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.2.6` (Build 15)
+- **Current Version:** `1.2.7` (Build 16)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🛠️ Phase 8.2: Android Keyboard Avoidance & Quick Add Dock Elevation (v1.2.7)
+
+### 1. Dynamic Keyboard Avoidance for Bottom Dock
+- [x] **Keyboard Height Tracking & Android Offset Compensation (`ProjectTasksScreen.tsx`)**:
+  - Identified root cause of keyboard occlusion on Android with edge-to-edge screens: `KeyboardAvoidingView` with `behavior={undefined}` on Android left the bottom dock stationary under the software keyboard.
+  - Implemented dynamic `Keyboard.addListener` (`keyboardDidShow` / `keyboardDidHide`) to track keyboard height and compute safe-area-adjusted padding offset (`Math.max(0, keyboardHeight - insets.bottom)`).
+  - Applied smooth layout animations via `LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)` when the keyboard appears or dismisses.
+  - Configured `keyboardDismissMode="on-drag"` and `keyboardShouldPersistTaps="handled"` on `DraggableFlatList` for natural mobile interaction.
+  - Enhanced Jest test environment in `jest.setup.ts` to support deterministic `Keyboard` event mocking and added unit test coverage in `ProjectTasksScreen.test.tsx`.
 
 ---
 

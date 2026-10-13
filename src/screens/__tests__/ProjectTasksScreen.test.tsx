@@ -1,5 +1,6 @@
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
+import { Keyboard, Platform } from 'react-native';
 import { ProjectTasksScreen } from '../ProjectTasksScreen';
 import { useTaskStore } from '../../store/taskStore';
 
@@ -109,6 +110,41 @@ describe('ProjectTasksScreen', () => {
     expect(bottomDock).toBeTruthy();
     expect(getByTestId('quick-add-input')).toBeTruthy();
     expect(getByTestId('green-add-task-fab')).toBeTruthy();
+  });
+
+  it('adjusts padding on Android when keyboard appears to push quick add bar above keyboard', () => {
+    const originalOS = Platform.OS;
+    try {
+      Platform.OS = 'android';
+      const { getByTestId } = render(
+        <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+      );
+
+      const container = getByTestId('keyboard-avoiding-container');
+      expect(container).toBeTruthy();
+
+      // Trigger keyboard show event
+      act(() => {
+        (Keyboard as any).emit('keyboardDidShow', { endCoordinates: { height: 300 } });
+      });
+
+      const style = Array.isArray(container.props.style)
+        ? Object.assign({}, ...container.props.style)
+        : container.props.style;
+      expect(style.paddingBottom).toBe(300);
+
+      // Trigger keyboard hide event
+      act(() => {
+        (Keyboard as any).emit('keyboardDidHide');
+      });
+
+      const styleAfterHide = Array.isArray(container.props.style)
+        ? Object.assign({}, ...container.props.style)
+        : container.props.style;
+      expect(styleAfterHide.paddingBottom).toBeUndefined();
+    } finally {
+      Platform.OS = originalOS;
+    }
   });
 
   it('adds task rapidly via QuickAddBar and shows it immediately in the list', () => {
