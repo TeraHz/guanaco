@@ -213,15 +213,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     }
   };
 
-  const androidKeyboardOffset =
-    Platform.OS === 'android'
-      ? Math.max(0, keyboardHeight - (insets?.bottom || 0))
-      : 0;
+  const isKeyboardVisible = keyboardHeight > 0;
 
   return (
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
-      edges={hideDrawerButton ? ['top', 'bottom', 'right'] : ['top', 'bottom', 'left', 'right']}
+      edges={
+        hideDrawerButton
+          ? (isKeyboardVisible ? ['top', 'right'] : ['top', 'bottom', 'right'])
+          : (isKeyboardVisible ? ['top', 'left', 'right'] : ['top', 'bottom', 'left', 'right'])
+      }
     >
       <StatusBar
         barStyle={theme.isDark ? 'light-content' : 'dark-content'}
@@ -230,12 +231,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
 
       <KeyboardAvoidingView
         testID="keyboard-avoiding-container"
-        style={[
-          styles.keyboardContainer,
-          Platform.OS === 'android' && androidKeyboardOffset > 0 && {
-            paddingBottom: androidKeyboardOffset,
-          },
-        ]}
+        style={styles.keyboardContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Header Bar with Live Sync Status Indicator */}

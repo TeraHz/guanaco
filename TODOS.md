@@ -1,9 +1,23 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.2.8` (Build 17)
+- **Current Version:** `1.2.9` (Build 18)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🛠️ Phase 9.1: Native Window Insets Resizing & Frame-Accurate Keyboard Avoidance (v1.2.9)
+
+### 1. True Android Window Resizing & Frame-Synchronized Animation
+- [x] **Native IME Insets & Animation Callback (`MainActivity.kt`)**:
+  - Attached `ViewCompat.setOnApplyWindowInsetsListener` and `ViewCompat.setWindowInsetsAnimationCallback` to `android.R.id.content`.
+  - Automatically adjusts content view padding bottom to `WindowInsetsCompat.Type.ime().bottom` frame-by-frame as the keyboard animates up and down.
+  - Accounts for full keyboard height, predictive text bars, clipboard/emoji bars, and microphone strips natively without guessing offsets in JS.
+  - Resizes React Native root layout and `flex: 1` containers synchronously to the true available visible screen space.
+- [x] **Dynamic Safe Area Edge Toggling (`ProjectTasksScreen.tsx`)**:
+  - Dynamically removes `'bottom'` safe area edge when the software keyboard is active so the bottom dock rests flush against the top of the keyboard.
+  - Restores `'bottom'` safe area edge when the keyboard dismisses for gesture bar clearance.
 
 ---
 

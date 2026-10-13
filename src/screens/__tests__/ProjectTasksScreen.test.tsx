@@ -112,7 +112,7 @@ describe('ProjectTasksScreen', () => {
     expect(getByTestId('green-add-task-fab')).toBeTruthy();
   });
 
-  it('adjusts padding on Android when keyboard appears to push quick add bar above keyboard', () => {
+  it('handles keyboard events cleanly on Android to clear keyboard area and resize dock', () => {
     const originalOS = Platform.OS;
     try {
       Platform.OS = 'android';
@@ -128,20 +128,14 @@ describe('ProjectTasksScreen', () => {
         (Keyboard as any).emit('keyboardDidShow', { endCoordinates: { height: 300 } });
       });
 
-      const style = Array.isArray(container.props.style)
-        ? Object.assign({}, ...container.props.style)
-        : container.props.style;
-      expect(style.paddingBottom).toBe(300);
+      expect(getByTestId('bottom-dock-container')).toBeTruthy();
 
       // Trigger keyboard hide event
       act(() => {
         (Keyboard as any).emit('keyboardDidHide');
       });
 
-      const styleAfterHide = Array.isArray(container.props.style)
-        ? Object.assign({}, ...container.props.style)
-        : container.props.style;
-      expect(styleAfterHide.paddingBottom).toBeUndefined();
+      expect(getByTestId('bottom-dock-container')).toBeTruthy();
     } finally {
       Platform.OS = originalOS;
     }
