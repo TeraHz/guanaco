@@ -33,13 +33,15 @@ describe('SettingsModal', () => {
 
     expect(getByText('Settings')).toBeTruthy();
     expect(getByText(/vikunja\.example\.com/)).toBeTruthy();
-    expect(getByText(/Version/)).toBeTruthy();
+    expect(getAllByText(/Version/).length).toBeGreaterThanOrEqual(1);
     expect(getAllByText(new RegExp(APP_VERSION)).length).toBeGreaterThanOrEqual(1);
     expect(getByText(/Task Box Size/)).toBeTruthy();
     expect(getByText(/Task Text Size/)).toBeTruthy();
     expect(getByTestId('settings-large-items-switch')).toBeTruthy();
     expect(getByText('Re-enable Staple Tasks')).toBeTruthy();
     expect(getByTestId('settings-staples-switch')).toBeTruthy();
+    expect(getByTestId('settings-updates-section')).toBeTruthy();
+    expect(getByTestId('settings-check-updates-btn')).toBeTruthy();
   });
 
   it('allows configuring task item scale with stepper and presets', () => {

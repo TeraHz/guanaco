@@ -24,6 +24,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isAICoreSupported, clearAICoreCache } from '../utils/aiCore';
 import { APP_VERSION, APP_BUILD_NUMBER, APP_NAME } from '../constants/version';
+import { useUpdateStore } from '../store/updateStore';
 
 interface SettingsModalProps {
   visible: boolean;
@@ -73,6 +74,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [clearedAiCache, setClearedAiCache] = useState(false);
   const aiCacheTimerRef = React.useRef<any>(null);
 
+  const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
+  const updateStatusTimerRef = React.useRef<any>(null);
+
+  const {
+    updateInfo,
+    isChecking: isCheckingUpdate,
+    checkForUpdate,
+    startUpdate,
+  } = useUpdateStore();
+
+  const handleCheckForUpdates = async () => {
+    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+    const info = await checkForUpdate(true);
+    if (info?.isAvailable) {
+      setUpdateStatusMsg(`Build ${info.availableVersionCode} Available!`);
+    } else {
+      setUpdateStatusMsg('✓ Up to date');
+      if (updateStatusTimerRef.current) clearTimeout(updateStatusTimerRef.current);
+      updateStatusTimerRef.current = setTimeout(() => {
+        setUpdateStatusMsg(null);
+      }, 4000);
+    }
+  };
+
   useEffect(() => {
     return () => {
       if (resetTimerRef.current) {
@@ -80,6 +105,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
       if (aiCacheTimerRef.current) {
         clearTimeout(aiCacheTimerRef.current);
+      }
+      if (updateStatusTimerRef.current) {
+        clearTimeout(updateStatusTimerRef.current);
       }
     };
   }, []);
@@ -558,6 +586,90 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </View>
           )}
 
+          {/* App Updates Section */}
+          <View
+            testID="settings-updates-section"
+            style={[
+              styles.sectionCard,
+              {
+                backgroundColor: theme.colors.cardBackground,
+                borderColor: theme.colors.cardBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+              APP UPDATES
+            </Text>
+            <View style={styles.infoRow}>
+              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Installed Version</Text>
+              <Text style={[styles.infoValue, { color: theme.colors.text }]}>
+                v{APP_VERSION} (Build {APP_BUILD_NUMBER})
+              </Text>
+            </View>
+
+            <View style={styles.infoRow}>
+              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Google Play Status</Text>
+              <Text
+                style={[
+                  styles.infoValue,
+                  {
+                    color: updateInfo?.isAvailable
+                      ? '#30D158'
+                      : isCheckingUpdate
+                      ? '#0A84FF'
+                      : theme.colors.textSecondary,
+                  },
+                ]}
+              >
+                {isCheckingUpdate
+                  ? 'Checking Google Play...'
+                  : updateInfo?.isAvailable
+                  ? `● Build ${updateInfo.availableVersionCode} Available`
+                  : updateStatusMsg || 'Up to date'}
+              </Text>
+            </View>
+
+            {updateInfo?.isAvailable ? (
+              <TouchableOpacity
+                testID="settings-install-update-btn"
+                style={[styles.updateNowBtn, { backgroundColor: '#30D158' }]}
+                onPress={() => {
+                  safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                  startUpdate('flexible');
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.updateNowBtnText}>
+                  Update to Build {updateInfo.availableVersionCode}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                testID="settings-check-updates-btn"
+                style={[
+                  styles.checkUpdatesBtn,
+                  isCheckingUpdate && styles.resetSyncBtnDisabled,
+                ]}
+                onPress={handleCheckForUpdates}
+                disabled={isCheckingUpdate}
+                activeOpacity={0.7}
+              >
+                {isCheckingUpdate ? (
+                  <View style={styles.centerRow}>
+                    <ActivityIndicator size="small" color="#0A84FF" />
+                    <Text style={styles.resetSyncText}>Checking Play Services...</Text>
+                  </View>
+                ) : (
+                  <View style={styles.centerRow}>
+                    <Text style={styles.checkUpdatesText}>
+                      {updateStatusMsg ? updateStatusMsg : '↻ Check for Updates'}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+
           {/* Sync & Server Actions */}
           <View
             style={[
@@ -759,6 +871,31 @@ const styles = StyleSheet.create({
   resetSuccessText: {
     color: '#30D158',
     fontSize: 13,
+    fontWeight: '700',
+  },
+  checkUpdatesBtn: {
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(10, 132, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(10, 132, 255, 0.3)',
+    alignItems: 'center',
+  },
+  checkUpdatesText: {
+    color: '#0A84FF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  updateNowBtn: {
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  updateNowBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '700',
   },
   logoutBtn: {

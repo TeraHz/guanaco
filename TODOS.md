@@ -1,9 +1,39 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.2.7` (Build 16)
+- **Current Version:** `1.2.8` (Build 17)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🚀 Phase 9: Google Play In-App Updates & Background Detection (v1.2.8)
+
+### 1. Native Play Core In-App Updates Module
+- [x] **Native Play Core Integration (`InAppUpdateModule.kt` & `InAppUpdatePackage.kt`)**:
+  - Integrated `com.google.android.play:app-update-ktx:2.1.0` and added R8 ProGuard keep rules.
+  - Implemented `checkForUpdate` returning detailed update status (`isAvailable`, `availableVersionCode`, `isFlexibleAllowed`, `isImmediateAllowed`, `stalenessDays`, `priority`).
+  - Implemented `startUpdateFlow` supporting both flexible background updates and immediate full-screen updates with `ActivityResult` callback handling.
+  - Implemented `completeUpdate` for seamless install & restart of downloaded flexible updates.
+  - Implemented `openPlayStore` fallback resolving directly to Guanaco's Play Store listing.
+  - Implemented `InstallStateUpdatedListener` emitting live download progress events (`bytesDownloaded`, `totalBytesToDownload`, `status`).
+
+### 2. Update Store & Periodic Background Checks
+- [x] **Automated Periodic Lifecycle (`updateStore.ts` & `App.tsx`)**:
+  - Checks Google Play Services on app launch (with 2.5s delay to prioritize UI responsiveness).
+  - Checks Google Play Services automatically when app returns to foreground (`AppState === 'active'`) with 1-hour cooldown throttling.
+  - Recurring interval checks every 3 hours while the app is running.
+  - Remembers user prompt dismissals with a 24-hour snooze persisted in `AsyncStorage`.
+
+### 3. User Prompt & Settings Integration
+- [x] **In-App Prompt Modal (`AppUpdatePromptModal.tsx`)**:
+  - Notifies user when an update is available on Google Play (especially internal/alpha test tracks).
+  - Displays build comparison (`Build X available, currently on Build Y`), "Update Now", and "Remind Me Tomorrow" actions.
+  - Displays live download progress bar when flexible update is downloading.
+  - Automatically prompts user to "Restart & Apply Update" as soon as the download finishes.
+- [x] **Settings "Check for Updates" Button (`SettingsModal.tsx`)**:
+  - Added dedicated APP UPDATES card in Settings showing installed version/build and Play Services status.
+  - Added manual "Check for Updates" button with immediate forced bypass of cooldown and tactile haptic feedback.
 
 ---
 

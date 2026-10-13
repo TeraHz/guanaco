@@ -15,8 +15,8 @@ coverage/
 *.lcov
 
 # Native build folders (if ever generated via prebuild / eject)
-android/
-ios/
+/android/
+/ios/
 
 # Environment / Secrets
 .env

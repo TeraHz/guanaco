@@ -201,4 +201,24 @@ Keyboard.emit = (event: string, data?: any) => {
 
 Keyboard.dismiss = jest.fn();
 
+// Mock NativeModules.InAppUpdate
+const { NativeModules } = require('react-native');
+NativeModules.InAppUpdate = {
+  checkForUpdate: jest.fn().mockResolvedValue({
+    isAvailable: false,
+    availableVersionCode: 17,
+    currentVersionCode: 16,
+    updateAvailability: 1,
+    isImmediateAllowed: true,
+    isFlexibleAllowed: true,
+    clientVersionStalenessDays: 0,
+    updatePriority: 0,
+    inProgress: false,
+  }),
+  startUpdateFlow: jest.fn().mockResolvedValue({ status: 'accepted' }),
+  completeUpdate: jest.fn().mockResolvedValue(true),
+  openPlayStore: jest.fn().mockResolvedValue(true),
+};
+
+
 

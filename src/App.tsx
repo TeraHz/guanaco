@@ -17,6 +17,8 @@ import {
   authenticateWithBiometrics,
 } from './utils/biometrics';
 import { initNotifications } from './services/localNotifications';
+import { useUpdateStore } from './store/updateStore';
+import { AppUpdatePromptModal } from './components/AppUpdatePromptModal';
 
 export default function App() {
   const theme = useAppTheme();
@@ -29,6 +31,27 @@ export default function App() {
 
   useEffect(() => {
     initNotifications().catch(() => {});
+  }, []);
+
+  // Google Play In-App Updates lifecycle & listeners
+  useEffect(() => {
+    const unsub = useUpdateStore.getState().initialize();
+
+    // Check Google Play Services after launch
+    const initialCheckTimer = setTimeout(() => {
+      useUpdateStore.getState().checkForUpdate().catch(() => {});
+    }, 2500);
+
+    // Periodic check every 3 hours while app is running
+    const periodicCheckTimer = setInterval(() => {
+      useUpdateStore.getState().checkForUpdate().catch(() => {});
+    }, 3 * 60 * 60 * 1000);
+
+    return () => {
+      clearTimeout(initialCheckTimer);
+      clearInterval(periodicCheckTimer);
+      unsub();
+    };
   }, []);
 
   // Auto-restore session from stored token/credentials and check biometrics (Reload & App launch)
@@ -99,6 +122,7 @@ export default function App() {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
         syncAll().catch(() => {});
+        useUpdateStore.getState().checkForUpdate().catch(() => {});
         startPolling();
       } else {
         stopPolling();
@@ -200,6 +224,7 @@ export default function App() {
             />
           </View>
         )}
+        <AppUpdatePromptModal />
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );
