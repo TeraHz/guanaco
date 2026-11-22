@@ -1,6 +1,7 @@
 module.exports = {
   preset: 'jest-expo',
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
+  reporters: process.env.GITHUB_ACTIONS ? ['default', 'github-actions'] : ['default'],
   fakeTimers: {
     doNotFake: ['nextTick', 'setImmediate', 'clearImmediate'],
   },

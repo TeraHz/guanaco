@@ -214,25 +214,34 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const compiledWordListCache = new Map<string, RegExp>();
+const compiledStemListCache = new Map<string, RegExp>();
+
 /**
  * Matches whole words (with optional English plural -s/-es/-ies) using Unicode boundaries
  * so "ham" never matches "shampoo", "tea" never matches "team"/"steak", "nut" never matches "minutes",
  * "oat" never matches "coat", and "oil" never matches "toilet".
  */
 function hasAnyWord(texts: string[], words: string[]): boolean {
-  for (const w of words) {
-    const escaped = escapeRegex(w);
-    const alts = [escaped, `${escaped}s`, `${escaped}es`];
-    if (w.length >= 2 && /[^aeiou]y$/i.test(w)) {
-      alts.push(`${escapeRegex(w.slice(0, -1))}ies`);
+  if (words.length === 0) return false;
+  const cacheKey = words.join('\0');
+  let re = compiledWordListCache.get(cacheKey);
+  if (!re) {
+    const allAlts: string[] = [];
+    for (const w of words) {
+      const escaped = escapeRegex(w);
+      allAlts.push(escaped, `${escaped}s`, `${escaped}es`);
+      if (w.length >= 2 && /[^aeiou]y$/i.test(w)) {
+        allAlts.push(`${escapeRegex(w.slice(0, -1))}ies`);
+      }
     }
-    const re = new RegExp(
-      `(?:^|[^\\p{L}\\p{N}])(?:${alts.join('|')})(?=$|[^\\p{L}\\p{N}])`,
+    re = new RegExp(
+      `(?:^|[^\\p{L}\\p{N}])(?:${allAlts.join('|')})(?=$|[^\\p{L}\\p{N}])`,
       'iu'
     );
-    if (texts.some((txt) => re.test(txt))) return true;
+    compiledWordListCache.set(cacheKey, re);
   }
-  return false;
+  return texts.some((txt) => re!.test(txt));
 }
 
 /**
@@ -240,11 +249,17 @@ function hasAnyWord(texts: string[], words: string[]): boolean {
  * so stems match inflected endings (e.g. "кроасан" -> "кроасани") without matching inside unrelated words.
  */
 function hasAnyWordStem(texts: string[], stems: string[]): boolean {
-  for (const stem of stems) {
-    const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegex(stem)}`, 'iu');
-    if (texts.some((txt) => re.test(txt))) return true;
+  if (stems.length === 0) return false;
+  const cacheKey = stems.join('\0');
+  let re = compiledStemListCache.get(cacheKey);
+  if (!re) {
+    re = new RegExp(
+      `(?:^|[^\\p{L}\\p{N}])(?:${stems.map(escapeRegex).join('|')})`,
+      'iu'
+    );
+    compiledStemListCache.set(cacheKey, re);
   }
-  return false;
+  return texts.some((txt) => re!.test(txt));
 }
 
 /**

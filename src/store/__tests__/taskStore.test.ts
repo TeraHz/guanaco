@@ -7,6 +7,7 @@ import * as localNotifications from '../../services/localNotifications';
 
 describe('useTaskStore', () => {
   beforeEach(async () => {
+    await useTaskStore.getState().clearSession();
     await AsyncStorage.clear();
     useTaskStore.setState({
       projects: [

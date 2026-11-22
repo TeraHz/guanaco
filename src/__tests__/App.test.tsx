@@ -20,6 +20,7 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
 
   beforeEach(async () => {
     originalFetch = global.fetch;
+    await useTaskStore.getState().clearSession();
     await AsyncStorage.clear();
     await SecureStore.deleteItemAsync(SECURE_KEY_AUTH_TOKEN);
     await SecureStore.deleteItemAsync(SECURE_KEY_USERNAME);
