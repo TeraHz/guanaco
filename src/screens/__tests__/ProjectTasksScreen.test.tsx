@@ -186,88 +186,96 @@ describe('ProjectTasksScreen', () => {
 
   it('stages task deletion with an Undo toast banner and restores task when Undo is tapped', () => {
     jest.useFakeTimers();
-    const deleteSpy = jest.fn();
-    useTaskStore.setState({ deleteTask: deleteSpy });
+    try {
+      const deleteSpy = jest.fn();
+      useTaskStore.setState({ deleteTask: deleteSpy });
 
-    const { getByTestId, queryByText, getByText } = render(
-      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
-    );
+      const { getByTestId, queryByText, getByText } = render(
+        <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+      );
 
-    // Trigger delete action on task 101
-    fireEvent.press(getByTestId('task-delete-action-101', { includeHiddenElements: true }));
+      // Trigger delete action on task 101
+      fireEvent.press(getByTestId('task-delete-action-101', { includeHiddenElements: true }));
 
-    // Task immediately disappears from view and Undo banner is shown, WITHOUT permanent delete yet!
-    expect(queryByText('Task in Inbox')).toBeNull();
-    expect(getByTestId('undo-delete-banner')).toBeTruthy();
-    expect(deleteSpy).not.toHaveBeenCalled();
+      // Task immediately disappears from view and Undo banner is shown, WITHOUT permanent delete yet!
+      expect(queryByText('Task in Inbox')).toBeNull();
+      expect(getByTestId('undo-delete-banner')).toBeTruthy();
+      expect(deleteSpy).not.toHaveBeenCalled();
 
-    // Tap Undo -> task returns and timer is cancelled!
-    fireEvent.press(getByTestId('undo-delete-btn'));
-    expect(getByText('Task in Inbox')).toBeTruthy();
+      // Tap Undo -> task returns and timer is cancelled!
+      fireEvent.press(getByTestId('undo-delete-btn'));
+      expect(getByText('Task in Inbox')).toBeTruthy();
 
-    act(() => {
-      jest.advanceTimersByTime(6000);
-    });
-    expect(deleteSpy).not.toHaveBeenCalled();
+      act(() => {
+        jest.advanceTimersByTime(6000);
+      });
+      expect(deleteSpy).not.toHaveBeenCalled();
 
-    // Delete again and let timer expire -> commits deleteTask(101)
-    fireEvent.press(getByTestId('task-delete-action-101', { includeHiddenElements: true }));
-    act(() => {
-      jest.advanceTimersByTime(5000);
-    });
-    expect(deleteSpy).toHaveBeenCalledWith(101);
+      // Delete again and let timer expire -> commits deleteTask(101)
+      fireEvent.press(getByTestId('task-delete-action-101', { includeHiddenElements: true }));
+      act(() => {
+        jest.advanceTimersByTime(5000);
+      });
+      expect(deleteSpy).toHaveBeenCalledWith(101);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('tracks tempId -> serverId remap during 5s Undo Delete window (ignoring older completed staples) and cancels cleanly on session reset', () => {
     jest.useFakeTimers();
-    const deleteSpy = jest.fn();
-    useTaskStore.setState({
-      deleteTask: deleteSpy,
-      tasks: [
-        // Older completed staple with identical title
-        { id: 12, title: 'Milk', done: true, priority: 0, project_id: 1 },
-        // Newly quick-added optimistic task
-        { id: -777, title: 'Milk', done: false, priority: 0, project_id: 1 },
-      ],
-    });
-
-    const { getByTestId, queryByText } = render(
-      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
-    );
-
-    // Stage delete on optimistic task -777
-    fireEvent.press(getByTestId('task-delete-action--777', { includeHiddenElements: true }));
-    expect(queryByText('Milk')).toBeNull();
-    expect(getByTestId('undo-delete-banner')).toBeTruthy();
-
-    // Background CREATE_TASK resolves -777 -> 404 while Undo window is open
-    act(() => {
+    try {
+      const deleteSpy = jest.fn();
       useTaskStore.setState({
+        deleteTask: deleteSpy,
         tasks: [
+          // Older completed staple with identical title
           { id: 12, title: 'Milk', done: true, priority: 0, project_id: 1 },
-          { id: 404, title: 'Milk', done: false, priority: 0, project_id: 1 },
+          // Newly quick-added optimistic task
+          { id: -777, title: 'Milk', done: false, priority: 0, project_id: 1 },
         ],
       });
-    });
 
-    // Task 404 must stay hidden while Undo banner remains open, then commit deleteTask(404) (NOT -777 or 12!)
-    expect(queryByText('Milk')).toBeNull();
-    expect(getByTestId('undo-delete-banner')).toBeTruthy();
+      const { getByTestId, queryByText } = render(
+        <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+      );
 
-    act(() => {
-      jest.advanceTimersByTime(5000);
-    });
-    expect(deleteSpy).toHaveBeenCalledTimes(1);
-    expect(deleteSpy).toHaveBeenCalledWith(404);
+      // Stage delete on optimistic task -777
+      fireEvent.press(getByTestId('task-delete-action--777', { includeHiddenElements: true }));
+      expect(queryByText('Milk')).toBeNull();
+      expect(getByTestId('undo-delete-banner')).toBeTruthy();
 
-    // Now stage another delete and simulate session clear (`tasks: []`) mid-window -> must NOT call deleteTask!
-    deleteSpy.mockClear();
-    fireEvent.press(getByTestId('task-delete-action-404', { includeHiddenElements: true }));
-    act(() => {
-      useTaskStore.setState({ tasks: [] });
-      jest.advanceTimersByTime(5000);
-    });
-    expect(deleteSpy).not.toHaveBeenCalled();
+      // Background CREATE_TASK resolves -777 -> 404 while Undo window is open
+      act(() => {
+        useTaskStore.setState({
+          tasks: [
+            { id: 12, title: 'Milk', done: true, priority: 0, project_id: 1 },
+            { id: 404, title: 'Milk', done: false, priority: 0, project_id: 1 },
+          ],
+        });
+      });
+
+      // Task 404 must stay hidden while Undo banner remains open, then commit deleteTask(404) (NOT -777 or 12!)
+      expect(queryByText('Milk')).toBeNull();
+      expect(getByTestId('undo-delete-banner')).toBeTruthy();
+
+      act(() => {
+        jest.advanceTimersByTime(5000);
+      });
+      expect(deleteSpy).toHaveBeenCalledTimes(1);
+      expect(deleteSpy).toHaveBeenCalledWith(404);
+
+      // Now stage another delete and simulate session clear (`tasks: []`) mid-window -> must NOT call deleteTask!
+      deleteSpy.mockClear();
+      fireEvent.press(getByTestId('task-delete-action-404', { includeHiddenElements: true }));
+      act(() => {
+        useTaskStore.setState({ tasks: [] });
+        jest.advanceTimersByTime(5000);
+      });
+      expect(deleteSpy).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('moves a task to another list using MoveListModal', () => {
