@@ -129,7 +129,7 @@ describe('TaskDetailModal (CUJ 2)', () => {
     );
   });
 
-  it('renders all existing task details and accessible checkbox state correctly', () => {
+  it('renders all existing task details, night-legible checkbox border, and accent blue Add buttons', () => {
     const { getByDisplayValue, getByText, getByTestId } = render(
       <TaskDetailModal
         visible={true}
@@ -144,11 +144,20 @@ describe('TaskDetailModal (CUJ 2)', () => {
     expect(getByDisplayValue('Buy organic eggs and almond milk')).toBeTruthy();
     expect(getByText('@alex')).toBeTruthy();
     expect(getByText('#Costco')).toBeTruthy();
-    expect(getByText('25% Complete')).toBeTruthy();
+    expect(getByTestId('task-detail-progress-display').props.children).toBe('25%');
 
+    const { StyleSheet } = require('react-native');
     const checkbox = getByTestId('task-detail-done-toggle');
     expect(checkbox.props.accessibilityRole).toBe('checkbox');
     expect(checkbox.props.accessibilityState).toEqual({ checked: false });
+    const checkboxStyle = StyleSheet.flatten(checkbox.props.style);
+    expect(checkboxStyle.borderWidth).toBe(1.75);
+    expect(['#A1A1AA', '#71717A']).toContain(checkboxStyle.borderColor);
+
+    // Both Add Assignee and Add Label buttons use accent blue (never #30D158 green)
+    const addAssigneeStyle = StyleSheet.flatten(getByTestId('add-assignee-btn').props.style);
+    const addLabelStyle = StyleSheet.flatten(getByTestId('add-label-btn').props.style);
+    expect(addLabelStyle.backgroundColor).toBe(addAssigneeStyle.backgroundColor);
   });
 
   it('updates priority and converts UI percentDone (75%) back to Vikunja [0..1] float (0.75) on save', () => {

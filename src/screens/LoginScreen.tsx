@@ -16,6 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { useAppTheme } from '../utils/theme';
+import { hexToRgba } from '../utils/colors';
 import {
   getStoredAuth,
   checkBiometricAvailable,
@@ -71,7 +72,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const passwordInputRef = React.useRef<TextInput>(null);
   const totpInputRef = React.useRef<TextInput>(null);
 
-  // Restore saved URL, Username, and check offline-capable Biometric Unlock capability on mount
   useEffect(() => {
     let mounted = true;
     const loadSavedCredentials = async () => {
@@ -167,7 +167,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         if (isInsecureHttp) opts.allowInsecureHttp = true;
         await onConnect(normalizedUrl, cleanUser, secretValue, opts);
       } else {
-        // Keep exact 3-arg call signature for standard HTTPS password login
         await onConnect(normalizedUrl, cleanUser, secretValue);
       }
 
@@ -192,12 +191,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         const hadCode = totpPasscode.trim().length > 0;
         setShowTotp(true);
         setErrorMessage(
-          hadCode
-            ? 'Invalid two-factor authentication code. Please try again.'
-            : 'Two-factor authentication is required. Enter your 6-digit code below.'
+          hadCode ? 'Invalid 2FA code.' : 'Enter your 6-digit 2FA code.'
         );
       } else {
-        setErrorMessage(err.message || 'Failed to connect to Vikunja server');
+        setErrorMessage(err.message || 'Failed to connect to server');
       }
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -238,7 +235,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Logo / Header */}
           <View style={styles.header}>
             <Image
               source={require('../../assets/icon.png')}
@@ -246,12 +242,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               resizeMode="cover"
             />
             <Text style={[styles.title, { color: theme.colors.text }]}>Guanaco</Text>
-            <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-              Connect your self-hosted or cloud Vikunja instance
-            </Text>
           </View>
 
-          {/* Form Card */}
           <View
             style={[
               styles.card,
@@ -261,11 +253,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               },
             ]}
           >
-            {/* Auth Mode Tabs */}
             <View
               style={[
                 styles.modeTabs,
-                { backgroundColor: theme.colors.inputBg },
+                { backgroundColor: theme.colors.surfaceSecondary },
               ]}
             >
               <TouchableOpacity
@@ -276,7 +267,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   styles.modeTab,
                   !isTokenMode && [
                     styles.modeTabActive,
-                    { backgroundColor: theme.colors.cardBackground },
+                    {
+                      backgroundColor: theme.colors.cardBackground,
+                      borderColor: theme.colors.borderStrong,
+                    },
                   ],
                 ]}
                 onPress={() => {
@@ -308,7 +302,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   styles.modeTab,
                   isTokenMode && [
                     styles.modeTabActive,
-                    { backgroundColor: theme.colors.cardBackground },
+                    {
+                      backgroundColor: theme.colors.cardBackground,
+                      borderColor: theme.colors.borderStrong,
+                    },
                   ],
                 ]}
                 onPress={() => {
@@ -341,17 +338,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 style={[
                   styles.errorBanner,
                   {
-                    backgroundColor: theme.isDark
-                      ? 'rgba(255, 69, 58, 0.16)'
-                      : 'rgba(215, 0, 21, 0.08)',
-                    borderColor: theme.isDark ? '#FF453A' : '#D70015',
+                    backgroundColor: hexToRgba(
+                      theme.colors.danger,
+                      theme.isDark ? 0.16 : 0.08
+                    ),
+                    borderColor: theme.colors.danger,
                   },
                 ]}
               >
                 <Text
                   style={[
                     styles.errorText,
-                    { color: theme.isDark ? '#FF453A' : '#D70015' },
+                    { color: theme.colors.danger },
                   ]}
                 >
                   {errorMessage}
@@ -367,20 +365,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 style={[
                   styles.warningBanner,
                   {
-                    backgroundColor: theme.isDark
-                      ? 'rgba(255, 159, 10, 0.16)'
-                      : 'rgba(197, 108, 0, 0.1)',
-                    borderColor: theme.isDark ? '#FF9F0A' : '#C56C00',
+                    backgroundColor: hexToRgba(
+                      theme.colors.warning,
+                      theme.isDark ? 0.16 : 0.08
+                    ),
+                    borderColor: theme.colors.warning,
                   },
                 ]}
               >
                 <Text
                   style={[
                     styles.warningTitle,
-                    { color: theme.isDark ? '#FFB340' : '#9A5000' },
+                    { color: theme.colors.warning },
                   ]}
                 >
-                  Insecure Cleartext HTTP Connection
+                  Unencrypted HTTP
                 </Text>
                 <Text
                   style={[
@@ -388,7 +387,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     { color: theme.colors.text },
                   ]}
                 >
-                  Connecting to {pendingInsecureHttpUrl} sends your credentials and tasks unencrypted. Use HTTPS unless this host is on a trusted private network or VPN.
+                  {pendingInsecureHttpUrl} sends credentials unencrypted.
                 </Text>
                 <View style={styles.warningActions}>
                   <TouchableOpacity
@@ -405,7 +404,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     style={[
                       styles.warningProceedBtn,
                       {
-                        borderColor: theme.isDark ? '#FF9F0A' : '#C56C00',
+                        backgroundColor: theme.colors.surfaceSecondary,
+                        borderColor: theme.colors.borderStrong,
                       },
                     ]}
                     onPress={handleConfirmInsecureHttp}
@@ -413,10 +413,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     <Text
                       style={[
                         styles.warningProceedBtnText,
-                        { color: theme.isDark ? '#FFB340' : '#9A5000' },
+                        { color: theme.colors.text },
                       ]}
                     >
-                      Connect Over HTTP Anyway
+                      Continue Anyway
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -432,12 +432,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   styles.input,
                   {
                     backgroundColor: theme.colors.inputBg,
-                    borderColor: theme.colors.border,
+                    borderColor: theme.colors.borderStrong,
                     color: theme.colors.text,
                   },
                 ]}
                 placeholder="https://vikunja.example.com"
-                placeholderTextColor={theme.colors.textTertiary}
+                placeholderTextColor={theme.colors.placeholder}
                 value={serverUrl}
                 onChangeText={(val) => {
                   setServerUrl(val);
@@ -472,12 +472,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     styles.input,
                     {
                       backgroundColor: theme.colors.inputBg,
-                      borderColor: theme.colors.border,
+                      borderColor: theme.colors.borderStrong,
                       color: theme.colors.text,
                     },
                   ]}
                   placeholder="Username"
-                  placeholderTextColor={theme.colors.textTertiary}
+                  placeholderTextColor={theme.colors.placeholder}
                   value={username}
                   onChangeText={setUsername}
                   autoCapitalize="none"
@@ -493,7 +493,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <View style={styles.inputGroup}>
               <View style={styles.labelRow}>
                 <Text style={[styles.label, { color: theme.colors.text, marginBottom: 0 }]}>
-                  {isTokenMode ? 'Personal API Token' : 'Password / API Token'}
+                  {isTokenMode ? 'API Token' : 'Password'}
                 </Text>
                 <TouchableOpacity
                   testID="login-toggle-secret-visibility-btn"
@@ -517,12 +517,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   styles.input,
                   {
                     backgroundColor: theme.colors.inputBg,
-                    borderColor: theme.colors.border,
+                    borderColor: theme.colors.borderStrong,
                     color: theme.colors.text,
                   },
                 ]}
                 placeholder={isTokenMode ? 'tk_...' : 'Password'}
-                placeholderTextColor={theme.colors.textTertiary}
+                placeholderTextColor={theme.colors.placeholder}
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!showSecret}
@@ -547,7 +547,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   <View style={styles.inputGroup}>
                     <View style={styles.labelRow}>
                       <Text style={[styles.label, { color: theme.colors.text, marginBottom: 0 }]}>
-                        Two-Factor Code (TOTP)
+                        Two-Factor Code
                       </Text>
                       <TouchableOpacity
                         testID="login-hide-totp-btn"
@@ -558,7 +558,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                         }}
                       >
                         <Text style={[styles.inlineLink, { color: theme.colors.textSecondary }]}>
-                          Cancel 2FA
+                          Cancel
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -570,12 +570,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                         styles.input,
                         {
                           backgroundColor: theme.colors.inputBg,
-                          borderColor: theme.colors.border,
+                          borderColor: theme.colors.borderStrong,
                           color: theme.colors.text,
                         },
                       ]}
-                      placeholder="6-digit 2FA code"
-                      placeholderTextColor={theme.colors.textTertiary}
+                      placeholder="6-digit code"
+                      placeholderTextColor={theme.colors.placeholder}
                       value={totpPasscode}
                       onChangeText={setTotpPasscode}
                       autoCapitalize="none"
@@ -597,24 +597,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     onPress={() => setShowTotp(true)}
                   >
                     <Text style={[styles.inlineLink, { color: theme.colors.accent }]}>
-                      Have a 2FA / TOTP code?
+                      2FA code
                     </Text>
                   </TouchableOpacity>
                 )}
               </>
-            )}
-
-            {canBiometricUnlock && (
-              <TouchableOpacity
-                testID="login-biometric-btn"
-                accessibilityRole="button"
-                style={[styles.biometricButton, loading && styles.buttonDisabled]}
-                onPress={handleBiometricUnlock}
-                disabled={loading}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.biometricButtonText}>🔒 Unlock with Biometrics</Text>
-              </TouchableOpacity>
             )}
 
             <TouchableOpacity
@@ -632,9 +619,31 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.buttonText}>Connect to Vikunja</Text>
+                <Text style={styles.buttonText}>Connect</Text>
               )}
             </TouchableOpacity>
+
+            {canBiometricUnlock && (
+              <TouchableOpacity
+                testID="login-biometric-btn"
+                accessibilityRole="button"
+                style={[
+                  styles.biometricButton,
+                  {
+                    backgroundColor: theme.colors.surfaceSecondary,
+                    borderColor: theme.colors.borderStrong,
+                  },
+                  loading && styles.buttonDisabled,
+                ]}
+                onPress={handleBiometricUnlock}
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.biometricButtonText, { color: theme.colors.text }]}>
+                  Unlock
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -657,27 +666,17 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 24,
   },
   logoImage: {
-    width: 76,
-    height: 76,
-    borderRadius: 22,
-    marginBottom: 16,
-    shadowColor: '#8B5CF6',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    marginBottom: 12,
   },
   title: {
     fontSize: 26,
     fontWeight: '800',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
   },
   card: {
     borderRadius: 20,
@@ -700,11 +699,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modeTabActive: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
+    borderWidth: 1,
   },
   modeTabText: {
     fontSize: 13,
@@ -728,7 +723,7 @@ const styles = StyleSheet.create({
   warningTitle: {
     fontSize: 14,
     fontWeight: '700',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   warningBody: {
     fontSize: 13,
@@ -790,24 +785,22 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 15,
   },
-  biometricButton: {
-    backgroundColor: '#248A3D',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  biometricButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
   button: {
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 6,
+  },
+  biometricButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  biometricButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
   },
   buttonDisabled: {
     opacity: 0.6,

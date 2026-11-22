@@ -1,16 +1,18 @@
 import React from 'react';
 import { render, fireEvent, waitFor, act, cleanup } from '@testing-library/react-native';
-import { Alert, Platform } from 'react-native';
+import { Alert, Platform, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as biometricsModule from '../../utils/biometrics';
 import { SettingsModal } from '../SettingsModal';
 import { useTaskStore } from '../../store/taskStore';
+import { useUpdateStore } from '../../store/updateStore';
 import { APP_VERSION } from '../../constants/version';
 import { __setMockAICoreSupportedForTesting } from '../../utils/aiCore';
 
 describe('SettingsModal', () => {
   const initialStoreState = useTaskStore.getState();
+  const initialUpdateState = useUpdateStore.getState();
   const originalOS = Platform.OS;
 
   const mockOnClose = jest.fn();
@@ -34,6 +36,7 @@ describe('SettingsModal', () => {
         getBaseApiUrl: () => 'https://vikunja.example.com/api/v1',
       } as any,
     });
+    useUpdateStore.setState(initialUpdateState, true);
     jest.clearAllMocks();
     __setMockAICoreSupportedForTesting(null);
   });
@@ -43,6 +46,7 @@ describe('SettingsModal', () => {
     __setMockAICoreSupportedForTesting(null);
     cleanup();
     useTaskStore.setState(initialStoreState, true);
+    useUpdateStore.setState(initialUpdateState, true);
     jest.restoreAllMocks();
   });
 
@@ -62,16 +66,20 @@ describe('SettingsModal', () => {
     return utils;
   };
 
-  it('renders settings title, server info, preferences, and hides Google Play APP UPDATES on iOS', async () => {
+  it('renders settings title, server info, preferences, single version footer, and hides APP UPDATES on iOS', async () => {
     Platform.OS = 'ios';
-    const { getByText, getAllByText, getByTestId, queryByTestId } = await renderSettings();
+    const { getByText, getAllByText, getByTestId, queryByTestId, queryByText } =
+      await renderSettings();
 
     expect(getByText('Settings')).toBeTruthy();
     expect(getByText(/vikunja\.example\.com/)).toBeTruthy();
-    expect(getAllByText(/Version/).length).toBeGreaterThanOrEqual(1);
-    expect(getAllByText(new RegExp(APP_VERSION)).length).toBeGreaterThanOrEqual(1);
-    expect(getByText(/Task Box Size/)).toBeTruthy();
-    expect(getByText(/Task Text Size/)).toBeTruthy();
+    // Version string appears ONCE cleanly in the subtle footer (never repeated 3 times!)
+    expect(getAllByText(new RegExp(APP_VERSION))).toHaveLength(1);
+    expect(getByText('Task Box Size')).toBeTruthy();
+    expect(getByText('Task Text Size')).toBeTruthy();
+    expect(queryByText(/Scale box padding/i)).toBeNull();
+    expect(getByText('Biometric Lock')).toBeTruthy();
+    expect(getByText('Manage Labels')).toBeTruthy();
     expect(
       getByTestId('settings-large-items-switch', { includeHiddenElements: true })
     ).toBeTruthy();
@@ -80,12 +88,41 @@ describe('SettingsModal', () => {
     expect(queryByTestId('settings-updates-section')).toBeNull();
   });
 
-  it('renders Google Play APP UPDATES card on Android when native Play Core module is supported', async () => {
+  it('renders Google Play APP UPDATES card on Android with version still shown strictly ONCE and strict button color semantics', async () => {
     Platform.OS = 'android';
-    const { getByTestId } = await renderSettings();
+    const { getByTestId, getAllByText, rerender } = await renderSettings();
 
     expect(getByTestId('settings-updates-section')).toBeTruthy();
-    expect(getByTestId('settings-check-updates-btn')).toBeTruthy();
+    expect(getAllByText(new RegExp(APP_VERSION))).toHaveLength(1);
+
+    // Secondary utility actions share cohesive neutral secondary surface
+    const checkBtnStyle = StyleSheet.flatten(getByTestId('settings-check-updates-btn').props.style);
+    const syncBtnStyle = StyleSheet.flatten(getByTestId('settings-reset-sync-btn').props.style);
+    expect(checkBtnStyle.backgroundColor).toBe(syncBtnStyle.backgroundColor);
+
+    // Primary CTA ("Update to Build X") uses solid accent blue (never #30D158 green)
+    act(() => {
+      useUpdateStore.setState({
+        updateInfo: {
+          isAvailable: true,
+          availableVersionCode: 25,
+          isFlexibleAllowed: true,
+          isImmediateAllowed: true,
+        } as any,
+      });
+    });
+    rerender(
+      <SettingsModal
+        visible={true}
+        onClose={mockOnClose}
+        onLogout={mockOnLogout}
+        onOpenLabelManagement={mockOnOpenLabels}
+      />
+    );
+    const installBtnStyle = StyleSheet.flatten(
+      getByTestId('settings-install-update-btn').props.style
+    );
+    expect(['#0A84FF', '#007AFF']).toContain(installBtnStyle.backgroundColor);
   });
 
   it('resolves saved username from @vikunja_username storage key', async () => {
@@ -101,16 +138,22 @@ describe('SettingsModal', () => {
     useTaskStore.setState({ syncStatus: 'syncing', pendingSyncCount: 3 });
     const { getByTestId, rerender } = await renderSettings();
 
-    expect(getByTestId('settings-sync-status-text').props.children).toBe('◌ Syncing...');
+    expect(getByTestId('settings-sync-status-text').props.children).toBe('Syncing...');
 
     act(() => {
       useTaskStore.setState({ syncStatus: 'offline', pendingSyncCount: 3 });
     });
     rerender(<SettingsModal visible={true} onClose={mockOnClose} />);
-    expect(getByTestId('settings-sync-status-text').props.children).toBe('⚡ Offline (3 pending)');
+    expect(getByTestId('settings-sync-status-text').props.children).toBe('● Offline (3 pending)');
+
+    act(() => {
+      useTaskStore.setState({ syncStatus: 'synced', pendingSyncCount: 0 });
+    });
+    rerender(<SettingsModal visible={true} onClose={mockOnClose} />);
+    expect(getByTestId('settings-sync-status-text').props.children).toBe('● Synced');
   });
 
-  it('requires authenticateWithBiometrics before enabling or disabling Biometric Unlock', async () => {
+  it('requires authenticateWithBiometrics before enabling or disabling Biometric Lock', async () => {
     const { getByTestId } = await renderSettings();
 
     const bioSwitch = getByTestId('settings-biometric-switch');
@@ -145,7 +188,6 @@ describe('SettingsModal', () => {
       fireEvent(getByTestId('settings-biometric-switch'), 'valueChange', true);
     });
 
-    // Switch remains false when persistence fails — no unhandled rejection or desync!
     expect(getByTestId('settings-biometric-switch').props.value).toBe(false);
   });
 
@@ -254,21 +296,27 @@ describe('SettingsModal', () => {
     expect(mockOnLogout).toHaveBeenCalledTimes(1);
   });
 
-  describe('On-Device AI (AICore) Section — Honest Engine Reporting', () => {
-    it('reports On-Device Contextual Heuristics when Prompt API is absent', async () => {
+  describe('Smart Grouping Section — Honest Engine Reporting & Neutral Secondary Button', () => {
+    it('reports On-Device Heuristics when Prompt API is absent and clears category cache cleanly', async () => {
       __setMockAICoreSupportedForTesting(true);
       const origAi = (globalThis as any).ai;
       delete (globalThis as any).ai;
 
       try {
-        const { getByTestId, getByText } = await renderSettings();
+        const { getByTestId, getByText, queryByText } = await renderSettings();
 
         expect(getByTestId('settings-aicore-section')).toBeTruthy();
-        expect(getByText('● On-Device Contextual Heuristics')).toBeTruthy();
+        expect(getByText('On-Device Heuristics')).toBeTruthy();
+        expect(queryByText(/Zero data is shared/i)).toBeNull();
+
+        const clearBtnStyle = StyleSheet.flatten(
+          getByTestId('settings-clear-ai-cache-btn').props.style
+        );
+        expect(clearBtnStyle.backgroundColor).not.toBe('#30D158');
 
         fireEvent.press(getByTestId('settings-clear-ai-cache-btn'));
         await waitFor(() => {
-          expect(getByText('✓ AI Cache Cleared')).toBeTruthy();
+          expect(getByText('✓ Cache cleared')).toBeTruthy();
         });
       } finally {
         (globalThis as any).ai = origAi;
@@ -282,13 +330,13 @@ describe('SettingsModal', () => {
 
       try {
         const { getByText } = await renderSettings();
-        expect(getByText('● Gemini Nano (On-Device Prompt API)')).toBeTruthy();
+        expect(getByText('Gemini Nano (On-Device)')).toBeTruthy();
       } finally {
         (globalThis as any).ai = origAi;
       }
     });
 
-    it('does NOT render on-device intelligence section when device does not support it', async () => {
+    it('does NOT render smart grouping section when device does not support it', async () => {
       __setMockAICoreSupportedForTesting(false);
       const { queryByTestId } = await renderSettings();
       expect(queryByTestId('settings-aicore-section')).toBeNull();

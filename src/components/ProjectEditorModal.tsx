@@ -99,7 +99,6 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
     }
   }, [visible, project?.id]);
 
-  // Filter valid parent projects (exclude archived unless already selected, prevent self and descendants cycle)
   const validParentProjects = React.useMemo(() => {
     return safeAllProjects
       .filter((p) => {
@@ -108,11 +107,13 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
         if (p.id === project.id) return false;
         return !wouldCreateProjectCycle(safeAllProjects, project.id, p.id);
       })
-      .sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
+      .sort((a, b) =>
+        (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
+      );
   }, [safeAllProjects, isEditMode, project]);
 
   const parentProjectName =
-    safeAllProjects.find((p) => p.id === parentProjectId)?.title || 'None (Top Level)';
+    safeAllProjects.find((p) => p.id === parentProjectId)?.title || 'None';
 
   const handleSave = async () => {
     const trimmedTitle = title.trim();
@@ -234,7 +235,11 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
   if (!visible) return null;
 
-  const selectedRingColor = theme.isDark ? '#FFFFFF' : '#1C1C1E';
+  const selectedRingColor = theme.colors.text;
+  const secondarySurface = {
+    backgroundColor: theme.colors.surfaceSecondary,
+    borderColor: theme.colors.borderStrong,
+  };
 
   return (
     <Modal
@@ -251,13 +256,21 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
               style={[
                 styles.sheet,
                 {
-                  backgroundColor: theme.colors.card,
+                  backgroundColor: theme.colors.cardBackground,
                   borderColor: theme.colors.cardBorder,
                 },
               ]}
             >
-              {/* Header */}
-              <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+              {/* Unified Header */}
+              <View
+                style={[
+                  styles.header,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderBottomColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
                 <Text style={[styles.heading, { color: theme.colors.text }]}>
                   {isEditMode ? 'Edit List' : 'New List'}
                 </Text>
@@ -275,8 +288,21 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
               {/* Error Banner */}
               {errorMessage ? (
-                <View style={styles.errorBanner} accessibilityRole="alert">
-                  <Text style={styles.errorText}>{errorMessage}</Text>
+                <View
+                  style={[
+                    styles.errorBanner,
+                    {
+                      borderLeftColor: theme.colors.danger,
+                      backgroundColor: theme.isDark
+                        ? 'rgba(255, 69, 58, 0.15)'
+                        : 'rgba(215, 0, 21, 0.1)',
+                    },
+                  ]}
+                  accessibilityRole="alert"
+                >
+                  <Text style={[styles.errorText, { color: theme.colors.danger }]}>
+                    {errorMessage}
+                  </Text>
                 </View>
               ) : null}
 
@@ -286,26 +312,33 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   testID="project-web-delete-confirm"
                   style={[
                     styles.confirmBanner,
-                    { backgroundColor: theme.colors.cardSecondary, borderColor: '#FF453A' },
+                    {
+                      backgroundColor: theme.colors.cardSecondary,
+                      borderColor: theme.colors.danger,
+                    },
                   ]}
                 >
                   <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
-                    Permanently delete "{project.title}" and all its tasks?
+                    Delete "{project.title}" and all its tasks?
                   </Text>
                   <View style={styles.confirmBannerActions}>
                     <TouchableOpacity
                       testID="project-confirm-cancel-btn"
-                      style={[styles.confirmSmallBtn, { backgroundColor: '#8E8E93' }]}
+                      style={[styles.confirmCancelBtn, secondarySurface]}
                       onPress={() => setShowWebDeleteConfirm(false)}
+                      accessibilityRole="button"
                     >
-                      <Text style={styles.confirmSmallBtnText}>Cancel</Text>
+                      <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
+                        Cancel
+                      </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       testID="project-confirm-delete-btn"
-                      style={[styles.confirmSmallBtn, { backgroundColor: '#FF453A' }]}
+                      style={[styles.confirmDeleteBtn, { backgroundColor: theme.colors.danger }]}
                       onPress={performDeleteProject}
+                      accessibilityRole="button"
                     >
-                      <Text style={styles.confirmSmallBtnText}>Delete</Text>
+                      <Text style={styles.confirmDeleteBtnText}>Delete</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -316,8 +349,8 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                 contentContainerStyle={styles.contentContainer}
                 keyboardShouldPersistTaps="handled"
               >
-                {/* Title Input */}
-                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>TITLE *</Text>
+                {/* Name Input */}
+                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>NAME</Text>
                 <TextInput
                   testID="project-modal-title-input"
                   style={[
@@ -325,11 +358,11 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                     {
                       backgroundColor: theme.colors.inputBg,
                       color: theme.colors.text,
-                      borderColor: theme.colors.border,
+                      borderColor: theme.colors.borderStrong,
                     },
                   ]}
-                  placeholder="e.g. Groceries, Vacation Prep"
-                  placeholderTextColor={theme.colors.textTertiary}
+                  placeholder="List name"
+                  placeholderTextColor={theme.colors.placeholder}
                   value={title}
                   onChangeText={setTitle}
                   autoCapitalize="sentences"
@@ -346,11 +379,11 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                     {
                       backgroundColor: theme.colors.inputBg,
                       color: theme.colors.text,
-                      borderColor: theme.colors.border,
+                      borderColor: theme.colors.borderStrong,
                     },
                   ]}
-                  placeholder="Optional details or instructions..."
-                  placeholderTextColor={theme.colors.textTertiary}
+                  placeholder="Optional notes"
+                  placeholderTextColor={theme.colors.placeholder}
                   value={description}
                   onChangeText={setDescription}
                   multiline
@@ -408,7 +441,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                     styles.selectorBtn,
                     {
                       backgroundColor: theme.colors.inputBg,
-                      borderColor: theme.colors.border,
+                      borderColor: theme.colors.borderStrong,
                     },
                   ]}
                   onPress={() => setShowParentDropdown(!showParentDropdown)}
@@ -417,7 +450,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   <Text style={[styles.selectorBtnText, { color: theme.colors.text }]}>
                     {parentProjectName}
                   </Text>
-                  <Text style={[styles.selectorArrow, { color: theme.colors.textTertiary }]}>
+                  <Text style={[styles.selectorArrow, { color: theme.colors.textSecondary }]}>
                     {showParentDropdown ? '▲' : '▼'}
                   </Text>
                 </TouchableOpacity>
@@ -428,12 +461,12 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       styles.dropdownCard,
                       {
                         backgroundColor: theme.colors.cardSecondary,
-                        borderColor: theme.colors.border,
+                        borderColor: theme.colors.borderStrong,
                       },
                     ]}
                   >
                     <TouchableOpacity
-                      style={styles.dropdownOption}
+                      style={[styles.dropdownOption, { borderBottomColor: theme.colors.border }]}
                       onPress={() => {
                         setParentProjectId(undefined);
                         setShowParentDropdown(false);
@@ -446,7 +479,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                           !parentProjectId && styles.dropdownOptionSelected,
                         ]}
                       >
-                        None (Top Level)
+                        None
                       </Text>
                     </TouchableOpacity>
                     {validParentProjects.map((p) => {
@@ -456,7 +489,10 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       return (
                         <TouchableOpacity
                           key={p.id}
-                          style={styles.dropdownOption}
+                          style={[
+                            styles.dropdownOption,
+                            { borderBottomColor: theme.colors.border },
+                          ]}
                           onPress={() => {
                             setParentProjectId(p.id);
                             setShowParentDropdown(false);
@@ -490,7 +526,11 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                     testID="project-modal-favorite-switch"
                     value={isFavorite}
                     onValueChange={setIsFavorite}
-                    trackColor={{ false: theme.colors.border, true: theme.colors.accent }}
+                    trackColor={{
+                      false: theme.colors.borderStrong,
+                      true: theme.colors.success,
+                    }}
+                    thumbColor="#FFFFFF"
                   />
                 </View>
 
@@ -499,10 +539,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   <View style={styles.extraActionsContainer}>
                     <TouchableOpacity
                       testID="project-modal-duplicate-btn"
-                      style={[
-                        styles.secondaryBtn,
-                        { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-                      ]}
+                      style={[styles.secondaryBtn, secondarySurface]}
                       onPress={handleDuplicate}
                       disabled={isLoading}
                       accessibilityRole="button"
@@ -514,10 +551,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
                     <TouchableOpacity
                       testID="project-modal-archive-btn"
-                      style={[
-                        styles.secondaryBtn,
-                        { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-                      ]}
+                      style={[styles.secondaryBtn, secondarySurface]}
                       onPress={handleArchiveToggle}
                       disabled={isLoading}
                       accessibilityRole="button"
@@ -529,19 +563,31 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
                     <TouchableOpacity
                       testID="project-modal-delete-btn"
-                      style={styles.destructiveBtn}
+                      style={[
+                        styles.destructiveBtn,
+                        {
+                          borderColor: theme.isDark
+                            ? 'rgba(255, 69, 58, 0.35)'
+                            : 'rgba(215, 0, 21, 0.3)',
+                          backgroundColor: theme.isDark
+                            ? 'rgba(255, 69, 58, 0.12)'
+                            : 'rgba(215, 0, 21, 0.08)',
+                        },
+                      ]}
                       onPress={handleDelete}
                       disabled={isLoading}
                       accessibilityRole="button"
                     >
-                      <Text style={styles.destructiveBtnText}>Delete List</Text>
+                      <Text style={[styles.destructiveBtnText, { color: theme.colors.danger }]}>
+                        Delete List
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 )}
               </ScrollView>
 
               {/* Footer Save Button */}
-              <View style={[styles.footer, { borderTopColor: theme.colors.border }]}>
+              <View style={[styles.footer, { borderTopColor: theme.colors.cardBorder }]}>
                 <TouchableOpacity
                   testID="project-modal-save-btn"
                   style={[
@@ -586,45 +632,38 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
     elevation: 8,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     borderBottomWidth: 1,
   },
   heading: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
   },
   closeBtn: {
-    padding: 4,
+    padding: 6,
   },
   closeBtnText: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '600',
   },
   errorBanner: {
-    backgroundColor: 'rgba(255, 69, 58, 0.15)',
     borderLeftWidth: 4,
-    borderLeftColor: '#FF453A',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 10,
     marginHorizontal: 16,
     marginTop: 12,
     borderRadius: 6,
   },
   errorText: {
-    color: '#FF453A',
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   confirmBanner: {
     marginHorizontal: 16,
@@ -643,12 +682,22 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 8,
   },
-  confirmSmallBtn: {
+  confirmCancelBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  confirmCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  confirmDeleteBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
   },
-  confirmSmallBtnText: {
+  confirmDeleteBtnText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
@@ -657,12 +706,12 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   contentContainer: {
-    padding: 20,
+    padding: 18,
   },
   label: {
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
     marginBottom: 6,
     marginTop: 12,
   },
@@ -728,7 +777,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(128,128,128,0.2)',
   },
   smallColorDot: {
     width: 10,
@@ -746,7 +794,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 18,
+    marginTop: 16,
     paddingVertical: 6,
   },
   switchLabel: {
@@ -754,7 +802,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   extraActionsContainer: {
-    marginTop: 24,
+    marginTop: 20,
     gap: 10,
   },
   secondaryBtn: {
@@ -771,14 +819,11 @@ const styles = StyleSheet.create({
   destructiveBtn: {
     height: 42,
     borderRadius: 8,
-    backgroundColor: 'rgba(255, 69, 58, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 69, 58, 0.3)',
   },
   destructiveBtnText: {
-    color: '#FF453A',
     fontSize: 14,
     fontWeight: '700',
   },
@@ -794,10 +839,10 @@ const styles = StyleSheet.create({
   },
   saveBtnText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
   },
   btnDisabled: {
-    opacity: 0.6,
+    opacity: 0.55,
   },
 });

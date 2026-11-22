@@ -16,13 +16,30 @@ describe('QuickAddBar', () => {
     jest.restoreAllMocks();
   });
 
-  it('renders input field with placeholder and submits new task', () => {
+  it('renders input field with placeholder, uses accent blue for + and submit buttons, and submits new task', () => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue('dark');
+    const mockDetailedAdd = jest.fn();
     const { getByPlaceholderText, getByTestId } = render(
-      <QuickAddBar activeProjectId={1} onAddTask={mockOnAddTask} />
+      <QuickAddBar
+        activeProjectId={1}
+        onAddTask={mockOnAddTask}
+        onDetailedAdd={mockDetailedAdd}
+      />
     );
+
+    const fabStyle = ReactNative.StyleSheet.flatten(
+      getByTestId('green-add-task-fab').props.style
+    );
+    expect(fabStyle.backgroundColor).toBe('#0A84FF');
 
     const input = getByPlaceholderText('Add a task...');
     fireEvent.changeText(input, 'Review Vikunja pull request');
+
+    const submitStyle = ReactNative.StyleSheet.flatten(
+      getByTestId('quick-add-submit').props.style
+    );
+    expect(submitStyle.backgroundColor).toBe('#0A84FF');
+
     fireEvent.press(getByTestId('quick-add-submit'));
 
     expect(mockOnAddTask).toHaveBeenCalledWith(
@@ -47,7 +64,10 @@ describe('QuickAddBar', () => {
 
     // Quoted empty string '""' or '"   "' or tag-only '#Costco' must disable submit and not create blank task
     fireEvent.changeText(input, '""');
-    expect(getByTestId('quick-add-submit').props.accessibilityState?.disabled ?? getByTestId('quick-add-submit').props.disabled).toBeTruthy();
+    expect(
+      getByTestId('quick-add-submit').props.accessibilityState?.disabled ??
+        getByTestId('quick-add-submit').props.disabled
+    ).toBeTruthy();
     fireEvent(input, 'submitEditing');
     expect(mockOnAddTask).not.toHaveBeenCalled();
 
@@ -88,18 +108,20 @@ describe('QuickAddBar', () => {
     expect(priorityBtn.props.accessibilityLabel).toContain('None');
   });
 
-  it('parses #label, *label, !high, every month (RepeatMode.Monthly), and renders live repeat magic badge', () => {
-    const { getByTestId } = render(
+  it('parses #label, *label, !high, every month (RepeatMode.Monthly), and renders clean typographic magic badges without emojis', () => {
+    const { getByTestId, getByText, queryByText } = render(
       <QuickAddBar activeProjectId={1} onAddTask={mockOnAddTask} />
     );
 
     const input = getByTestId('quick-add-input');
     fireEvent.changeText(input, 'Pay rent #bills !high tomorrow every month');
 
-    // Live repeat magic preview badge must render!
     expect(getByTestId('magic-repeat-badge')).toBeTruthy();
     expect(getByTestId('magic-date-badge')).toBeTruthy();
     expect(getByTestId('magic-priority-badge')).toBeTruthy();
+    expect(getByText('P3')).toBeTruthy();
+    expect(getByText(/^Due /)).toBeTruthy();
+    expect(queryByText(/📅|⚡|📁|🛒|👤/)).toBeNull();
 
     fireEvent.press(getByTestId('quick-add-submit'));
 
@@ -115,7 +137,7 @@ describe('QuickAddBar', () => {
     );
   });
 
-  it('themes magic badges for high contrast in Light Mode', () => {
+  it('themes magic badges and buttons with crisp semantic colors in Light Mode', () => {
     jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue('light');
 
     const { getByTestId, getByText } = render(
@@ -126,6 +148,7 @@ describe('QuickAddBar', () => {
           { id: 2, title: 'Shopping' },
         ]}
         onAddTask={mockOnAddTask}
+        onDetailedAdd={jest.fn()}
       />
     );
 
@@ -134,11 +157,18 @@ describe('QuickAddBar', () => {
       'Buy apples +Shopping #produce @alex !2 every week'
     );
 
+    expect(getByText('+Shopping')).toBeTruthy();
+    expect(getByText('@alex')).toBeTruthy();
+    expect(getByText('P2')).toBeTruthy();
+
     const labelText = getByText('#produce');
-    const flatLabelStyle = Array.isArray(labelText.props.style)
-      ? Object.assign({}, ...labelText.props.style.filter(Boolean))
-      : labelText.props.style;
-    expect(flatLabelStyle.color).toBe('#15803D');
+    expect(ReactNative.StyleSheet.flatten(labelText.props.style).color).toBe('#007AFF');
+    expect(
+      ReactNative.StyleSheet.flatten(getByTestId('green-add-task-fab').props.style).backgroundColor
+    ).toBe('#007AFF');
+    expect(
+      ReactNative.StyleSheet.flatten(getByTestId('quick-add-submit').props.style).backgroundColor
+    ).toBe('#007AFF');
   });
 
   it('routes task to target project when +Project magic syntax is used', () => {
@@ -230,7 +260,7 @@ describe('QuickAddBar', () => {
     const input = getByTestId('quick-add-input');
     fireEvent.changeText(input, 'Task for @al');
 
-    fireEvent.press(getByText('👤 @alex'));
+    fireEvent.press(getByText('@alex'));
     expect(input.props.value).toBe('Task for @alex ');
 
     fireEvent.press(getByTestId('quick-add-submit'));
@@ -242,7 +272,7 @@ describe('QuickAddBar', () => {
     );
   });
 
-  it('suggests historical store label and invokes onDetailedAdd when green (+) button is pressed', () => {
+  it('suggests historical store label and invokes onDetailedAdd when (+) button is pressed', () => {
     const mockOnDetailedAdd = jest.fn();
     const historyTasks = [
       {
@@ -263,7 +293,7 @@ describe('QuickAddBar', () => {
       },
     ];
 
-    const { getByTestId } = render(
+    const { getByTestId, getByText } = render(
       <QuickAddBar
         activeProjectId={1}
         onAddTask={mockOnAddTask}
@@ -276,6 +306,7 @@ describe('QuickAddBar', () => {
     const input = getByTestId('quick-add-input');
     fireEvent.changeText(input, 'Beef for stew');
 
+    expect(getByText('Usually at #Costco')).toBeTruthy();
     const storeChip = getByTestId('store-suggestion-chip');
     fireEvent.press(storeChip);
     expect(input.props.value).toContain('*Costco');

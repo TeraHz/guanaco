@@ -1,6 +1,6 @@
 import React from 'react';
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/react-native';
-import { Modal } from 'react-native';
+import { render, fireEvent, waitFor, act, cleanup } from '@testing-library/react-native';
+import { Alert, Modal } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { ProjectDrawer } from '../ProjectDrawer';
 import { useTaskStore } from '../../store/taskStore';
@@ -44,11 +44,14 @@ describe('ProjectDrawer', () => {
     expect(queryByText('All Tasks')).toBeNull();
   });
 
-  it('renders all active lists and their active task counts', () => {
-    const { getByText, getByTestId } = render(
+  it('renders clean LISTS header without patronizing hints and displays active lists with counts', () => {
+    const { getByText, queryByText, getByTestId } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
+    expect(getByText('LISTS')).toBeTruthy();
+    expect(queryByText(/Tap ⋯ or long-press/i)).toBeNull();
+    expect(queryByText('MY LISTS')).toBeNull();
     expect(getByText('Inbox')).toBeTruthy();
     expect(getByText('Work')).toBeTruthy();
     expect(getByText('Personal')).toBeTruthy();
@@ -95,7 +98,7 @@ describe('ProjectDrawer', () => {
     expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it('renders collapsible Archived Lists section and allows unarchiving in 1 tap', async () => {
+  it('renders collapsible Archived Lists section cleanly without emoji clutter and allows unarchiving in 1 tap', async () => {
     const mockArchiveProject = jest.fn().mockResolvedValue({ id: 9, is_archived: false });
     useTaskStore.setState({
       archiveProject: mockArchiveProject,
@@ -111,11 +114,12 @@ describe('ProjectDrawer', () => {
 
     // Collapsed by default
     expect(getByTestId('drawer-archived-toggle')).toBeTruthy();
-    expect(queryByText(/2025 Taxes/)).toBeNull();
+    expect(queryByText('2025 Taxes')).toBeNull();
 
     // Expand Archived Lists
     fireEvent.press(getByTestId('drawer-archived-toggle'));
-    expect(getByText(/2025 Taxes/)).toBeTruthy();
+    expect(getByText('2025 Taxes')).toBeTruthy();
+    expect(queryByText(/📦/)).toBeNull();
 
     // Tap Unarchive button
     fireEvent.press(getByTestId('drawer-unarchive-9'));
@@ -191,25 +195,45 @@ describe('ProjectDrawer', () => {
     expect(getByTestId('project-modal-save-btn')).toBeTruthy();
   });
 
-  it('opens project options action sheet when list options button (⋯) is pressed', () => {
-    const { getByTestId } = render(
+  it('presents complete 5-action List Options menu (Edit, Share, Favorite, Archive, Delete) on ⋯ tap and long-press', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const mockArchive = jest.fn().mockResolvedValue({ id: 1, is_archived: true });
+    const mockDelete = jest.fn().mockResolvedValue(undefined);
+    useTaskStore.setState({
+      archiveProject: mockArchive,
+      deleteProject: mockDelete,
+    });
+
+    const { getByTestId, getByText } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
+    // 1. Tapping ⋯ opens all 5 options cleanly
     fireEvent.press(getByTestId('drawer-project-options-1'));
-    expect(getByTestId('drawer-option-edit')).toBeTruthy();
-    expect(getByTestId('drawer-option-share')).toBeTruthy();
-    expect(getByTestId('drawer-option-favorite')).toBeTruthy();
-  });
+    expect(getByText('Edit List')).toBeTruthy();
+    expect(getByText('Share List')).toBeTruthy();
+    expect(getByText('Add to Favorites')).toBeTruthy();
+    expect(getByText('Archive List')).toBeTruthy();
+    expect(getByText('Delete List')).toBeTruthy();
 
-  it('opens project options action sheet when a list item is long-pressed', () => {
-    const { getByTestId } = render(
-      <ProjectDrawer visible={true} onClose={mockOnClose} />
-    );
+    // Archive List calls archiveProject(1, true)
+    fireEvent.press(getByTestId('drawer-option-archive'));
+    expect(mockArchive).toHaveBeenCalledWith(1, true);
 
+    // 2. Long-press opens same 5 options and Delete List confirms before calling deleteProject(1)
     fireEvent(getByTestId('drawer-project-1'), 'longPress');
-    expect(getByTestId('drawer-option-edit')).toBeTruthy();
-    expect(getByTestId('drawer-option-share')).toBeTruthy();
-    expect(getByTestId('drawer-option-favorite')).toBeTruthy();
+    fireEvent.press(getByTestId('drawer-option-delete'));
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Delete List',
+      expect.stringContaining('Inbox'),
+      expect.any(Array)
+    );
+    expect(mockDelete).not.toHaveBeenCalled();
+
+    const buttons = alertSpy.mock.calls[0][2] as any[];
+    act(() => {
+      buttons.find((b) => b.style === 'destructive').onPress();
+    });
+    expect(mockDelete).toHaveBeenCalledWith(1);
   });
 });

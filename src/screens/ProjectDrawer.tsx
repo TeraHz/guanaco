@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -8,6 +8,8 @@ import {
   StyleSheet,
   TouchableWithoutFeedback,
   Image,
+  Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTaskStore } from '../store/taskStore';
@@ -47,6 +49,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     setSelectedProjectId,
     toggleProjectFavorite,
     archiveProject,
+    deleteProject,
   } = useTaskStore();
 
   const [showSettings, setShowSettings] = useState(false);
@@ -55,13 +58,19 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   const [editorProjectId, setEditorProjectId] = useState<number | null>(null);
   const [sharingProjectId, setSharingProjectId] = useState<number | null>(null);
   const [actionSheetProjectId, setActionSheetProjectId] = useState<number | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+
+  useEffect(() => {
+    setConfirmingDelete(false);
+  }, [actionSheetProjectId]);
 
   // Strict modal mutual exclusion so NEVER are two <Modal>s visible simultaneously on iOS!
   const openExclusiveSubModal = (
     target: 'settings' | 'labels' | 'editor' | 'sharing' | 'actionSheet' | 'none',
     projectId: number | null = null
   ) => {
+    setConfirmingDelete(false);
     setShowSettings(target === 'settings');
     setShowLabels(target === 'labels');
     setShowEditor(target === 'editor');
@@ -163,6 +172,36 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     onClose();
   };
 
+  const commitDeleteProject = (projectId: number) => {
+    setConfirmingDelete(false);
+    setActionSheetProjectId(null);
+    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+    deleteProject(projectId).catch(() => {});
+  };
+
+  const handleRequestDeleteProject = (proj: Project) => {
+    const message = `Delete "${proj.title}" and all tasks inside it?`;
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        if (window.confirm(`Delete List\n\n${message}`)) {
+          commitDeleteProject(proj.id);
+        }
+      } else {
+        setConfirmingDelete(true);
+      }
+      return;
+    }
+
+    Alert.alert('Delete List', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => commitDeleteProject(proj.id),
+      },
+    ]);
+  };
+
   if (!visible && !inline && !hasActiveSubModal) {
     return null;
   }
@@ -209,7 +248,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           style={[
             styles.projectItem,
             selectedProjectId === null && {
-              backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+              backgroundColor: theme.colors.surfaceSecondary,
             },
           ]}
           onPress={() => handleSelect(null)}
@@ -217,7 +256,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           accessibilityRole="button"
           accessibilityState={{ selected: selectedProjectId === null }}
         >
-          <View style={[styles.colorDot, { backgroundColor: '#007AFF' }]} />
+          <View style={[styles.colorDot, { backgroundColor: theme.colors.accent }]} />
           <Text
             style={[
               styles.projectTitle,
@@ -242,7 +281,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           style={[
             styles.projectItem,
             selectedProjectId === MY_TASKS_PROJECT_ID && {
-              backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+              backgroundColor: theme.colors.surfaceSecondary,
             },
           ]}
           onPress={() => handleSelect(MY_TASKS_PROJECT_ID)}
@@ -250,7 +289,12 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           accessibilityRole="button"
           accessibilityState={{ selected: selectedProjectId === MY_TASKS_PROJECT_ID }}
         >
-          <View style={[styles.colorDot, { backgroundColor: '#AF52DE' }]} />
+          <View
+            style={[
+              styles.colorDot,
+              { backgroundColor: theme.isDark ? '#BF5AF2' : '#7E22CE' },
+            ]}
+          />
           <Text
             style={[
               styles.projectTitle,
@@ -272,10 +316,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         {/* Individual Lists with Tree Hierarchy */}
         <View style={styles.sectionHeaderRow}>
           <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
-            MY LISTS
-          </Text>
-          <Text style={[styles.sectionHeaderHint, { color: theme.colors.textSecondary }]}>
-            (Tap ⋯ or long-press to edit)
+            LISTS
           </Text>
         </View>
 
@@ -284,7 +325,8 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           const isSelected = proj.id === selectedProjectId;
           const activeTasks = projectActiveCounts.get(proj.id) || 0;
           const indentPadding = Math.min(node.depth * 14, 42);
-          const dotColor = normalizeHexColor(proj.hex_color ?? undefined, true) || '#007AFF';
+          const dotColor =
+            normalizeHexColor(proj.hex_color ?? undefined, true) || theme.colors.accent;
 
           return (
             <View
@@ -292,7 +334,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
               style={[
                 styles.projectItemWrapper,
                 isSelected && {
-                  backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                  backgroundColor: theme.colors.surfaceSecondary,
                 },
               ]}
             >
@@ -325,7 +367,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                   ]}
                   numberOfLines={1}
                 >
-                  {proj.is_favorite ? '⭐ ' : ''}
+                  {proj.is_favorite ? '★ ' : ''}
                   {proj.title}
                 </Text>
                 {activeTasks > 0 && (
@@ -382,15 +424,15 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             {showArchived &&
               archivedProjects.map((proj) => {
                 const isSelected = proj.id === selectedProjectId;
-                const dotColor = normalizeHexColor(proj.hex_color ?? undefined, true) || '#8E8E93';
+                const dotColor =
+                  normalizeHexColor(proj.hex_color ?? undefined, true) || theme.colors.textSecondary;
                 return (
                   <View
                     key={proj.id}
                     style={[
                       styles.projectItemWrapper,
-                      styles.archivedItemWrapper,
                       isSelected && {
-                        backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                        backgroundColor: theme.colors.surfaceSecondary,
                       },
                     ]}
                   >
@@ -414,7 +456,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         ]}
                         numberOfLines={1}
                       >
-                        📦 {proj.title}
+                        {proj.title}
                       </Text>
                     </TouchableOpacity>
 
@@ -422,7 +464,10 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                       testID={`drawer-unarchive-${proj.id}`}
                       style={[
                         styles.unarchivePill,
-                        { borderColor: theme.colors.border },
+                        {
+                          backgroundColor: theme.colors.surfaceSecondary,
+                          borderColor: theme.colors.borderStrong,
+                        },
                       ]}
                       onPress={() => {
                         safeHaptics.selection();
@@ -431,7 +476,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                       accessibilityRole="button"
                       accessibilityLabel={`Unarchive ${proj.title}`}
                     >
-                      <Text style={[styles.unarchivePillText, { color: theme.colors.accent }]}>
+                      <Text style={[styles.unarchivePillText, { color: theme.colors.text }]}>
                         Unarchive
                       </Text>
                     </TouchableOpacity>
@@ -473,8 +518,8 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         activeOpacity={0.7}
         accessibilityRole="button"
       >
-        <Text style={styles.addListIcon}>＋</Text>
-        <Text style={styles.addListText}>New List</Text>
+        <Text style={[styles.addListIcon, { color: theme.colors.accent }]}>＋</Text>
+        <Text style={[styles.addListText, { color: theme.colors.accent }]}>New List</Text>
       </TouchableOpacity>
 
       {/* Settings Section at bottom */}
@@ -483,7 +528,10 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           testID="drawer-settings-btn"
           style={[
             styles.settingsBtn,
-            { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
+            {
+              backgroundColor: theme.colors.secondaryButtonBg,
+              borderColor: theme.colors.borderStrong,
+            },
           ]}
           onPress={() => {
             safeHaptics.selection();
@@ -492,7 +540,6 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           activeOpacity={0.7}
           accessibilityRole="button"
         >
-          <Text style={styles.settingsIcon}>⚙️</Text>
           <Text style={[styles.settingsText, { color: theme.colors.text }]}>Settings</Text>
         </TouchableOpacity>
       </View>
@@ -530,7 +577,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         onClose={() => setSharingProjectId(null)}
       />
 
-      {/* Project Options Action Sheet */}
+      {/* Unified List Options Action Sheet */}
       {actionSheetProject && (
         <Modal
           visible={Boolean(actionSheetProject)}
@@ -550,73 +597,139 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                     },
                   ]}
                 >
-                  <Text style={[styles.actionSheetTitle, { color: theme.colors.text }]}>
+                  <Text
+                    style={[
+                      styles.actionSheetTitle,
+                      {
+                        color: theme.colors.text,
+                        borderBottomColor: theme.colors.border,
+                      },
+                    ]}
+                  >
                     {actionSheetProject.title}
                   </Text>
 
-                  <TouchableOpacity
-                    testID="drawer-option-edit"
-                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                    onPress={() => {
-                      const pid = actionSheetProject.id;
-                      openExclusiveSubModal('editor', pid);
-                    }}
-                  >
-                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                      ✏️ Edit List
-                    </Text>
-                  </TouchableOpacity>
+                  {confirmingDelete ? (
+                    <View style={styles.inlineConfirmContainer}>
+                      <Text style={[styles.inlineConfirmText, { color: theme.colors.text }]}>
+                        Delete "{actionSheetProject.title}" and all tasks inside?
+                      </Text>
+                      <View style={styles.inlineConfirmActions}>
+                        <TouchableOpacity
+                          testID="drawer-confirm-cancel-btn"
+                          style={[
+                            styles.inlineConfirmBtn,
+                            {
+                              backgroundColor: theme.colors.secondaryButtonBg,
+                              borderColor: theme.colors.borderStrong,
+                              borderWidth: 1,
+                            },
+                          ]}
+                          onPress={() => setConfirmingDelete(false)}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.inlineConfirmBtnText, { color: theme.colors.text }]}>
+                            Cancel
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          testID="drawer-confirm-delete-btn"
+                          style={[
+                            styles.inlineConfirmBtn,
+                            { backgroundColor: theme.colors.danger },
+                          ]}
+                          onPress={() => commitDeleteProject(actionSheetProject.id)}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.inlineConfirmBtnText, { color: '#FFFFFF' }]}>
+                            Delete
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        testID="drawer-option-edit"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => {
+                          const pid = actionSheetProject.id;
+                          openExclusiveSubModal('editor', pid);
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                          Edit List
+                        </Text>
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    testID="drawer-option-share"
-                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                    onPress={() => {
-                      const pid = actionSheetProject.id;
-                      openExclusiveSubModal('sharing', pid);
-                    }}
-                  >
-                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                      👥 Share List
-                    </Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="drawer-option-share"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => {
+                          const pid = actionSheetProject.id;
+                          openExclusiveSubModal('sharing', pid);
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                          Share List
+                        </Text>
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    testID="drawer-option-favorite"
-                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                    onPress={() => {
-                      toggleProjectFavorite(actionSheetProject.id).catch(() => {});
-                      setActionSheetProjectId(null);
-                    }}
-                  >
-                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                      {actionSheetProject.is_favorite ? '⭐ Remove Favorite' : '☆ Mark as Favorite'}
-                    </Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="drawer-option-favorite"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => {
+                          toggleProjectFavorite(actionSheetProject.id).catch(() => {});
+                          setActionSheetProjectId(null);
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                          {actionSheetProject.is_favorite ? 'Remove Favorite' : 'Add to Favorites'}
+                        </Text>
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    testID="drawer-option-archive"
-                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                    onPress={() => {
-                      archiveProject(
-                        actionSheetProject.id,
-                        !actionSheetProject.is_archived
-                      ).catch(() => {});
-                      setActionSheetProjectId(null);
-                    }}
-                  >
-                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                      {actionSheetProject.is_archived ? '📂 Unarchive List' : '📦 Archive List'}
-                    </Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="drawer-option-archive"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => {
+                          archiveProject(
+                            actionSheetProject.id,
+                            !actionSheetProject.is_archived
+                          ).catch(() => {});
+                          setActionSheetProjectId(null);
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                          {actionSheetProject.is_archived ? 'Unarchive List' : 'Archive List'}
+                        </Text>
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.actionSheetCancel}
-                    onPress={() => setActionSheetProjectId(null)}
-                  >
-                    <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
-                      Cancel
-                    </Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="drawer-option-delete"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => handleRequestDeleteProject(actionSheetProject)}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.danger }]}>
+                          Delete List
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.actionSheetCancel}
+                        onPress={() => setActionSheetProjectId(null)}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
+                          Cancel
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </View>
               </TouchableWithoutFeedback>
             </View>
@@ -750,12 +863,10 @@ const styles = StyleSheet.create({
   },
   addListIcon: {
     fontSize: 20,
-    color: '#007AFF',
     fontWeight: '700',
   },
   addListText: {
     fontSize: 16,
-    color: '#007AFF',
     fontWeight: '600',
   },
   footerSection: {
@@ -767,13 +878,11 @@ const styles = StyleSheet.create({
   settingsBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 10,
-    gap: 10,
-  },
-  settingsIcon: {
-    fontSize: 18,
+    borderWidth: 1,
   },
   settingsText: {
     fontSize: 15,
@@ -781,8 +890,7 @@ const styles = StyleSheet.create({
   },
   sectionHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 14,
     paddingTop: 16,
     paddingBottom: 8,
@@ -792,10 +900,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
-  },
-  sectionHeaderHint: {
-    fontSize: 11,
-    fontWeight: '500',
   },
   projectItemWrapper: {
     flexDirection: 'row',
@@ -818,9 +922,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  archivedItemWrapper: {
-    opacity: 0.85,
-  },
   unarchivePill: {
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -830,7 +931,7 @@ const styles = StyleSheet.create({
   },
   unarchivePillText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   optionsBtn: {
     paddingHorizontal: 12,
@@ -866,7 +967,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(128,128,128,0.2)',
   },
   actionSheetOption: {
     flexDirection: 'row',
@@ -886,6 +986,30 @@ const styles = StyleSheet.create({
   },
   actionSheetCancelText: {
     fontSize: 15,
+    fontWeight: '600',
+  },
+  inlineConfirmContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    gap: 14,
+  },
+  inlineConfirmText: {
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 20,
+  },
+  inlineConfirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  inlineConfirmBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  inlineConfirmBtnText: {
+    fontSize: 14,
     fontWeight: '600',
   },
 });

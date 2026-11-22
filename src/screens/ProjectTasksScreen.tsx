@@ -13,6 +13,7 @@ import {
   Keyboard,
   LayoutAnimation,
   UIManager,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTaskStore } from '../store/taskStore';
@@ -30,7 +31,7 @@ import { isAICoreSupported, classifyTaskWithAI } from '../utils/aiCore';
 import { useFilteredSortedTasks, FilterType } from '../hooks/useFilteredSortedTasks';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
-import { getLabelBadgeStyles, normalizeHexColor } from '../utils/colors';
+import { getLabelBadgeStyles, hexToRgba, normalizeHexColor } from '../utils/colors';
 import { useAppTheme } from '../utils/theme';
 import { CreateTaskInput, Task, Project } from '../types/vikunja';
 
@@ -43,7 +44,7 @@ interface ProjectTasksScreenProps {
 const SORT_LABELS: Record<SortOption, string> = {
   default: 'Default Order',
   manual: 'Custom Order',
-  aiSmart: '✨ Smart AI Grouping',
+  aiSmart: 'Smart Grouping',
   department: 'Department / Aisle',
   name: 'Name (A-Z)',
   label: 'Label / Store',
@@ -151,6 +152,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     syncAll,
     fetchAllTasks,
     toggleProjectFavorite,
+    archiveProject,
+    deleteProject,
   } = useTaskStore();
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -202,6 +205,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const [selectedTaskRef, setSelectedTaskRef] = useState<TrackedTaskRef | null>(null);
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
   const [actionSheetProjectId, setActionSheetProjectId] = useState<number | null>(null);
+  const [confirmingProjectDelete, setConfirmingProjectDelete] = useState(false);
   const [editorProjectId, setEditorProjectId] = useState<number | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [sharingProjectId, setSharingProjectId] = useState<number | null>(null);
@@ -263,9 +267,40 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     setSelectedTaskRef(null);
     setShowCreateTaskModal(false);
     setActionSheetProjectId(null);
+    setConfirmingProjectDelete(false);
     setEditorProjectId(null);
     setShowEditor(false);
     setSharingProjectId(null);
+  };
+
+  const commitDeleteProject = (projectId: number) => {
+    setConfirmingProjectDelete(false);
+    setActionSheetProjectId(null);
+    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+    deleteProject(projectId).catch(() => {});
+  };
+
+  const handleRequestDeleteProject = (proj: Project) => {
+    const message = `Delete "${proj.title}" and all tasks inside it?`;
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        if (window.confirm(`Delete List\n\n${message}`)) {
+          commitDeleteProject(proj.id);
+        }
+      } else {
+        setConfirmingProjectDelete(true);
+      }
+      return;
+    }
+
+    Alert.alert('Delete List', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => commitDeleteProject(proj.id),
+      },
+    ]);
   };
 
   const safeProjects = useMemo(
@@ -649,7 +684,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 />
               ) : null}
               <Text style={[styles.projectTitle, { color: theme.colors.text }]} numberOfLines={1}>
-                {activeProject?.is_favorite ? '⭐ ' : ''}
+                {activeProject?.is_favorite ? '★ ' : ''}
                 {activeProject?.title || 'Tasks'}
               </Text>
               {activeProject && activeProject.id > 0 && (
@@ -660,8 +695,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               )}
             </View>
             <Text style={[styles.taskCountSubtitle, { color: theme.colors.textSecondary }]}>
-              {activeCount} active {activeCount === 1 ? 'task' : 'tasks'}
-              {activeProject && activeProject.id > 0 ? ' • Tap to edit list' : ''}
+              {activeCount} open
             </Text>
           </TouchableOpacity>
 
@@ -687,9 +721,20 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             testID="sync-indicator-btn"
             style={[
               styles.syncIndicatorPill,
-              syncStatus === 'syncing' && styles.syncIndicatorSyncing,
-              (syncStatus === 'offline' || (syncStatus as string) === 'auth_required') &&
-                styles.syncIndicatorOffline,
+              {
+                backgroundColor:
+                  syncStatus === 'syncing'
+                    ? hexToRgba(theme.colors.accent, 0.14)
+                    : syncStatus === 'offline' || (syncStatus as string) === 'auth_required'
+                    ? hexToRgba(theme.colors.warning, 0.16)
+                    : hexToRgba(theme.colors.success, 0.14),
+                borderColor:
+                  syncStatus === 'syncing'
+                    ? hexToRgba(theme.colors.accent, 0.35)
+                    : syncStatus === 'offline' || (syncStatus as string) === 'auth_required'
+                    ? hexToRgba(theme.colors.warning, 0.45)
+                    : hexToRgba(theme.colors.success, 0.35),
+              },
             ]}
             onPress={() => {
               if (syncStatus === 'offline') {
@@ -711,22 +756,23 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             <Text
               style={[
                 styles.syncIndicatorText,
-                { color: theme.isDark ? '#30D158' : '#15803D' },
-                syncStatus === 'syncing' && {
-                  color: theme.isDark ? '#0A84FF' : '#0055D4',
-                },
-                (syncStatus === 'offline' || (syncStatus as string) === 'auth_required') && {
-                  color: theme.isDark ? '#FF9500' : '#B45309',
+                {
+                  color:
+                    syncStatus === 'syncing'
+                      ? theme.colors.accent
+                      : syncStatus === 'offline' || (syncStatus as string) === 'auth_required'
+                      ? theme.colors.warning
+                      : theme.colors.success,
                 },
               ]}
             >
               {syncStatus === 'synced'
                 ? '● Synced'
                 : syncStatus === 'syncing'
-                ? '◌ Syncing...'
+                ? '◌ Syncing'
                 : (syncStatus as string) === 'auth_required'
-                ? `🔒 Sign In (${pendingSyncCount})`
-                : `⚡ Offline (${pendingSyncCount})`}
+                ? `● Sign In (${pendingSyncCount})`
+                : `● Offline (${pendingSyncCount})`}
             </Text>
           </TouchableOpacity>
         </View>
@@ -744,9 +790,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     backgroundColor:
                       filter === f
                         ? theme.colors.accent
-                        : theme.isDark
-                        ? '#1C1C1E'
-                        : '#E5E5EA',
+                        : theme.colors.surfaceSecondary,
                   },
                 ]}
                 onPress={() => {
@@ -779,14 +823,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               {
                 backgroundColor:
                   sortBy !== 'default'
-                    ? theme.isDark
-                      ? 'rgba(10, 132, 255, 0.2)'
-                      : 'rgba(0, 122, 255, 0.12)'
-                    : theme.isDark
-                    ? '#1C1C1E'
-                    : '#E5E5EA',
+                    ? hexToRgba(theme.colors.accent, 0.16)
+                    : theme.colors.surfaceSecondary,
                 borderColor:
-                  sortBy !== 'default' ? theme.colors.accent : theme.colors.border,
+                  sortBy !== 'default' ? theme.colors.accent : theme.colors.borderStrong,
               },
             ]}
             onPress={() => {
@@ -858,18 +898,18 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             style={[
               styles.warningBanner,
               {
-                backgroundColor: theme.isDark ? '#2C1B1B' : '#FEF2F2',
-                borderColor: '#FF453A',
+                backgroundColor: hexToRgba(theme.colors.danger, 0.12),
+                borderColor: theme.colors.danger,
               },
             ]}
             accessibilityRole="alert"
           >
-            <Text style={[styles.warningBannerText, { color: theme.isDark ? '#FF6961' : '#B91C1C' }]}>
+            <Text style={[styles.warningBannerText, { color: theme.colors.danger }]}>
               {noProjectWarning}
             </Text>
             <TouchableOpacity
               testID="create-first-list-btn"
-              style={styles.warningActionBtn}
+              style={[styles.warningActionBtn, { backgroundColor: theme.colors.accent }]}
               onPress={() => {
                 setNoProjectWarning(null);
                 closeAllModals();
@@ -889,8 +929,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             style={[
               styles.reorderBanner,
               {
-                backgroundColor: theme.isDark ? '#1C1C1E' : '#F2F2F7',
-                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.borderStrong,
               },
             ]}
           >
@@ -906,8 +946,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             style={[
               styles.reorderBanner,
               {
-                backgroundColor: theme.isDark ? '#1C1C1E' : '#F2F2F7',
-                borderColor: '#007AFF',
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.accent,
               },
             ]}
           >
@@ -920,17 +960,23 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               {selectedLabel && (
                 <TouchableOpacity
                   testID="reorder-clear-filter-btn"
-                  style={[styles.reorderSecondaryBtn, { borderColor: theme.colors.border }]}
+                  style={[
+                    styles.reorderSecondaryBtn,
+                    {
+                      backgroundColor: theme.colors.surfaceSecondary,
+                      borderColor: theme.colors.borderStrong,
+                    },
+                  ]}
                   onPress={() => setSelectedLabel(null)}
                 >
-                  <Text style={[styles.reorderSecondaryBtnText, { color: theme.colors.accent }]}>
+                  <Text style={[styles.reorderSecondaryBtnText, { color: theme.colors.text }]}>
                     Show All
                   </Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity
                 testID="reorder-done-btn"
-                style={styles.reorderDoneBtn}
+                style={[styles.reorderDoneBtn, { backgroundColor: theme.colors.accent }]}
                 onPress={() => {
                   safeHaptics.selection();
                   setIsReordering(false);
@@ -971,7 +1017,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={handleRefresh}
-                tintColor="#007AFF"
+                tintColor={theme.colors.accent}
               />
             }
             renderItem={({ item, getIndex, drag, isActive }: RenderItemParams<Task>) => {
@@ -1069,14 +1115,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             }
             ListEmptyComponent={
               <View style={styles.emptyView}>
-                <Text style={styles.emptyEmoji}>✨</Text>
-                <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
-                  {filter === 'done' ? 'No completed tasks yet' : 'All clear!'}
-                </Text>
-                <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
-                  {filter === 'active'
-                    ? 'Enjoy your free time or add a new task below.'
-                    : 'Tap above to quickly capture what is on your mind.'}
+                <Text style={[styles.emptyTitle, { color: theme.colors.textSecondary }]}>
+                  {selectedLabel
+                    ? `No tasks matching #${selectedLabel}`
+                    : filter === 'done'
+                    ? 'No completed tasks'
+                    : 'No open tasks'}
                 </Text>
               </View>
             }
@@ -1090,19 +1134,22 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             style={[
               styles.undoBanner,
               {
-                backgroundColor: theme.isDark ? '#2C2C2E' : '#1C1C1E',
-                borderColor: theme.isDark ? '#3A3A3C' : '#2C2C2E',
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.borderStrong,
               },
             ]}
             accessibilityRole="alert"
           >
-            <Text style={styles.undoBannerText} numberOfLines={1}>
+            <Text
+              style={[styles.undoBannerText, { color: theme.colors.text }]}
+              numberOfLines={1}
+            >
               Deleted "{livePendingDeleteTask.title}"
             </Text>
             <View style={styles.undoBannerActions}>
               <TouchableOpacity
                 testID="undo-delete-btn"
-                style={styles.undoBtn}
+                style={[styles.undoBtn, { backgroundColor: theme.colors.accent }]}
                 onPress={handleUndoDelete}
                 accessibilityRole="button"
                 accessibilityLabel="Undo delete task"
@@ -1116,7 +1163,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 accessibilityRole="button"
                 accessibilityLabel="Dismiss undo notification"
               >
-                <Text style={styles.undoDismissText}>✕</Text>
+                <Text style={[styles.undoDismissText, { color: theme.colors.textSecondary }]}>
+                  ✕
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1337,7 +1386,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   style={[
                     styles.sortOptionItem,
                     isSelected && {
-                      backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                      backgroundColor: theme.colors.surfaceSecondary,
                     },
                   ]}
                   onPress={() => {
@@ -1373,7 +1422,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   >
                     {getSortLabel(option)}
                   </Text>
-                  {isSelected ? <Text style={styles.sortOptionCheckmark}>✓</Text> : null}
+                  {isSelected ? (
+                    <Text style={[styles.sortOptionCheckmark, { color: theme.colors.accent }]}>
+                      ✓
+                    </Text>
+                  ) : null}
                 </TouchableOpacity>
               );
             })}
@@ -1435,15 +1488,23 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         onClose={() => setSharingProjectId(null)}
       />
 
-      {/* Project Options Action Sheet */}
+      {/* Unified List Options Action Sheet */}
       {actionSheetProject && (
         <Modal
           visible={Boolean(actionSheetProject)}
           transparent
           animationType="fade"
-          onRequestClose={() => setActionSheetProjectId(null)}
+          onRequestClose={() => {
+            setConfirmingProjectDelete(false);
+            setActionSheetProjectId(null);
+          }}
         >
-          <TouchableWithoutFeedback onPress={() => setActionSheetProjectId(null)}>
+          <TouchableWithoutFeedback
+            onPress={() => {
+              setConfirmingProjectDelete(false);
+              setActionSheetProjectId(null);
+            }}
+          >
             <View style={styles.actionSheetBackdrop}>
               <TouchableWithoutFeedback>
                 <View
@@ -1455,60 +1516,142 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     },
                   ]}
                 >
-                  <Text style={[styles.actionSheetTitle, { color: theme.colors.text }]}>
+                  <Text
+                    style={[
+                      styles.actionSheetTitle,
+                      {
+                        color: theme.colors.text,
+                        borderBottomColor: theme.colors.border,
+                      },
+                    ]}
+                  >
                     {actionSheetProject.title}
                   </Text>
 
-                  <TouchableOpacity
-                    testID="project-option-edit"
-                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                    onPress={() => {
-                      const pid = actionSheetProject.id;
-                      closeAllModals();
-                      setEditorProjectId(pid);
-                      setShowEditor(true);
-                    }}
-                  >
-                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                      ✏️ Edit List
-                    </Text>
-                  </TouchableOpacity>
+                  {confirmingProjectDelete ? (
+                    <View style={styles.inlineConfirmContainer}>
+                      <Text style={[styles.inlineConfirmText, { color: theme.colors.text }]}>
+                        Delete "{actionSheetProject.title}" and all tasks inside?
+                      </Text>
+                      <View style={styles.inlineConfirmActions}>
+                        <TouchableOpacity
+                          testID="project-confirm-cancel-btn"
+                          style={[
+                            styles.inlineConfirmBtn,
+                            {
+                              backgroundColor: theme.colors.secondaryButtonBg,
+                              borderColor: theme.colors.borderStrong,
+                              borderWidth: 1,
+                            },
+                          ]}
+                          onPress={() => setConfirmingProjectDelete(false)}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.inlineConfirmBtnText, { color: theme.colors.text }]}>
+                            Cancel
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          testID="project-confirm-delete-btn"
+                          style={[
+                            styles.inlineConfirmBtn,
+                            { backgroundColor: theme.colors.danger },
+                          ]}
+                          onPress={() => commitDeleteProject(actionSheetProject.id)}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.inlineConfirmBtnText, { color: '#FFFFFF' }]}>
+                            Delete
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        testID="project-option-edit"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => {
+                          const pid = actionSheetProject.id;
+                          closeAllModals();
+                          setEditorProjectId(pid);
+                          setShowEditor(true);
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                          Edit List
+                        </Text>
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    testID="project-option-share"
-                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                    onPress={() => {
-                      const pid = actionSheetProject.id;
-                      closeAllModals();
-                      setSharingProjectId(pid);
-                    }}
-                  >
-                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                      👥 Share List
-                    </Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="project-option-share"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => {
+                          const pid = actionSheetProject.id;
+                          closeAllModals();
+                          setSharingProjectId(pid);
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                          Share List
+                        </Text>
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    testID="project-option-favorite"
-                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                    onPress={() => {
-                      toggleProjectFavorite(actionSheetProject.id).catch(() => {});
-                      setActionSheetProjectId(null);
-                    }}
-                  >
-                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                      {actionSheetProject.is_favorite ? '⭐ Remove Favorite' : '☆ Mark as Favorite'}
-                    </Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="project-option-favorite"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => {
+                          toggleProjectFavorite(actionSheetProject.id).catch(() => {});
+                          setActionSheetProjectId(null);
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                          {actionSheetProject.is_favorite ? 'Remove Favorite' : 'Add to Favorites'}
+                        </Text>
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.actionSheetCancel}
-                    onPress={() => setActionSheetProjectId(null)}
-                  >
-                    <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
-                      Cancel
-                    </Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="project-option-archive"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => {
+                          archiveProject(
+                            actionSheetProject.id,
+                            !actionSheetProject.is_archived
+                          ).catch(() => {});
+                          setActionSheetProjectId(null);
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                          {actionSheetProject.is_archived ? 'Unarchive List' : 'Archive List'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        testID="project-option-delete"
+                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                        onPress={() => handleRequestDeleteProject(actionSheetProject)}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.danger }]}>
+                          Delete List
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.actionSheetCancel}
+                        onPress={() => setActionSheetProjectId(null)}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
+                          Cancel
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </View>
               </TouchableWithoutFeedback>
             </View>
@@ -1565,17 +1708,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 10,
-    backgroundColor: 'rgba(48, 209, 88, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(48, 209, 88, 0.35)',
-  },
-  syncIndicatorSyncing: {
-    backgroundColor: 'rgba(10, 132, 255, 0.15)',
-    borderColor: 'rgba(10, 132, 255, 0.35)',
-  },
-  syncIndicatorOffline: {
-    backgroundColor: 'rgba(255, 149, 0, 0.18)',
-    borderColor: 'rgba(255, 149, 0, 0.6)',
   },
   syncIndicatorText: {
     fontSize: 10.5,
@@ -1654,7 +1787,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   warningActionBtn: {
-    backgroundColor: '#007AFF',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
@@ -1687,19 +1819,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 32,
   },
-  emptyEmoji: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
+    fontSize: 15,
+    fontWeight: '500',
   },
   undoBanner: {
     flexDirection: 'row',
@@ -1715,7 +1837,6 @@ const styles = StyleSheet.create({
   },
   undoBannerText: {
     flex: 1,
-    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -1725,7 +1846,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   undoBtn: {
-    backgroundColor: '#0A84FF',
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: 8,
@@ -1739,7 +1859,6 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   undoDismissText: {
-    color: '#8E8E93',
     fontSize: 14,
     fontWeight: '700',
   },
@@ -1790,7 +1909,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   sortOptionCheckmark: {
-    color: '#0A84FF',
     fontSize: 16,
     fontWeight: '800',
   },
@@ -1839,7 +1957,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   reorderDoneBtn: {
-    backgroundColor: '#007AFF',
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 14,
@@ -1906,7 +2023,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(128,128,128,0.2)',
   },
   actionSheetOption: {
     flexDirection: 'row',
@@ -1926,6 +2042,30 @@ const styles = StyleSheet.create({
   },
   actionSheetCancelText: {
     fontSize: 15,
+    fontWeight: '600',
+  },
+  inlineConfirmContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    gap: 14,
+  },
+  inlineConfirmText: {
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 20,
+  },
+  inlineConfirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  inlineConfirmBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  inlineConfirmBtnText: {
+    fontSize: 14,
     fontWeight: '600',
   },
 });

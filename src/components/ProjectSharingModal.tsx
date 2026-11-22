@@ -245,6 +245,11 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
 
   if (!visible) return null;
 
+  const secondarySurface = {
+    backgroundColor: theme.colors.surfaceSecondary,
+    borderColor: theme.colors.borderStrong,
+  };
+
   return (
     <Modal
       visible={visible}
@@ -260,13 +265,21 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
               style={[
                 styles.sheet,
                 {
-                  backgroundColor: theme.colors.card,
+                  backgroundColor: theme.colors.cardBackground,
                   borderColor: theme.colors.cardBorder,
                 },
               ]}
             >
-              {/* Header */}
-              <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+              {/* Unified Header */}
+              <View
+                style={[
+                  styles.header,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderBottomColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
                 <View style={styles.headerTextCol}>
                   <Text style={[styles.title, { color: theme.colors.text }]}>Share List</Text>
                   {project && (
@@ -282,6 +295,7 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                   testID="share-modal-close-btn"
                   onPress={onClose}
                   style={styles.closeBtn}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   accessibilityRole="button"
                   accessibilityLabel="Close sharing dialog"
                 >
@@ -299,7 +313,7 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
               ) : (
                 <>
                   {/* Tabs */}
-                  <View style={[styles.tabsRow, { borderBottomColor: theme.colors.border }]}>
+                  <View style={[styles.tabsRow, { borderBottomColor: theme.colors.cardBorder }]}>
                     <TouchableOpacity
                       testID="share-tab-users"
                       style={[
@@ -366,10 +380,20 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                   {errorMessage ? (
                     <View
                       testID="project-sharing-error"
-                      style={styles.errorBanner}
+                      style={[
+                        styles.errorBanner,
+                        {
+                          borderLeftColor: theme.colors.danger,
+                          backgroundColor: theme.isDark
+                            ? 'rgba(255, 69, 58, 0.15)'
+                            : 'rgba(215, 0, 21, 0.1)',
+                        },
+                      ]}
                       accessibilityRole="alert"
                     >
-                      <Text style={styles.errorText}>{errorMessage}</Text>
+                      <Text style={[styles.errorText, { color: theme.colors.danger }]}>
+                        {errorMessage}
+                      </Text>
                     </View>
                   ) : null}
 
@@ -380,7 +404,6 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                   ) : activeTab === 'users' ? (
                     /* USERS TAB */
                     <ScrollView style={styles.contentList} keyboardShouldPersistTaps="handled">
-                      {/* Add User Section */}
                       <View style={styles.addRow}>
                         <TextInput
                           testID="share-user-input"
@@ -389,11 +412,11 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                             {
                               backgroundColor: theme.colors.inputBg,
                               color: theme.colors.text,
-                              borderColor: theme.colors.border,
+                              borderColor: theme.colors.borderStrong,
                             },
                           ]}
-                          placeholder="Username or email..."
-                          placeholderTextColor={theme.colors.textTertiary}
+                          placeholder="Username or email"
+                          placeholderTextColor={theme.colors.placeholder}
                           value={usernameInput}
                           onChangeText={setUsernameInput}
                           onSubmitEditing={handleAddUser}
@@ -425,14 +448,12 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                               testID={`share-new-user-perm-${perm}`}
                               style={[
                                 styles.permOptionChip,
-                                {
-                                  backgroundColor: selected
-                                    ? theme.colors.accent
-                                    : theme.colors.inputBg,
-                                  borderColor: selected
-                                    ? theme.colors.accent
-                                    : theme.colors.border,
-                                },
+                                selected
+                                  ? {
+                                      backgroundColor: theme.colors.accent,
+                                      borderColor: theme.colors.accent,
+                                    }
+                                  : secondarySurface,
                               ]}
                               onPress={() => {
                                 safeHaptics.selection();
@@ -456,11 +477,11 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
 
                       {/* Current Shared Users */}
                       <Text style={[styles.sectionHeading, { color: theme.colors.textSecondary }]}>
-                        PEOPLE WITH ACCESS
+                        SHARED USERS
                       </Text>
                       {users.length === 0 ? (
-                        <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                          No users shared with this list yet.
+                        <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+                          No shared users
                         </Text>
                       ) : (
                         users.map((share) => (
@@ -470,7 +491,7 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                               styles.memberRow,
                               {
                                 backgroundColor: theme.colors.cardSecondary,
-                                borderColor: theme.colors.border,
+                                borderColor: theme.colors.borderStrong,
                               },
                             ]}
                           >
@@ -487,12 +508,12 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
 
                             <TouchableOpacity
                               testID={`share-user-perm-${share.id}`}
-                              style={[styles.permBadge, { backgroundColor: theme.colors.inputBg }]}
+                              style={[styles.permBadge, secondarySurface]}
                               onPress={() => handleCycleUserPermission(share)}
                               accessibilityRole="button"
                               accessibilityLabel={`Change permission for ${share.user?.username || share.username}`}
                             >
-                              <Text style={[styles.permBadgeText, { color: theme.colors.accent }]}>
+                              <Text style={[styles.permBadgeText, { color: theme.colors.text }]}>
                                 {getPermissionLabel(share.permission)} ▾
                               </Text>
                             </TouchableOpacity>
@@ -504,7 +525,9 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                               accessibilityRole="button"
                               accessibilityLabel={`Remove ${share.user?.username || share.username}`}
                             >
-                              <Text style={styles.removeBtnText}>✕</Text>
+                              <Text style={[styles.removeBtnText, { color: theme.colors.danger }]}>
+                                ✕
+                              </Text>
                             </TouchableOpacity>
                           </View>
                         ))
@@ -513,10 +536,9 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                   ) : (
                     /* TEAMS TAB */
                     <ScrollView style={styles.contentList} keyboardShouldPersistTaps="handled">
-                      {/* Select & Add Team */}
                       <View style={styles.addTeamSection}>
                         <Text style={[styles.label, { color: theme.colors.textSecondary }]}>
-                          SELECT A TEAM TO SHARE WITH
+                          TEAM
                         </Text>
                         <View style={styles.teamChipsRow}>
                           {availableTeams
@@ -529,12 +551,12 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                                   testID={`share-select-team-${team.id}`}
                                   style={[
                                     styles.teamChip,
-                                    {
-                                      backgroundColor: isSelected
-                                        ? theme.colors.accent
-                                        : theme.colors.inputBg,
-                                      borderColor: theme.colors.border,
-                                    },
+                                    isSelected
+                                      ? {
+                                          backgroundColor: theme.colors.accent,
+                                          borderColor: theme.colors.accent,
+                                        }
+                                      : secondarySurface,
                                   ]}
                                   onPress={() => {
                                     safeHaptics.selection();
@@ -565,14 +587,12 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                                 testID={`share-new-team-perm-${perm}`}
                                 style={[
                                   styles.permOptionChip,
-                                  {
-                                    backgroundColor: selected
-                                      ? theme.colors.accent
-                                      : theme.colors.inputBg,
-                                    borderColor: selected
-                                      ? theme.colors.accent
-                                      : theme.colors.border,
-                                  },
+                                  selected
+                                    ? {
+                                        backgroundColor: theme.colors.accent,
+                                        borderColor: theme.colors.accent,
+                                      }
+                                    : secondarySurface,
                                 ]}
                                 onPress={() => {
                                   safeHaptics.selection();
@@ -612,11 +632,11 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
 
                       {/* Current Shared Teams */}
                       <Text style={[styles.sectionHeading, { color: theme.colors.textSecondary }]}>
-                        TEAMS WITH ACCESS
+                        SHARED TEAMS
                       </Text>
                       {teams.length === 0 ? (
-                        <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                          No teams shared with this list yet.
+                        <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+                          No shared teams
                         </Text>
                       ) : (
                         teams.map((share) => (
@@ -626,7 +646,7 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                               styles.memberRow,
                               {
                                 backgroundColor: theme.colors.cardSecondary,
-                                borderColor: theme.colors.border,
+                                borderColor: theme.colors.borderStrong,
                               },
                             ]}
                           >
@@ -643,12 +663,12 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
 
                             <TouchableOpacity
                               testID={`share-team-perm-${share.id}`}
-                              style={[styles.permBadge, { backgroundColor: theme.colors.inputBg }]}
+                              style={[styles.permBadge, secondarySurface]}
                               onPress={() => handleCycleTeamPermission(share)}
                               accessibilityRole="button"
                               accessibilityLabel={`Change permission for ${share.team?.name || share.name}`}
                             >
-                              <Text style={[styles.permBadgeText, { color: theme.colors.accent }]}>
+                              <Text style={[styles.permBadgeText, { color: theme.colors.text }]}>
                                 {getPermissionLabel(share.permission)} ▾
                               </Text>
                             </TouchableOpacity>
@@ -660,7 +680,9 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                               accessibilityRole="button"
                               accessibilityLabel={`Remove ${share.team?.name || share.name}`}
                             >
-                              <Text style={styles.removeBtnText}>✕</Text>
+                              <Text style={[styles.removeBtnText, { color: theme.colors.danger }]}>
+                                ✕
+                              </Text>
                             </TouchableOpacity>
                           </View>
                         ))
@@ -698,8 +720,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     borderBottomWidth: 1,
   },
   headerTextCol: {
@@ -707,7 +729,7 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
   title: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
   },
   subtitle: {
@@ -715,10 +737,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   closeBtn: {
-    padding: 4,
+    padding: 6,
   },
   closeBtnText: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '600',
   },
   offlineContainer: {
@@ -747,19 +769,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   errorBanner: {
-    backgroundColor: 'rgba(255, 69, 58, 0.15)',
     borderLeftWidth: 4,
-    borderLeftColor: '#FF453A',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 10,
     marginHorizontal: 16,
     marginTop: 12,
     borderRadius: 6,
   },
   errorText: {
-    color: '#FF453A',
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   centerContainer: {
     padding: 40,
@@ -767,7 +786,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   contentList: {
-    padding: 20,
+    padding: 18,
   },
   addRow: {
     flexDirection: 'row',
@@ -814,14 +833,13 @@ const styles = StyleSheet.create({
   sectionHeading: {
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
     marginBottom: 8,
     marginTop: 8,
   },
   emptyText: {
-    fontSize: 14,
-    fontStyle: 'italic',
-    paddingVertical: 12,
+    fontSize: 13,
+    paddingVertical: 10,
   },
   memberRow: {
     flexDirection: 'row',
@@ -847,6 +865,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
+    borderWidth: 1,
     marginRight: 8,
   },
   permBadgeText: {
@@ -857,9 +876,8 @@ const styles = StyleSheet.create({
     padding: 6,
   },
   removeBtnText: {
-    color: '#FF453A',
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '700',
   },
   addTeamSection: {
     marginBottom: 16,
@@ -867,7 +885,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
     marginBottom: 8,
   },
   teamChipsRow: {

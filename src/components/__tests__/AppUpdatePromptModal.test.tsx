@@ -23,7 +23,7 @@ describe('AppUpdatePromptModal', () => {
     expect(queryByTestId('app-update-prompt-modal')).toBeNull();
   });
 
-  it('renders update prompt modal when isPromptVisible is true', () => {
+  it('renders concise update prompt modal when isPromptVisible is true', () => {
     useUpdateStore.setState({
       isPromptVisible: true,
       updateInfo: {
@@ -42,14 +42,16 @@ describe('AppUpdatePromptModal', () => {
     const { getByTestId, getByText } = render(<AppUpdatePromptModal />);
 
     expect(getByTestId('app-update-prompt-modal')).toBeTruthy();
-    expect(getByText('New Version Available')).toBeTruthy();
-    expect(getByText(/Build 20/)).toBeTruthy();
+    expect(getByText('Update Available')).toBeTruthy();
+    expect(getByText('Build 20 is available (installed: 16).')).toBeTruthy();
+    expect(getByText('Update')).toBeTruthy();
+    expect(getByText('Later')).toBeTruthy();
     expect(getByTestId('update-prompt-primary-btn')).toBeTruthy();
     expect(getByTestId('update-prompt-dismiss-btn')).toBeTruthy();
     expect(getByTestId('update-prompt-store-btn')).toBeTruthy();
   });
 
-  it('handles Update Now button press (flexible when allowed, immediate when flexible disallowed)', async () => {
+  it('handles Update button press (flexible when allowed, immediate when flexible disallowed)', async () => {
     const mockStartUpdate = jest.fn().mockResolvedValue(undefined);
     useUpdateStore.setState({
       isPromptVisible: true,
@@ -95,7 +97,7 @@ describe('AppUpdatePromptModal', () => {
     expect(mockStartUpdate).toHaveBeenCalledWith('immediate');
   });
 
-  it('handles Remind Me Tomorrow button press using real store action and hides modal', async () => {
+  it('handles Later dismiss button press using real store action and hides modal', async () => {
     useUpdateStore.setState({
       isPromptVisible: true,
       updateInfo: {
@@ -122,7 +124,7 @@ describe('AppUpdatePromptModal', () => {
     expect(useUpdateStore.getState().isPromptVisible).toBe(false);
   });
 
-  it('handles Play Store Listing button press and hides prompt when store opens', async () => {
+  it('handles Google Play button press and hides prompt when store opens', async () => {
     const mockOpenStore = jest.fn().mockResolvedValue(true);
     useUpdateStore.setState({
       isPromptVisible: true,
@@ -164,8 +166,8 @@ describe('AppUpdatePromptModal', () => {
     });
 
     const { getByTestId, getByText, queryByTestId } = render(<AppUpdatePromptModal />);
-    expect(getByText('Downloading Update...')).toBeTruthy();
-    expect(getByText('Continue in Background')).toBeTruthy();
+    expect(getByText('Downloading Update')).toBeTruthy();
+    expect(getByText('Hide')).toBeTruthy();
     expect(queryByTestId('update-prompt-store-btn')).toBeNull();
 
     await act(async () => {
@@ -177,7 +179,7 @@ describe('AppUpdatePromptModal', () => {
     expect(queryByTestId('app-update-prompt-modal')).toBeNull();
   });
 
-  it('renders downloading state with percentage and hides modal on "Continue in Background" without re-calling startUpdate', async () => {
+  it('renders downloading state with single percentage and hides modal on Hide without re-calling startUpdate', async () => {
     const mockStartUpdate = jest.fn();
     useUpdateStore.setState({
       isPromptVisible: true,
@@ -202,9 +204,9 @@ describe('AppUpdatePromptModal', () => {
     });
 
     const { getByTestId, getByText, queryByTestId } = render(<AppUpdatePromptModal />);
-    expect(getByText('Downloading Update...')).toBeTruthy();
-    expect(getByText(/50%/)).toBeTruthy();
-    expect(getByText('Continue in Background')).toBeTruthy();
+    expect(getByText('Downloading Update')).toBeTruthy();
+    expect(getByText('50%')).toBeTruthy();
+    expect(getByText('Hide')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('update-prompt-primary-btn'));
@@ -215,11 +217,22 @@ describe('AppUpdatePromptModal', () => {
     expect(queryByTestId('app-update-prompt-modal')).toBeNull();
   });
 
-  it('renders ready to install state when status is DOWNLOADED and restarts on primary press', async () => {
+  it('renders Restart to Update state when status is DOWNLOADED and restarts on primary press', async () => {
     const mockComplete = jest.fn().mockResolvedValue(true);
     useUpdateStore.setState({
       isPromptVisible: false,
       isDownloadedDismissed: false,
+      updateInfo: {
+        isAvailable: true,
+        availableVersionCode: 20,
+        currentVersionCode: 16,
+        updateAvailability: 2,
+        isImmediateAllowed: true,
+        isFlexibleAllowed: true,
+        clientVersionStalenessDays: 0,
+        updatePriority: 0,
+        inProgress: false,
+      },
       installProgress: {
         status: 'DOWNLOADED',
         bytesDownloaded: 100,
@@ -230,8 +243,9 @@ describe('AppUpdatePromptModal', () => {
     });
 
     const { getByTestId, getByText } = render(<AppUpdatePromptModal />);
-    expect(getByText('Update Ready to Install')).toBeTruthy();
-    expect(getByText('Restart & Apply Update')).toBeTruthy();
+    expect(getByText('Restart to Update')).toBeTruthy();
+    expect(getByText('Build 20 is ready to install.')).toBeTruthy();
+    expect(getByText('Restart Now')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('update-prompt-primary-btn'));
@@ -239,7 +253,7 @@ describe('AppUpdatePromptModal', () => {
     expect(mockComplete).toHaveBeenCalled();
   });
 
-  it('dismisses cleanly when tapping "Later" in DOWNLOADED state (never an undismissable brick)', async () => {
+  it('dismisses cleanly when tapping Later in DOWNLOADED state (never an undismissable brick)', async () => {
     useUpdateStore.setState({
       isPromptVisible: true,
       isDownloadedDismissed: false,
@@ -252,7 +266,7 @@ describe('AppUpdatePromptModal', () => {
     });
 
     const { getByTestId, getByText, queryByTestId } = render(<AppUpdatePromptModal />);
-    expect(getByText('Update Ready to Install')).toBeTruthy();
+    expect(getByText('Restart to Update')).toBeTruthy();
     expect(getByText('Later')).toBeTruthy();
 
     await act(async () => {

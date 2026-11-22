@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, fireEvent, waitFor, act, cleanup } from '@testing-library/react-native';
-import { Keyboard, Platform } from 'react-native';
+import { Alert, Keyboard, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { ProjectTasksScreen } from '../ProjectTasksScreen';
 import { useTaskStore } from '../../store/taskStore';
@@ -53,6 +53,8 @@ describe('ProjectTasksScreen', () => {
 
     expect(mockFetchTasks).toHaveBeenCalledWith(1);
     expect(getByText('Inbox')).toBeTruthy();
+    expect(getByText('1 open')).toBeTruthy();
+    expect(queryByText(/Tap to edit list/i)).toBeNull();
     expect(getByText('Task in Inbox')).toBeTruthy();
     expect(queryByText('Completed Inbox Task')).toBeNull();
     expect(queryByText('Work task')).toBeNull();
@@ -655,5 +657,62 @@ describe('ProjectTasksScreen', () => {
     expect(getByText('My Open Bug Fix')).toBeTruthy();
     expect(queryByText('Colleague Task')).toBeNull();
     expect(queryByText('Unassigned Item')).toBeNull();
+  });
+
+  it('exposes complete List Options menu (Edit, Share, Favorite, Archive, Delete) when tapping header title or ⋯ button, and renders clean empty states', () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const mockArchive = jest.fn().mockResolvedValue({ id: 1, is_archived: true });
+    const mockDelete = jest.fn().mockResolvedValue(undefined);
+
+    useTaskStore.setState({
+      projects: [
+        { id: 1, title: 'Inbox', hex_color: '#3498db' },
+        { id: 2, title: 'Work', hex_color: '#e74c3c' },
+      ],
+      tasks: [],
+      selectedProjectId: 1,
+      archiveProject: mockArchive,
+      deleteProject: mockDelete,
+    });
+
+    const { getByTestId, getByText, queryByText } = render(
+      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+    );
+
+    // Clean empty state without emoji or patronizing fluff
+    expect(getByText('No open tasks')).toBeTruthy();
+    expect(queryByText(/Enjoy your free time/i)).toBeNull();
+    expect(queryByText(/Tap above/i)).toBeNull();
+    expect(queryByText('✨')).toBeNull();
+
+    fireEvent.press(getByTestId('filter-done'));
+    expect(getByText('No completed tasks')).toBeTruthy();
+
+    // Tapping list title opens full 5-item List Options menu including Archive List
+    fireEvent.press(getByTestId('project-header-title-btn'));
+    expect(getByText('Edit List')).toBeTruthy();
+    expect(getByText('Share List')).toBeTruthy();
+    expect(getByText('Add to Favorites')).toBeTruthy();
+    expect(getByText('Archive List')).toBeTruthy();
+    expect(getByText('Delete List')).toBeTruthy();
+
+    fireEvent.press(getByTestId('project-option-archive'));
+    expect(mockArchive).toHaveBeenCalledWith(1, true);
+
+    // Tapping ⋯ also opens full List Options menu and Delete List confirms via Alert
+    fireEvent.press(getByTestId('project-header-options-btn'));
+    fireEvent.press(getByTestId('project-option-delete'));
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Delete List',
+      expect.stringContaining('Inbox'),
+      expect.any(Array)
+    );
+    expect(mockDelete).not.toHaveBeenCalled();
+
+    const buttons = alertSpy.mock.calls[0][2] as any[];
+    act(() => {
+      buttons.find((b) => b.style === 'destructive').onPress();
+    });
+    expect(mockDelete).toHaveBeenCalledWith(1);
   });
 });

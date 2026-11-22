@@ -37,10 +37,10 @@ export const AppUpdatePromptModal: React.FC = () => {
     return null;
   }
 
-  const newBuild = updateInfo?.availableVersionCode || 'Latest';
+  const newBuild = updateInfo?.availableVersionCode;
   const currentBuild = updateInfo?.currentVersionCode || APP_BUILD_NUMBER;
 
-  const handleUpdatePress = async () => {
+  const handlePrimaryPress = async () => {
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
     if (isDownloaded) {
       await completeDownloadedUpdate();
@@ -57,6 +57,10 @@ export const AppUpdatePromptModal: React.FC = () => {
 
   const handleDismissPress = async () => {
     safeHaptics.selection();
+    if (isDownloading) {
+      hidePrompt();
+      return;
+    }
     await dismissPrompt(24);
   };
 
@@ -68,7 +72,6 @@ export const AppUpdatePromptModal: React.FC = () => {
     }
   };
 
-  // Calculate download percentage if available (indeterminate while PENDING)
   let downloadPercent: number | null = null;
   if (
     installProgress?.status === 'DOWNLOADING' &&
@@ -86,19 +89,19 @@ export const AppUpdatePromptModal: React.FC = () => {
     );
   }
 
-  const badgeTextColor = isDownloaded
-    ? theme.isDark
-      ? '#30D158'
-      : '#15803D'
-    : theme.isDark
-    ? '#0A84FF'
-    : '#0066CC';
+  const titleText = isDownloaded
+    ? 'Restart to Update'
+    : isDownloading
+    ? 'Downloading Update'
+    : 'Update Available';
 
-  const primaryBtnBg = isDownloaded
-    ? theme.isDark
-      ? '#248A3D'
-      : '#15803D'
-    : theme.colors.accent;
+  const subtitleText = isDownloaded
+    ? newBuild
+      ? `Build ${newBuild} is ready to install.`
+      : 'Ready to install.'
+    : isDownloading
+    ? null
+    : `Build ${newBuild || 'Latest'} is available (installed: ${currentBuild}).`;
 
   return (
     <Modal
@@ -119,64 +122,44 @@ export const AppUpdatePromptModal: React.FC = () => {
             },
           ]}
         >
-          {/* Badge */}
-          <View
-            style={[
-              styles.badge,
-              { backgroundColor: isDownloaded ? '#30D15822' : '#0A84FF22' },
-            ]}
-          >
-            <Text style={[styles.badgeText, { color: badgeTextColor }]}>
-              {isDownloaded
-                ? '✓ READY TO INSTALL'
-                : isDownloading
-                ? '⬇ DOWNLOADING'
-                : '🚀 UPDATE AVAILABLE'}
-            </Text>
-          </View>
-
-          {/* Title */}
           <Text style={[styles.title, { color: theme.colors.text }]}>
-            {isDownloaded
-              ? 'Update Ready to Install'
-              : isDownloading
-              ? 'Downloading Update...'
-              : 'New Version Available'}
+            {titleText}
           </Text>
 
-          {/* Subtitle / Description */}
-          <Text
-            style={[styles.description, { color: theme.colors.textSecondary }]}
-          >
-            {isDownloaded
-              ? 'The update has been downloaded via Google Play. Restart Guanaco now to apply the changes.'
-              : isDownloading
-              ? downloadPercent !== null
-                ? `Downloading from Google Play: ${downloadPercent}%`
-                : 'Downloading update in the background via Google Play...'
-              : `A new build (Build ${newBuild}) is available on Google Play. You are currently on Build ${currentBuild}.`}
-          </Text>
+          {subtitleText && (
+            <Text
+              style={[styles.description, { color: theme.colors.textSecondary }]}
+            >
+              {subtitleText}
+            </Text>
+          )}
 
-          {/* Progress bar if downloading */}
           {isDownloading && (
             <View style={styles.progressContainer}>
               <View
                 style={[
                   styles.progressBarBackground,
-                  { backgroundColor: theme.colors.cardSecondary },
+                  { backgroundColor: theme.colors.surfaceSecondary },
                 ]}
               >
                 <View
                   style={[
                     styles.progressBarFill,
                     {
-                      width: `${downloadPercent ?? 40}%`,
+                      width: `${downloadPercent ?? 35}%`,
                       backgroundColor: theme.colors.accent,
                     },
                   ]}
                 />
               </View>
-              {downloadPercent === null && (
+              {downloadPercent !== null ? (
+                <Text
+                  testID="update-download-percent"
+                  style={[styles.percentText, { color: theme.colors.textSecondary }]}
+                >
+                  {downloadPercent}%
+                </Text>
+              ) : (
                 <ActivityIndicator
                   size="small"
                   color={theme.colors.accent}
@@ -186,53 +169,72 @@ export const AppUpdatePromptModal: React.FC = () => {
             </View>
           )}
 
-          {/* Primary Action Button */}
           <TouchableOpacity
             testID="update-prompt-primary-btn"
             accessibilityRole="button"
-            style={[styles.primaryBtn, { backgroundColor: primaryBtnBg }]}
-            onPress={handleUpdatePress}
+            style={[
+              styles.primaryBtn,
+              isDownloading
+                ? {
+                    backgroundColor: theme.colors.surfaceSecondary,
+                    borderWidth: 1,
+                    borderColor: theme.colors.borderStrong,
+                    marginBottom: 0,
+                  }
+                : {
+                    backgroundColor: theme.colors.accent,
+                  },
+            ]}
+            onPress={handlePrimaryPress}
             activeOpacity={0.8}
           >
-            <Text style={styles.primaryBtnText}>
-              {isDownloaded
-                ? 'Restart & Apply Update'
-                : isDownloading
-                ? 'Continue in Background'
-                : 'Update Now'}
+            <Text
+              style={[
+                styles.primaryBtnText,
+                { color: isDownloading ? theme.colors.text : '#FFFFFF' },
+              ]}
+            >
+              {isDownloaded ? 'Restart Now' : isDownloading ? 'Hide' : 'Update'}
             </Text>
           </TouchableOpacity>
 
-          {/* Secondary Actions */}
-          <View style={styles.secondaryRow}>
-            <TouchableOpacity
-              testID="update-prompt-dismiss-btn"
-              accessibilityRole="button"
-              style={styles.dismissBtn}
-              onPress={handleDismissPress}
-              activeOpacity={0.7}
-            >
-              <Text
-                style={[styles.dismissBtnText, { color: theme.colors.textSecondary }]}
-              >
-                {isDownloaded ? 'Later' : 'Remind Me Tomorrow'}
-              </Text>
-            </TouchableOpacity>
-
-            {!isDownloaded && !isDownloading && (
+          {!isDownloading && (
+            <>
               <TouchableOpacity
-                testID="update-prompt-store-btn"
+                testID="update-prompt-dismiss-btn"
                 accessibilityRole="button"
-                style={styles.storeBtn}
-                onPress={handleOpenPlayStore}
-                activeOpacity={0.7}
+                style={[
+                  styles.secondaryBtn,
+                  {
+                    backgroundColor: theme.colors.surfaceSecondary,
+                    borderColor: theme.colors.borderStrong,
+                  },
+                ]}
+                onPress={handleDismissPress}
+                activeOpacity={0.75}
               >
-                <Text style={[styles.storeBtnText, { color: theme.colors.accent }]}>
-                  Play Store Listing ›
+                <Text style={[styles.secondaryBtnText, { color: theme.colors.text }]}>
+                  Later
                 </Text>
               </TouchableOpacity>
-            )}
-          </View>
+
+              {!isDownloaded && (
+                <TouchableOpacity
+                  testID="update-prompt-store-btn"
+                  accessibilityRole="button"
+                  style={styles.storeBtn}
+                  onPress={handleOpenPlayStore}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[styles.storeBtnText, { color: theme.colors.textSecondary }]}
+                  >
+                    Google Play
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
         </View>
       </View>
     </Modal>
@@ -249,7 +251,7 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxWidth: 420,
+    maxWidth: 400,
     borderRadius: 20,
     borderWidth: 1,
     padding: 24,
@@ -260,19 +262,8 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 8,
   },
-  badge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginBottom: 14,
-  },
-  badgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
   title: {
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '700',
     textAlign: 'center',
     marginBottom: 8,
@@ -285,6 +276,7 @@ const styles = StyleSheet.create({
   },
   progressContainer: {
     width: '100%',
+    marginTop: 8,
     marginBottom: 20,
     alignItems: 'center',
   },
@@ -298,43 +290,45 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 4,
   },
-  spinner: {
+  percentText: {
     marginTop: 8,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  spinner: {
+    marginTop: 10,
   },
   primaryBtn: {
     width: '100%',
-    paddingVertical: 14,
+    paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   primaryBtnText: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
-  secondaryRow: {
+  secondaryBtn: {
     width: '100%',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
     alignItems: 'center',
-    paddingHorizontal: 4,
+    justifyContent: 'center',
   },
-  dismissBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  dismissBtnText: {
-    fontSize: 14,
+  secondaryBtnText: {
+    fontSize: 15,
     fontWeight: '600',
   },
   storeBtn: {
-    paddingVertical: 8,
+    marginTop: 12,
+    paddingVertical: 4,
     paddingHorizontal: 12,
   },
   storeBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '500',
   },
 });

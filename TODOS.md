@@ -1,9 +1,26 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.3.0` (Build 19)
+- **Current Version:** `1.3.1` (Build 20)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🎨 Phase 10.1: UI De-Bloating, Night-Mode Legibility & Semantic Color System (v1.3.1)
+
+### 1. UI De-Bloating & Information Density
+- [x] **Concise Copy & Single-Source Surfaces (`AppUpdatePromptModal.tsx`, `App.tsx`, `SettingsModal.tsx`, `ProjectTasksScreen.tsx`, `ProjectDrawer.tsx`)**:
+  - Removed redundant status pills and repeated copy in `AppUpdatePromptModal`, simplified the Biometric Lock screen (`App.tsx`), consolidated version/build metadata to a single footer line in `SettingsModal`, and stripped patronizing hints, AI-marketing prose (`Smart Grouping`), and decorative emoji clutter.
+
+### 2. Dim-Screen Night Legibility & Strict Semantic Color System
+- [x] **OLED Low-Brightness Contrast & Token Discipline (`theme.ts`, `colors.ts`, `SwipeableTaskItem.tsx`, `TaskDetailModal.tsx`, `QuickAddBar.tsx`, `LoginScreen.tsx`)**:
+  - Lifted Dark Mode `textSecondary` and `checkboxBorder` (`#A1A1AA` with subtle inner checkbox contrast), `placeholder`/`textTertiary` (`#8E8E93`), `borderStrong` (`#3F3F46`), and `adaptColorForDarkTheme` label luminance (`>= 0.26`) while removing stacked row opacity on completed tasks and resolving the `QuickAddBar` bottom dock box-in-a-box cutout.
+  - Enforced strict semantic roles across all screens and modals: `accent` blue (`#0A84FF`/`#007AFF`) for primary CTAs, neutral `surfaceSecondary`/`borderStrong` for secondary utility actions, `success` green (`#30D158`/`#248A3D`) strictly for completion/positive states, and `danger` red (`#FF453A`/`#D70015`) strictly for destructive/error/overdue states.
+
+### 3. Unified List Options Menu
+- [x] **5-Action List Options Symmetry (`ProjectTasksScreen.tsx`, `ProjectDrawer.tsx`)**:
+  - Unified the active list header (`⋯` and title tap) and drawer list menus (`⋯` and long-press) on the exact same 5-item List Options sheet: `Edit List`, `Share List`, `Add to Favorites` / `Remove Favorite`, `Archive List` / `Unarchive List`, and `Delete List` (with confirmation).
 
 ---
 

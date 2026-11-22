@@ -102,10 +102,14 @@ describe('colors utility', () => {
       expect(styles.textColor).toBe('#ff5722');
     });
 
-    it('ensures high contrast text on dark backgrounds', () => {
+    it('ensures high contrast text on dark backgrounds (both achromatic dark grays and dark saturated hues)', () => {
       const darkColorStyles = getLabelBadgeStyles('DarkTag', '1c1c1e', true);
       expect(darkColorStyles.textColor).not.toBe('#1c1c1e');
-      expect(getLuminance(darkColorStyles.textColor)).toBeGreaterThanOrEqual(0.18);
+      expect(getLuminance(darkColorStyles.textColor)).toBeGreaterThanOrEqual(0.26);
+
+      const darkNavyStyles = getLabelBadgeStyles('Ops', '#1e3a8a', true);
+      expect(darkNavyStyles.textColor.toLowerCase()).not.toBe('#1e3a8a');
+      expect(isTooDarkForDarkTheme(darkNavyStyles.textColor)).toBe(false);
     });
 
     it('protects contrast on Light Mode so yellow (#FFD60A) and white (#FFFFFF) labels are legible on white cards', () => {

@@ -49,7 +49,6 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
     }
 
     const prevId = initializedTaskIdRef.current;
-    // If same optimistic task resolved from negative tempId -> positive server ID while open, keep user's in-progress edits
     if (prevId !== null && prevId < 0 && task.id > 0) {
       initializedTaskIdRef.current = task.id;
       return;
@@ -141,6 +140,11 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
     onClose();
   };
 
+  const secondarySurface = {
+    backgroundColor: theme.colors.surfaceSecondary,
+    borderColor: theme.colors.borderStrong,
+  };
+
   return (
     <Modal
       visible={visible}
@@ -161,21 +165,25 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
           style={[
             styles.modalContent,
             {
-              backgroundColor: theme.colors.card,
+              backgroundColor: theme.colors.cardBackground,
               borderColor: theme.colors.cardBorder,
             },
           ]}
         >
-          <View style={styles.header}>
+          {/* Unified Header */}
+          <View style={[styles.header, { borderBottomColor: theme.colors.cardBorder }]}>
             <View style={styles.headerTextCol}>
               <Text style={[styles.title, { color: theme.colors.text }]}>Edit Labels</Text>
-              <Text style={[styles.taskTitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+              <Text
+                style={[styles.taskTitle, { color: theme.colors.textSecondary }]}
+                numberOfLines={1}
+              >
                 {task.title}
               </Text>
             </View>
             <TouchableOpacity
               testID="label-modal-done-btn"
-              style={styles.doneBtn}
+              style={[styles.doneBtn, { backgroundColor: theme.colors.accent }]}
               onPress={handleSave}
               activeOpacity={0.7}
               accessibilityRole="button"
@@ -185,117 +193,113 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
             </TouchableOpacity>
           </View>
 
-          {/* New Label Input */}
-          <View style={styles.inputRow}>
-            <TextInput
-              testID="new-label-input"
-              style={[
-                styles.input,
-                {
-                  backgroundColor: theme.colors.inputBg,
-                  color: theme.colors.text,
-                  borderColor: theme.colors.border,
-                },
-              ]}
-              placeholder="New label name..."
-              placeholderTextColor={theme.colors.textTertiary}
-              value={newLabelText}
-              onChangeText={setNewLabelText}
-              onSubmitEditing={handleAddNewLabel}
-              returnKeyType="done"
-            />
-            <TouchableOpacity
-              testID="label-modal-add-btn"
-              style={[
-                styles.addBtn,
-                !newLabelText.trim() && {
-                  backgroundColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
-                },
-              ]}
-              onPress={handleAddNewLabel}
-              disabled={!newLabelText.trim()}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Add new label"
-            >
-              <Text style={styles.addBtnText}>+ Add</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Labels Grid / Chips */}
-          <Text style={[styles.sectionHeading, { color: theme.colors.textSecondary }]}>
-            Tap to tag or move stores:
-          </Text>
-          <ScrollView
-            style={styles.labelsList}
-            contentContainerStyle={styles.chipsContainer}
-            keyboardShouldPersistTaps="handled"
-          >
-            {allLabels.map((label) => {
-              const isSelected = selectedLabels.some(
-                (l) => l.toLowerCase() === label.toLowerCase()
-              );
-              const hex = getHexColor(label);
-              const badgeStyle = getLabelBadgeStyles(label, hex, theme.isDark);
-
-              return (
-                <TouchableOpacity
-                  key={label}
-                  testID={`label-chip-${label}`}
-                  style={[
-                    styles.chip,
-                    isSelected
-                      ? {
-                          backgroundColor: badgeStyle.backgroundColor,
-                          borderColor: badgeStyle.textColor,
-                        }
-                      : {
-                          backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                          borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
-                        },
-                  ]}
-                  onPress={() => toggleLabel(label)}
-                  activeOpacity={0.7}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: isSelected }}
-                  accessibilityLabel={`Label ${label}`}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      isSelected
-                        ? { color: badgeStyle.textColor, fontWeight: '700' }
-                        : { color: theme.colors.textSecondary },
-                    ]}
-                  >
-                    #{label} {isSelected ? '✓' : ''}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {onOpenManageLabels && (
-            <TouchableOpacity
-              testID="quick-label-manage-btn"
-              style={[styles.manageLabelsBtn, { borderTopColor: theme.colors.border }]}
-              onPress={() => {
-                onClose();
-                onOpenManageLabels();
-              }}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-            >
-              <Text
+          <View style={styles.bodyContent}>
+            {/* New Label Input */}
+            <View style={styles.inputRow}>
+              <TextInput
+                testID="new-label-input"
                 style={[
-                  styles.manageLabelsBtnText,
-                  { color: theme.colors.accent },
+                  styles.input,
+                  {
+                    backgroundColor: theme.colors.inputBg,
+                    color: theme.colors.text,
+                    borderColor: theme.colors.borderStrong,
+                  },
                 ]}
+                placeholder="New label name..."
+                placeholderTextColor={theme.colors.placeholder}
+                value={newLabelText}
+                onChangeText={setNewLabelText}
+                onSubmitEditing={handleAddNewLabel}
+                returnKeyType="done"
+              />
+              <TouchableOpacity
+                testID="label-modal-add-btn"
+                style={[
+                  styles.addBtn,
+                  { backgroundColor: theme.colors.accent },
+                  !newLabelText.trim() && styles.btnDisabled,
+                ]}
+                onPress={handleAddNewLabel}
+                disabled={!newLabelText.trim()}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Add new label"
               >
-                ⚙️ Manage & Delete Global Labels
-              </Text>
-            </TouchableOpacity>
-          )}
+                <Text style={styles.addBtnText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Labels Grid / Chips */}
+            <ScrollView
+              style={styles.labelsList}
+              contentContainerStyle={styles.chipsContainer}
+              keyboardShouldPersistTaps="handled"
+            >
+              {allLabels.length === 0 ? (
+                <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+                  No labels yet
+                </Text>
+              ) : (
+                allLabels.map((label) => {
+                  const isSelected = selectedLabels.some(
+                    (l) => l.toLowerCase() === label.toLowerCase()
+                  );
+                  const hex = getHexColor(label);
+                  const badgeStyle = getLabelBadgeStyles(label, hex, theme.isDark);
+
+                  return (
+                    <TouchableOpacity
+                      key={label}
+                      testID={`label-chip-${label}`}
+                      style={[
+                        styles.chip,
+                        isSelected
+                          ? {
+                              backgroundColor: badgeStyle.backgroundColor,
+                              borderColor: badgeStyle.textColor,
+                            }
+                          : secondarySurface,
+                      ]}
+                      onPress={() => toggleLabel(label)}
+                      activeOpacity={0.7}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: isSelected }}
+                      accessibilityLabel={`Label ${label}`}
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          isSelected
+                            ? { color: badgeStyle.textColor, fontWeight: '700' }
+                            : { color: theme.colors.textSecondary },
+                        ]}
+                      >
+                        #{label} {isSelected ? '✓' : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            {onOpenManageLabels && (
+              <TouchableOpacity
+                testID="quick-label-manage-btn"
+                style={[styles.manageLabelsBtn, secondarySurface]}
+                onPress={() => {
+                  onClose();
+                  onOpenManageLabels();
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.manageLabelsBtnText, { color: theme.colors.text }]}>
+                  Manage Labels
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </SafeAreaView>
       </KeyboardAvoidingView>
     </Modal>
@@ -305,79 +309,82 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
   backdrop: {
     flex: 1,
   },
   modalContent: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 28,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 24,
     maxHeight: '80%',
     borderWidth: 1,
+    overflow: 'hidden',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
   },
   headerTextCol: {
     flex: 1,
     paddingRight: 12,
   },
   title: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '700',
   },
   taskTitle: {
-    fontSize: 14,
+    fontSize: 13,
     marginTop: 2,
   },
   doneBtn: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
   },
   doneBtnText: {
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
   },
+  bodyContent: {
+    paddingHorizontal: 18,
+    paddingTop: 14,
+  },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   input: {
     flex: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
+    height: 42,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
     borderWidth: 1,
   },
   addBtn: {
-    backgroundColor: '#30D158',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
+    height: 42,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnDisabled: {
+    opacity: 0.5,
   },
   addBtnText: {
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
-  },
-  sectionHeading: {
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 10,
   },
   labelsList: {
     maxHeight: 220,
@@ -386,24 +393,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    paddingBottom: 16,
+    paddingBottom: 14,
+  },
+  emptyText: {
+    fontSize: 13,
+    paddingVertical: 8,
   },
   chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
     borderWidth: 1,
   },
   chipText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   manageLabelsBtn: {
-    marginTop: 12,
-    paddingVertical: 10,
+    marginTop: 8,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    borderTopWidth: 1,
   },
   manageLabelsBtnText: {
     fontSize: 13,

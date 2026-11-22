@@ -82,13 +82,14 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
 
               {sortedProjects.length === 0 ? (
                 <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
-                  No active lists available.
+                  No active lists available
                 </Text>
               ) : (
                 <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
                   {sortedProjects.map((proj) => {
                     const isCurrent = proj.id === currentProjectId;
-                    const dotColor = normalizeHexColor(proj.hex_color ?? undefined, true) || '#007AFF';
+                    const dotColor =
+                      normalizeHexColor(proj.hex_color ?? undefined, true) || theme.colors.accent;
                     return (
                       <TouchableOpacity
                         key={proj.id}
@@ -96,7 +97,7 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
                         style={[
                           styles.projectRow,
                           isCurrent && {
-                            backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                            backgroundColor: theme.colors.surfaceSecondary,
                           },
                         ]}
                         onPress={() => handleSelect(proj.id)}
@@ -117,7 +118,7 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
                             styles.projectTitle,
                             { color: theme.colors.text },
                             isCurrent && {
-                              color: theme.isDark ? '#30D158' : '#15803D',
+                              color: theme.colors.accent,
                               fontWeight: '600',
                             },
                           ]}
@@ -179,7 +180,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    fontStyle: 'italic',
     textAlign: 'center',
     paddingVertical: 20,
   },

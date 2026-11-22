@@ -22,6 +22,7 @@ import { ProjectDrawer } from './screens/ProjectDrawer';
 import { VikunjaClient, parseAndValidateServerUrl } from './api/client';
 import { User } from './types/vikunja';
 import { useAppTheme } from './utils/theme';
+import { hexToRgba } from './utils/colors';
 import {
   getStoredAuth,
   setStoredAuth,
@@ -451,7 +452,7 @@ export default function App() {
     if (passed) {
       await unlockOfflineSession();
     } else {
-      setLockError('Authentication failed or was cancelled. Tap Unlock to try again.');
+      setLockError('Authentication failed. Try again.');
     }
   };
 
@@ -487,12 +488,7 @@ export default function App() {
                 resizeMode="cover"
               />
               <Text style={[styles.lockTitle, { color: theme.colors.text }]}>
-                Guanaco is Locked
-              </Text>
-              <Text
-                style={[styles.lockSubtitle, { color: theme.colors.textSecondary }]}
-              >
-                Authenticate with biometrics or device credentials to access your tasks offline or online.
+                Guanaco
               </Text>
 
               {lockError && (
@@ -503,17 +499,18 @@ export default function App() {
                   style={[
                     styles.lockErrorBanner,
                     {
-                      backgroundColor: theme.isDark
-                        ? 'rgba(255, 69, 58, 0.16)'
-                        : 'rgba(215, 0, 21, 0.08)',
-                      borderColor: theme.isDark ? '#FF453A' : '#D70015',
+                      backgroundColor: hexToRgba(
+                        theme.colors.danger,
+                        theme.isDark ? 0.16 : 0.08
+                      ),
+                      borderColor: theme.colors.danger,
                     },
                   ]}
                 >
                   <Text
                     style={[
                       styles.lockErrorText,
-                      { color: theme.isDark ? '#FF453A' : '#D70015' },
+                      { color: theme.colors.danger },
                     ]}
                   >
                     {lockError}
@@ -529,10 +526,11 @@ export default function App() {
                   style={[
                     styles.lockErrorBanner,
                     {
-                      backgroundColor: theme.isDark
-                        ? 'rgba(255, 159, 10, 0.16)'
-                        : 'rgba(197, 108, 0, 0.1)',
-                      borderColor: theme.isDark ? '#FF9F0A' : '#C56C00',
+                      backgroundColor: hexToRgba(
+                        theme.colors.warning,
+                        theme.isDark ? 0.16 : 0.08
+                      ),
+                      borderColor: theme.colors.warning,
                     },
                   ]}
                 >
@@ -550,7 +548,10 @@ export default function App() {
                       accessibilityRole="button"
                       style={[
                         styles.lockConfirmCancelBtn,
-                        { borderColor: theme.colors.border },
+                        {
+                          backgroundColor: theme.colors.surfaceSecondary,
+                          borderColor: theme.colors.borderStrong,
+                        },
                       ]}
                       onPress={() => setPendingLockLogoutCount(null)}
                     >
@@ -561,7 +562,10 @@ export default function App() {
                     <TouchableOpacity
                       testID="lock-logout-confirm-btn"
                       accessibilityRole="button"
-                      style={styles.lockConfirmDangerBtn}
+                      style={[
+                        styles.lockConfirmDangerBtn,
+                        { backgroundColor: theme.colors.danger },
+                      ]}
                       onPress={() => {
                         handleLogout().catch(() => {});
                       }}
@@ -577,11 +581,11 @@ export default function App() {
               <TouchableOpacity
                 testID="login-biometric-btn"
                 accessibilityRole="button"
-                style={styles.unlockButton}
+                style={[styles.unlockButton, { backgroundColor: theme.colors.accent }]}
                 onPress={handleManualLockUnlock}
                 activeOpacity={0.8}
               >
-                <Text style={styles.unlockButtonText}>🔒 Unlock with Biometrics</Text>
+                <Text style={styles.unlockButtonText}>Unlock</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -621,7 +625,7 @@ export default function App() {
                     onPress={() => setShowReauthLogin(false)}
                   >
                     <Text style={[styles.reauthBackText, { color: theme.colors.accent }]}>
-                      ← Back to Offline Tasks
+                      ← Back
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -647,23 +651,22 @@ export default function App() {
                   style={[
                     styles.authRequiredBanner,
                     {
-                      backgroundColor: theme.isDark
-                        ? 'rgba(255, 159, 10, 0.2)'
-                        : '#FFF4E5',
-                      borderBottomColor: theme.isDark ? '#FF9F0A' : '#E6A100',
+                      backgroundColor: hexToRgba(
+                        theme.colors.warning,
+                        theme.isDark ? 0.16 : 0.1
+                      ),
+                      borderBottomColor: hexToRgba(theme.colors.warning, 0.4),
                     },
                   ]}
                 >
                   <Text
+                    numberOfLines={1}
                     style={[
                       styles.authRequiredText,
-                      { color: theme.isDark ? '#FFB340' : '#8A4B00' },
+                      { color: theme.colors.warning },
                     ]}
                   >
                     Session expired
-                    {pendingSyncCount > 0
-                      ? ` • ${pendingSyncCount} offline change${pendingSyncCount === 1 ? '' : 's'} preserved`
-                      : ''}
                   </Text>
                   <TouchableOpacity
                     testID="auth-required-signin-btn"
@@ -763,12 +766,6 @@ const styles = StyleSheet.create({
   lockTitle: {
     fontSize: 22,
     fontWeight: '800',
-    marginBottom: 8,
-  },
-  lockSubtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: 'center',
     marginBottom: 20,
   },
   lockErrorBanner: {
@@ -795,18 +792,16 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   lockConfirmDangerBtn: {
-    backgroundColor: '#FF453A',
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
   unlockButton: {
     width: '100%',
-    backgroundColor: '#248A3D',
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   unlockButtonText: {
     color: '#FFFFFF',

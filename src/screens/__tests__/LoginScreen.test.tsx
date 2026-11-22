@@ -30,7 +30,7 @@ describe('LoginScreen', () => {
     expect(passInput.props.autoCapitalize).toBe('none');
     expect(passInput.props.autoCorrect).toBe(false);
     expect(passInput.props.spellCheck).toBe(false);
-    expect(getByText('Connect to Vikunja')).toBeTruthy();
+    expect(getByText('Connect')).toBeTruthy();
 
     // Pressing Next on URL and Username chains focus without submitting prematurely
     fireEvent(urlInput, 'submitEditing');
@@ -198,6 +198,26 @@ describe('LoginScreen', () => {
         'https://saved.vikunja.org'
       );
       expect(getByPlaceholderText('Username').props.value).toBe('saved_user');
+    });
+  });
+
+  it('renders clean neutral secondary Unlock button when biometric session is available', async () => {
+    const { setStoredAuth, setBiometricEnabled } = require('../../utils/biometrics');
+    await setStoredAuth('stored-jwt', 'https://saved.vikunja.org', 'alice');
+    await setBiometricEnabled(true);
+    const mockBiometricUnlock = jest.fn().mockResolvedValue(undefined);
+
+    const { findByTestId, queryByText } = render(
+      <LoginScreen onConnect={mockOnConnect} onBiometricUnlock={mockBiometricUnlock} />
+    );
+
+    const bioBtn = await findByTestId('login-biometric-btn');
+    expect(bioBtn).toBeTruthy();
+    expect(queryByText(/🔒/)).toBeNull();
+
+    fireEvent.press(bioBtn);
+    await waitFor(() => {
+      expect(mockBiometricUnlock).toHaveBeenCalledTimes(1);
     });
   });
 });

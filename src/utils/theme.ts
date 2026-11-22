@@ -5,13 +5,21 @@ export interface ThemeColors {
   card: string;
   cardBackground: string;
   cardSecondary: string;
+  surfaceSecondary: string;
+  secondaryButtonBg: string;
   text: string;
   textSecondary: string;
   textTertiary: string;
+  placeholder: string;
+  checkboxBorder: string;
   border: string;
   cardBorder: string;
+  borderStrong: string;
   inputBg: string;
   accent: string;
+  success: string;
+  danger: string;
+  warning: string;
 }
 
 export interface ThemeTokens {
@@ -24,13 +32,21 @@ const DARK_COLORS: ThemeColors = {
   card: '#1C1C1E',
   cardBackground: '#1C1C1E',
   cardSecondary: '#2C2C2E',
+  surfaceSecondary: '#2C2C2E',
+  secondaryButtonBg: '#2C2C2E',
   text: '#FFFFFF',
-  textSecondary: '#8E8E93',
-  textTertiary: '#636366',
+  textSecondary: '#A1A1AA',
+  textTertiary: '#8E8E93',
+  placeholder: '#8E8E93',
+  checkboxBorder: '#A1A1AA',
   border: '#2C2C2E',
   cardBorder: '#2C2C2E',
+  borderStrong: '#3F3F46',
   inputBg: '#2C2C2E',
   accent: '#0A84FF',
+  success: '#30D158',
+  danger: '#FF453A',
+  warning: '#FF9F0A',
 };
 
 const LIGHT_COLORS: ThemeColors = {
@@ -38,13 +54,21 @@ const LIGHT_COLORS: ThemeColors = {
   card: '#FFFFFF',
   cardBackground: '#FFFFFF',
   cardSecondary: '#F9F9FB',
+  surfaceSecondary: '#E5E5EA',
+  secondaryButtonBg: '#E5E5EA',
   text: '#000000',
-  textSecondary: '#6C6C70',
-  textTertiary: '#6E6E73',
+  textSecondary: '#52525B',
+  textTertiary: '#71717A',
+  placeholder: '#71717A',
+  checkboxBorder: '#71717A',
   border: '#E5E5EA',
   cardBorder: '#E5E5EA',
+  borderStrong: '#D1D1D6',
   inputBg: '#E5E5EA',
   accent: '#007AFF',
+  success: '#248A3D',
+  danger: '#D70015',
+  warning: '#B25000',
 };
 
 export function getThemeTokens(scheme?: ColorSchemeName | null): ThemeTokens {

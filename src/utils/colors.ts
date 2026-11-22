@@ -107,12 +107,42 @@ export function getLuminance(hex: string): number {
 }
 
 /**
- * Checks if a color is too dark to be legible as text/border on Dark Mode (#1C1C1E).
+ * Checks if a color is too dark to be legible as text/border on Dark Mode (#1C1C1E) at low brightness.
  */
 export function isTooDarkForDarkTheme(hex?: string | null): boolean {
   const norm = normalizeHexColor(hex);
   if (!norm) return true;
-  return getLuminance(norm) < 0.18;
+  return getLuminance(norm) < 0.26;
+}
+
+/**
+ * Adapts overly dark colors (such as navy blue or dark slate) to a legible brighter shade for Dark Mode
+ * while preserving saturated hues and falling back cleanly for near-black achromatic shades.
+ */
+export function adaptColorForDarkTheme(hex: string, fallbackSeed = ''): string {
+  const norm = normalizeHexColor(hex);
+  if (!norm) {
+    return getDeterministicColor(fallbackSeed);
+  }
+
+  if (!isTooDarkForDarkTheme(norm)) {
+    return norm;
+  }
+
+  const { r, g, b } = parseRgb(norm);
+  const maxC = Math.max(r, g, b);
+  const minC = Math.min(r, g, b);
+
+  if (maxC - minC < 25) {
+    if (fallbackSeed) {
+      return getDeterministicColor(fallbackSeed);
+    }
+    return '#A1A1AA';
+  }
+
+  const lum = getLuminance(norm);
+  const t = lum < 1 ? Math.max(0, Math.min(1, (0.48 - lum) / (1 - lum))) : 0.45;
+  return rgbToHex(r + (255 - r) * t, g + (255 - g) * t, b + (255 - b) * t);
 }
 
 /**
@@ -185,10 +215,9 @@ export function getLabelColor(
   const norm = normalizeHexColor(serverHex, true);
   if (norm) {
     if (isDark) {
-      if (!isTooDarkForDarkTheme(norm)) return norm;
-    } else {
-      return isTooLightForLightTheme(norm) ? adaptColorForLightTheme(norm, title) : norm;
+      return isTooDarkForDarkTheme(norm) ? adaptColorForDarkTheme(norm, title) : norm;
     }
+    return isTooLightForLightTheme(norm) ? adaptColorForLightTheme(norm, title) : norm;
   }
 
   const fallback = getDeterministicColor(title);
@@ -221,14 +250,14 @@ export function resolveCanonicalLabelColor(
       const defColor = matchedByTitle.color || matchedByTitle.hex_color;
       const normDef = normalizeHexColor(defColor, true);
       if (normDef) {
-        if (isDark && !isTooDarkForDarkTheme(normDef)) {
-          return normDef;
-        }
-        if (!isDark) {
-          return isTooLightForLightTheme(normDef)
-            ? adaptColorForLightTheme(normDef, label.title)
+        if (isDark) {
+          return isTooDarkForDarkTheme(normDef)
+            ? adaptColorForDarkTheme(normDef, label.title)
             : normDef;
         }
+        return isTooLightForLightTheme(normDef)
+          ? adaptColorForLightTheme(normDef, label.title)
+          : normDef;
       }
     }
   }

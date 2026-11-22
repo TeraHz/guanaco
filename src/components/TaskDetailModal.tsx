@@ -36,15 +36,6 @@ interface TaskDetailModalProps {
   onMoveTask?: (taskId: number, newProjectId: number) => void;
 }
 
-const PRIORITY_LEVELS = [
-  { value: 0, label: 'None', color: '#8E8E93' },
-  { value: 1, label: 'Low', color: '#007AFF' },
-  { value: 2, label: 'Medium', color: '#FF9500' },
-  { value: 3, label: 'High', color: '#FF3B30' },
-  { value: 4, label: 'Urgent', color: '#AF52DE' },
-  { value: 5, label: 'Critical', color: '#FF2D55' },
-];
-
 const PROGRESS_PRESETS = [0, 25, 50, 75, 100];
 
 const COLOR_PRESETS = [
@@ -91,6 +82,15 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   onCreateTask,
 }) => {
   const theme = useAppTheme();
+
+  const priorityLevels = [
+    { value: 0, label: 'None', color: theme.colors.accent },
+    { value: 1, label: 'Low', color: theme.colors.accent },
+    { value: 2, label: 'Medium', color: theme.colors.warning },
+    { value: 3, label: 'High', color: theme.colors.danger },
+    { value: 4, label: 'Urgent', color: theme.isDark ? '#BF5AF2' : '#7E22CE' },
+    { value: 5, label: 'Critical', color: theme.isDark ? '#FF375F' : '#BE123C' },
+  ];
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -251,7 +251,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     }
 
     if (!task && projectId <= 0 && availableProjects.length === 0) {
-      // Allow fallback if defaultProjectId was provided in tests, otherwise guard invalid projectId <= 0
       if (!defaultProjectId || defaultProjectId <= 0) {
         setValidationError('Please create a list before adding tasks.');
         return;
@@ -345,7 +344,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       assignees: finalAssignees,
     };
 
-    // `onSave` -> `taskStore.updateTaskDetails` already updates `project_id` and schedules/cancels reminders!
     onSave(task.id, updatePayload);
     onClose();
   };
@@ -429,8 +427,13 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
   const selectedProjectObj = availableProjects.find((p) => p.id === projectId);
   const selectedProjectDotColor =
-    normalizeHexColor(selectedProjectObj?.hex_color ?? undefined, true) || '#007AFF';
-  const selectedRingColor = theme.isDark ? '#FFFFFF' : '#1C1C1E';
+    normalizeHexColor(selectedProjectObj?.hex_color ?? undefined, true) || theme.colors.accent;
+  const selectedRingColor = theme.colors.text;
+
+  const secondarySurface = {
+    backgroundColor: theme.colors.surfaceSecondary,
+    borderColor: theme.colors.borderStrong,
+  };
 
   if (!visible) return null;
 
@@ -483,7 +486,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               <TouchableOpacity
                 testID="task-detail-save-btn"
                 onPress={handleSave}
-                style={[styles.headerBtn, styles.saveBtn]}
+                style={[styles.headerBtn, styles.saveBtn, { backgroundColor: theme.colors.accent }]}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
                 accessibilityLabel="Save task"
@@ -495,10 +498,20 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             {validationError ? (
               <View
                 testID="task-detail-error-banner"
-                style={styles.errorBanner}
+                style={[
+                  styles.errorBanner,
+                  {
+                    borderLeftColor: theme.colors.danger,
+                    backgroundColor: theme.isDark
+                      ? 'rgba(255, 69, 58, 0.15)'
+                      : 'rgba(215, 0, 21, 0.1)',
+                  },
+                ]}
                 accessibilityRole="alert"
               >
-                <Text style={styles.errorText}>{validationError}</Text>
+                <Text style={[styles.errorText, { color: theme.colors.danger }]}>
+                  {validationError}
+                </Text>
               </View>
             ) : null}
 
@@ -507,7 +520,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 testID="task-web-delete-confirm"
                 style={[
                   styles.confirmBanner,
-                  { backgroundColor: theme.colors.cardBackground, borderColor: '#FF453A' },
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.danger,
+                  },
                 ]}
               >
                 <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
@@ -516,17 +532,21 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 <View style={styles.confirmBannerActions}>
                   <TouchableOpacity
                     testID="task-confirm-cancel-btn"
-                    style={[styles.confirmBtn, { backgroundColor: '#8E8E93' }]}
+                    style={[styles.confirmCancelBtn, secondarySurface]}
                     onPress={() => setShowWebDeleteConfirm(false)}
+                    accessibilityRole="button"
                   >
-                    <Text style={styles.confirmBtnText}>Cancel</Text>
+                    <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
+                      Cancel
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     testID="task-confirm-delete-btn"
-                    style={[styles.confirmBtn, { backgroundColor: '#FF453A' }]}
+                    style={[styles.confirmDeleteBtn, { backgroundColor: theme.colors.danger }]}
                     onPress={performDeleteTask}
+                    accessibilityRole="button"
                   >
-                    <Text style={styles.confirmBtnText}>Delete</Text>
+                    <Text style={styles.confirmDeleteBtnText}>Delete</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -537,7 +557,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               contentContainerStyle={styles.scrollContent}
               keyboardShouldPersistTaps="handled"
             >
-              {/* Title & Done Checkbox (Top-most in dialog) */}
+              {/* Title & Done Checkbox */}
               <View
                 style={[
                   styles.sectionCard,
@@ -552,13 +572,13 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     testID="task-detail-done-toggle"
                     style={[
                       styles.checkbox,
-                      done && styles.checkboxDone,
                       {
-                        borderColor: done
-                          ? '#30D158'
+                        borderColor: done ? theme.colors.success : theme.colors.checkboxBorder,
+                        backgroundColor: done
+                          ? theme.colors.success
                           : theme.isDark
-                          ? '#636366'
-                          : '#8E8E93',
+                          ? 'rgba(255, 255, 255, 0.03)'
+                          : 'transparent',
                       },
                     ]}
                     onPress={() => {
@@ -576,7 +596,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     testID="task-detail-title-input"
                     style={[
                       styles.titleInput,
-                      { color: theme.colors.text },
+                      { color: done ? theme.colors.textSecondary : theme.colors.text },
                       done && styles.titleInputDone,
                     ]}
                     value={title}
@@ -585,14 +605,14 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       if (validationError) setValidationError(null);
                     }}
                     placeholder="Task title"
-                    placeholderTextColor={theme.colors.textSecondary}
+                    placeholderTextColor={theme.colors.placeholder}
                     multiline
                     autoFocus={task === null}
                   />
                 </View>
               </View>
 
-              {/* List / Project Picker */}
+              {/* List Picker */}
               {availableProjects && availableProjects.length > 0 && (
                 <View
                   style={[
@@ -604,17 +624,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   ]}
                 >
                   <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                    LIST / PROJECT
+                    LIST
                   </Text>
                   <TouchableOpacity
                     testID="task-project-picker-btn"
-                    style={[
-                      styles.projectPickerBtn,
-                      {
-                        backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                        borderColor: theme.colors.cardBorder,
-                      },
-                    ]}
+                    style={[styles.projectPickerBtn, secondarySurface]}
                     onPress={() => setShowProjectPicker(!showProjectPicker)}
                     activeOpacity={0.7}
                     accessibilityRole="button"
@@ -638,15 +652,16 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       style={[
                         styles.projectDropdown,
                         {
-                          backgroundColor: theme.isDark ? '#252528' : '#F2F2F7',
-                          borderColor: theme.colors.cardBorder,
+                          backgroundColor: theme.colors.cardSecondary,
+                          borderColor: theme.colors.borderStrong,
                         },
                       ]}
                     >
                       {availableProjects.map((proj) => {
                         const isSelected = proj.id === projectId;
                         const optDotColor =
-                          normalizeHexColor(proj.hex_color ?? undefined, true) || '#007AFF';
+                          normalizeHexColor(proj.hex_color ?? undefined, true) ||
+                          theme.colors.accent;
                         return (
                           <TouchableOpacity
                             key={proj.id}
@@ -654,7 +669,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                             style={[
                               styles.projectOption,
                               isSelected && {
-                                backgroundColor: theme.isDark ? '#3A3A3C' : '#E5E5EA',
+                                backgroundColor: theme.colors.surfaceSecondary,
                               },
                             ]}
                             onPress={() => {
@@ -681,7 +696,16 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                             >
                               {proj.title}
                             </Text>
-                            {isSelected && <Text style={styles.projectCheckmark}>✓</Text>}
+                            {isSelected && (
+                              <Text
+                                style={[
+                                  styles.projectCheckmark,
+                                  { color: theme.colors.accent },
+                                ]}
+                              >
+                                ✓
+                              </Text>
+                            )}
                           </TouchableOpacity>
                         );
                       })}
@@ -690,7 +714,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 </View>
               )}
 
-              {/* Description */}
+              {/* Notes */}
               <View
                 style={[
                   styles.sectionCard,
@@ -701,7 +725,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  DESCRIPTION & NOTES
+                  NOTES
                 </Text>
                 <TextInput
                   testID="task-detail-description-input"
@@ -709,14 +733,14 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     styles.descriptionInput,
                     {
                       color: theme.colors.text,
-                      backgroundColor: theme.isDark ? '#161618' : '#F9F9FB',
-                      borderColor: theme.colors.cardBorder,
+                      backgroundColor: theme.colors.inputBg,
+                      borderColor: theme.colors.borderStrong,
                     },
                   ]}
                   value={description}
                   onChangeText={setDescription}
-                  placeholder="Add details, markdown, or instructions..."
-                  placeholderTextColor={theme.colors.textSecondary}
+                  placeholder="Add notes..."
+                  placeholderTextColor={theme.colors.placeholder}
                   multiline
                   numberOfLines={4}
                   textAlignVertical="top"
@@ -737,7 +761,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   PRIORITY
                 </Text>
                 <View style={styles.chipRow}>
-                  {PRIORITY_LEVELS.map((item) => {
+                  {priorityLevels.map((item) => {
                     const isSelected = priority === item.value;
                     return (
                       <TouchableOpacity
@@ -745,14 +769,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         testID={`priority-option-${item.value}`}
                         style={[
                           styles.chip,
-                          {
-                            backgroundColor: isSelected
-                              ? item.color
-                              : theme.isDark
-                              ? '#2C2C2E'
-                              : '#E5E5EA',
-                            borderColor: isSelected ? item.color : 'transparent',
-                          },
+                          isSelected
+                            ? {
+                                backgroundColor: item.color,
+                                borderColor: item.color,
+                              }
+                            : secondarySurface,
                         ]}
                         onPress={() => {
                           safeHaptics.selection();
@@ -765,11 +787,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                           style={[
                             styles.chipText,
                             {
-                              color: isSelected
-                                ? '#FFFFFF'
-                                : theme.isDark
-                                ? '#D1D1D6'
-                                : '#3A3A3C',
+                              color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
                             },
                           ]}
                         >
@@ -792,14 +810,19 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <View style={styles.sectionHeaderRow}>
-                  <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                  <Text
+                    style={[
+                      styles.sectionLabel,
+                      { color: theme.colors.textSecondary, marginBottom: 0 },
+                    ]}
+                  >
                     PROGRESS
                   </Text>
                   <Text
                     testID="task-detail-progress-display"
-                    style={[styles.progressDisplay, { color: theme.colors.text }]}
+                    style={[styles.progressDisplay, { color: theme.colors.textSecondary }]}
                   >
-                    {percentDone}% Complete
+                    {`${percentDone}%`}
                   </Text>
                 </View>
                 <View style={styles.chipRow}>
@@ -811,13 +834,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         testID={`progress-option-${pct}`}
                         style={[
                           styles.chip,
-                          {
-                            backgroundColor: isSelected
-                              ? '#0A84FF'
-                              : theme.isDark
-                              ? '#2C2C2E'
-                              : '#E5E5EA',
-                          },
+                          isSelected
+                            ? {
+                                backgroundColor: theme.colors.accent,
+                                borderColor: theme.colors.accent,
+                              }
+                            : secondarySurface,
                         ]}
                         onPress={() => {
                           safeHaptics.selection();
@@ -830,11 +852,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                           style={[
                             styles.chipText,
                             {
-                              color: isSelected
-                                ? '#FFFFFF'
-                                : theme.isDark
-                                ? '#D1D1D6'
-                                : '#3A3A3C',
+                              color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
                             },
                           ]}
                         >
@@ -863,13 +881,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   {assignees.map((user) => (
                     <View
                       key={user.id || user.username}
-                      style={[
-                        styles.itemBadge,
-                        {
-                          backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                          borderColor: theme.colors.cardBorder,
-                        },
-                      ]}
+                      style={[styles.itemBadge, secondarySurface]}
                     >
                       <Text style={[styles.itemBadgeText, { color: theme.colors.text }]}>
                         @{user.username}
@@ -882,7 +894,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         accessibilityRole="button"
                         accessibilityLabel={`Remove assignee ${user.username}`}
                       >
-                        <Text style={styles.removeBadgeIcon}>✕</Text>
+                        <Text
+                          style={[styles.removeBadgeIcon, { color: theme.colors.textSecondary }]}
+                        >
+                          ✕
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   ))}
@@ -896,12 +912,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       styles.addInput,
                       {
                         color: theme.colors.text,
-                        backgroundColor: theme.isDark ? '#161618' : '#F9F9FB',
-                        borderColor: theme.colors.cardBorder,
+                        backgroundColor: theme.colors.inputBg,
+                        borderColor: theme.colors.borderStrong,
                       },
                     ]}
                     placeholder="Add @user..."
-                    placeholderTextColor={theme.colors.textSecondary}
+                    placeholderTextColor={theme.colors.placeholder}
                     value={newAssigneeText}
                     onChangeText={setNewAssigneeText}
                     onSubmitEditing={() => handleAddAssignee()}
@@ -910,7 +926,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   />
                   <TouchableOpacity
                     testID="add-assignee-btn"
-                    style={[styles.addBtn, { backgroundColor: '#0A84FF' }]}
+                    style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
                     onPress={() => handleAddAssignee()}
                     accessibilityRole="button"
                   >
@@ -933,7 +949,8 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.suggestionText, { color: theme.colors.text }]}>
-                          👤 @{user.username} {user.name ? `(${user.name})` : ''}
+                          @{user.username}
+                          {user.name ? ` (${user.name})` : ''}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -996,12 +1013,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       styles.addInput,
                       {
                         color: theme.colors.text,
-                        backgroundColor: theme.isDark ? '#161618' : '#F9F9FB',
-                        borderColor: theme.colors.cardBorder,
+                        backgroundColor: theme.colors.inputBg,
+                        borderColor: theme.colors.borderStrong,
                       },
                     ]}
                     placeholder="Add #label..."
-                    placeholderTextColor={theme.colors.textSecondary}
+                    placeholderTextColor={theme.colors.placeholder}
                     value={newLabelText}
                     onChangeText={setNewLabelText}
                     onSubmitEditing={() => handleAddLabel()}
@@ -1009,7 +1026,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   />
                   <TouchableOpacity
                     testID="add-label-btn"
-                    style={[styles.addBtn, { backgroundColor: '#30D158' }]}
+                    style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
                     onPress={() => handleAddLabel()}
                     accessibilityRole="button"
                   >
@@ -1028,10 +1045,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       .map((al) => (
                         <TouchableOpacity
                           key={al}
-                          style={[
-                            styles.quickLabelChip,
-                            { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
-                          ]}
+                          style={[styles.quickLabelChip, secondarySurface]}
                           onPress={() => handleAddLabel(al)}
                           accessibilityRole="button"
                         >
@@ -1057,14 +1071,17 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  TASK COLOR ACCENT
+                  COLOR
                 </Text>
                 <View style={styles.chipRow}>
                   <TouchableOpacity
                     testID="task-color-none"
                     style={[
                       styles.colorCircle,
-                      { backgroundColor: 'transparent', borderColor: theme.colors.cardBorder },
+                      {
+                        backgroundColor: theme.colors.surfaceSecondary,
+                        borderColor: theme.colors.borderStrong,
+                      },
                       !color && [
                         styles.colorCircleSelected,
                         { borderColor: selectedRingColor },
@@ -1139,12 +1156,24 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               {task && (
                 <TouchableOpacity
                   testID="task-detail-delete-btn"
-                  style={styles.deleteBtn}
+                  style={[
+                    styles.deleteBtn,
+                    {
+                      borderColor: theme.isDark
+                        ? 'rgba(255, 69, 58, 0.35)'
+                        : 'rgba(215, 0, 21, 0.3)',
+                      backgroundColor: theme.isDark
+                        ? 'rgba(255, 69, 58, 0.12)'
+                        : 'rgba(215, 0, 21, 0.08)',
+                    },
+                  ]}
                   onPress={handleDelete}
                   activeOpacity={0.8}
                   accessibilityRole="button"
                 >
-                  <Text style={styles.deleteBtnText}>Delete Task</Text>
+                  <Text style={[styles.deleteBtnText, { color: theme.colors.danger }]}>
+                    Delete Task
+                  </Text>
                 </TouchableOpacity>
               )}
             </ScrollView>
@@ -1173,7 +1202,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
   },
@@ -1189,7 +1218,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   saveBtn: {
-    backgroundColor: '#0A84FF',
     borderRadius: 8,
     paddingHorizontal: 14,
   },
@@ -1199,9 +1227,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   errorBanner: {
-    backgroundColor: 'rgba(255, 69, 58, 0.15)',
     borderLeftWidth: 4,
-    borderLeftColor: '#FF453A',
     paddingHorizontal: 14,
     paddingVertical: 10,
     marginHorizontal: 16,
@@ -1209,7 +1235,6 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   errorText: {
-    color: '#FF453A',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -1233,12 +1258,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
-  confirmBtn: {
+  confirmCancelBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  confirmCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  confirmDeleteBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
   },
-  confirmBtnText: {
+  confirmDeleteBtnText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
@@ -1264,14 +1299,11 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    borderWidth: 2,
+    borderWidth: 1.75,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
     marginTop: 2,
-  },
-  checkboxDone: {
-    backgroundColor: '#30D158',
   },
   checkmark: {
     color: '#FFFFFF',
@@ -1287,7 +1319,6 @@ const styles = StyleSheet.create({
   },
   titleInputDone: {
     textDecorationLine: 'line-through',
-    opacity: 0.6,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -1322,7 +1353,6 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: 'transparent',
   },
   chipText: {
     fontSize: 13,
@@ -1347,7 +1377,6 @@ const styles = StyleSheet.create({
   removeBadgeIcon: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#8E8E93',
   },
   addInputRow: {
     flexDirection: 'row',
@@ -1397,6 +1426,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+    borderWidth: 1,
   },
   quickLabelText: {
     fontSize: 12,
@@ -1406,7 +1436,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1416,18 +1446,15 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.15 }],
   },
   deleteBtn: {
-    backgroundColor: 'rgba(255, 69, 58, 0.15)',
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255, 69, 58, 0.3)',
   },
   deleteBtnText: {
-    color: '#FF453A',
     fontWeight: '700',
-    fontSize: 16,
+    fontSize: 15,
   },
   projectPickerBtn: {
     flexDirection: 'row',
@@ -1470,7 +1497,6 @@ const styles = StyleSheet.create({
   },
   projectCheckmark: {
     fontSize: 14,
-    color: '#30D158',
     fontWeight: '700',
   },
 });

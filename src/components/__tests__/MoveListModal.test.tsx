@@ -44,9 +44,7 @@ describe('MoveListModal', () => {
 
     // Verify un-prefixed hex '3498db' is normalized to '#3498db'
     const dot1 = getByTestId('move-project-dot-1');
-    const flatStyle = Array.isArray(dot1.props.style)
-      ? Object.assign({}, ...dot1.props.style.filter(Boolean))
-      : dot1.props.style;
+    const flatStyle = ReactNative.StyleSheet.flatten(dot1.props.style);
     expect(flatStyle.backgroundColor).toBe('#3498db');
   });
 
@@ -67,10 +65,10 @@ describe('MoveListModal', () => {
     expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it('renders current list highlight legibly in Light Mode and calls onClose when close button is pressed', () => {
-    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue('light');
+  it('highlights current list using semantic accent blue in Light and Dark modes and calls onClose when close button is pressed', () => {
+    const schemeSpy = jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue('light');
 
-    const { getByTestId, getByText } = render(
+    const { getByTestId, getByText, rerender } = render(
       <MoveListModal
         visible={true}
         currentProjectId={1}
@@ -80,11 +78,20 @@ describe('MoveListModal', () => {
       />
     );
 
-    const inboxText = getByText('Inbox');
-    const flatText = Array.isArray(inboxText.props.style)
-      ? Object.assign({}, ...inboxText.props.style.filter(Boolean))
-      : inboxText.props.style;
-    expect(flatText.color).toBe('#15803D');
+    expect(ReactNative.StyleSheet.flatten(getByText('Inbox').props.style).color).toBe('#007AFF');
+
+    schemeSpy.mockReturnValue('dark');
+    rerender(
+      <MoveListModal
+        visible={true}
+        currentProjectId={1}
+        projects={mockProjects}
+        onSelectProject={mockOnSelectProject}
+        onClose={mockOnClose}
+      />
+    );
+    expect(ReactNative.StyleSheet.flatten(getByText('Inbox').props.style).color).toBe('#0A84FF');
+    expect(ReactNative.StyleSheet.flatten(getByText('Current').props.style).color).toBe('#A1A1AA');
 
     fireEvent.press(getByTestId('move-modal-close'));
     expect(mockOnClose).toHaveBeenCalled();

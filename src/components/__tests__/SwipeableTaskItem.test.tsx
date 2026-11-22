@@ -66,17 +66,18 @@ describe('SwipeableTaskItem', () => {
     expect(getByTestId('task-label-10-Produce')).toBeTruthy();
 
     const strip = getByTestId('task-priority-strip-10');
-    const flatStrip = Object.assign({}, ...strip.props.style.filter(Boolean));
-    expect(flatStrip.backgroundColor).toBe('#FF3B30');
+    const flatStrip = ReactNative.StyleSheet.flatten(strip.props.style);
+    expect(flatStrip.backgroundColor).toBe('#D70015');
 
     const checkbox = getByTestId('task-checkbox-10');
     expect(checkbox.props.accessibilityRole).toBe('checkbox');
     expect(checkbox.props.accessibilityState).toEqual({ checked: false });
     const flatCheckbox = ReactNative.StyleSheet.flatten(checkbox.props.style);
-    expect(flatCheckbox.borderColor).toBe('#8E8E93');
+    expect(flatCheckbox.borderColor).toBe('#71717A');
+    expect(flatCheckbox.borderWidth).toBe(1.75);
   });
 
-  it('uses WCAG >=3:1 border contrast (#636366) on unchecked checkbox in Dark Mode', () => {
+  it('uses night-legible checkboxBorder (#A1A1AA) with 1.75px width and subtle inner contrast on unchecked checkbox in Dark Mode', () => {
     jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue('dark');
     const { getByTestId } = render(
       <SwipeableTaskItem
@@ -87,8 +88,12 @@ describe('SwipeableTaskItem', () => {
         onPress={mockOnPress}
       />
     );
-    const checkbox = getByTestId('task-checkbox-10');
-    expect(ReactNative.StyleSheet.flatten(checkbox.props.style).borderColor).toBe('#636366');
+    const darkCheckbox = ReactNative.StyleSheet.flatten(
+      getByTestId('task-checkbox-10').props.style
+    );
+    expect(darkCheckbox.borderColor).toBe('#A1A1AA');
+    expect(darkCheckbox.borderWidth).toBe(1.75);
+    expect(darkCheckbox.backgroundColor).toBe('rgba(255, 255, 255, 0.03)');
   });
 
   it('reads inbound Vikunja task.hex_color when task.color is undefined and ignores unset "000000" hex_color', () => {
@@ -533,7 +538,8 @@ describe('SwipeableTaskItem', () => {
     expect(getByTestId('task-title-99').props.numberOfLines).toBe(3);
   });
 
-  it('renders completed tasks with strike-through textDecorationLine styling indicator', () => {
+  it('renders completed tasks with strike-through, lifted night-mode secondary text (#A1A1AA), zero opacity stacking, and #30D158 green checkbox', () => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue('dark');
     const completedTask: Task = { ...mockTask, done: true };
     const { getByTestId } = render(
       <SwipeableTaskItem
@@ -545,10 +551,20 @@ describe('SwipeableTaskItem', () => {
       />
     );
 
-    const titleText = getByTestId(`task-title-${completedTask.id}`);
-    expect(ReactNative.StyleSheet.flatten(titleText.props.style).textDecorationLine).toBe(
-      'line-through'
+    const cardStyle = ReactNative.StyleSheet.flatten(
+      getByTestId(`task-item-${completedTask.id}`).props.style
     );
+    expect(cardStyle.opacity).toBe(1);
+
+    const titleText = getByTestId(`task-title-${completedTask.id}`);
+    const flatTitle = ReactNative.StyleSheet.flatten(titleText.props.style);
+    expect(flatTitle.textDecorationLine).toBe('line-through');
+    expect(flatTitle.color).toBe('#A1A1AA');
+
+    const doneCheckbox = ReactNative.StyleSheet.flatten(
+      getByTestId(`task-checkbox-${completedTask.id}`).props.style
+    );
+    expect(doneCheckbox.backgroundColor).toBe('#30D158');
   });
 
   it('renders progress indicator badge when task has legacy >1 integer percent_done', () => {

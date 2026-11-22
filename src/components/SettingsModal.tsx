@@ -103,7 +103,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
     const info = await checkForUpdate(true);
     if (info?.isAvailable) {
-      setUpdateStatusMsg(`Build ${info.availableVersionCode} Available!`);
+      setUpdateStatusMsg(null);
     } else {
       setUpdateStatusMsg('✓ Up to date');
       if (updateStatusTimerRef.current) clearTimeout(updateStatusTimerRef.current);
@@ -157,8 +157,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleToggleBiometric = async (value: boolean) => {
     const promptReason = value
-      ? 'Verify identity to enable Biometric Unlock'
-      : 'Verify identity to disable Biometric Unlock';
+      ? 'Verify identity to enable Biometric Lock'
+      : 'Verify identity to disable Biometric Lock';
     try {
       const passed = await authenticateWithBiometrics(promptReason);
       if (!passed) {
@@ -259,25 +259,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const syncStatusColor =
     syncStatus === 'synced'
-      ? theme.isDark
-        ? '#30D158'
-        : '#15803D'
+      ? theme.colors.success
       : syncStatus === 'syncing'
       ? theme.colors.accent
       : (syncStatus as string) === 'auth_required'
-      ? '#FF453A'
-      : theme.isDark
-      ? '#FF9F0A'
-      : '#B45309';
+      ? theme.colors.danger
+      : theme.colors.warning;
 
   const syncStatusLabel =
     syncStatus === 'synced'
-      ? '● Fully Synced'
+      ? '● Synced'
       : syncStatus === 'syncing'
-      ? '◌ Syncing...'
+      ? 'Syncing...'
       : (syncStatus as string) === 'auth_required'
-      ? `🔒 Re-authentication Required (${pendingSyncCount} pending)`
-      : `⚡ Offline (${pendingSyncCount} pending)`;
+      ? pendingSyncCount > 0
+        ? `Sign-in required (${pendingSyncCount} pending)`
+        : 'Sign-in required'
+      : pendingSyncCount > 0
+      ? `● Offline (${pendingSyncCount} pending)`
+      : '● Offline';
+
+  const secondaryBtnSurface = {
+    backgroundColor: theme.colors.surfaceSecondary,
+    borderColor: theme.colors.borderStrong,
+  };
 
   if (!visible) return null;
 
@@ -325,7 +330,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               testID="settings-confirm-banner"
               style={[
                 styles.confirmBanner,
-                { backgroundColor: theme.colors.cardBackground, borderColor: '#FF453A' },
+                {
+                  backgroundColor: theme.colors.cardBackground,
+                  borderColor: theme.colors.danger,
+                },
               ]}
             >
               <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
@@ -336,17 +344,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <View style={styles.confirmBannerActions}>
                 <TouchableOpacity
                   testID="settings-confirm-cancel-btn"
-                  style={[styles.confirmBtn, { backgroundColor: '#8E8E93' }]}
+                  style={[styles.confirmCancelBtn, secondaryBtnSurface]}
                   onPress={() => setPendingConfirmAction(null)}
+                  accessibilityRole="button"
                 >
-                  <Text style={styles.confirmBtnText}>Cancel</Text>
+                  <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
+                    Cancel
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   testID="settings-confirm-proceed-btn"
-                  style={[styles.confirmBtn, { backgroundColor: '#FF453A' }]}
+                  style={[styles.confirmProceedBtn, { backgroundColor: theme.colors.danger }]}
                   onPress={pendingConfirmAction === 'reset' ? executeResetAndSync : executeLogout}
+                  accessibilityRole="button"
                 >
-                  <Text style={styles.confirmBtnText}>
+                  <Text style={styles.confirmProceedBtnText}>
                     {pendingConfirmAction === 'reset' ? 'Overwrite' : 'Log Out'}
                   </Text>
                 </TouchableOpacity>
@@ -359,7 +371,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
           >
-            {/* Account & Server Section */}
+            {/* Account Section */}
             <View
               style={[
                 styles.sectionCard,
@@ -370,7 +382,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ]}
             >
               <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                VIKUNJA SERVER & ACCOUNT
+                ACCOUNT
               </Text>
               <View style={styles.infoRow}>
                 <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Server</Text>
@@ -395,20 +407,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {displayUsername ? `@${displayUsername}` : 'Connected'}
                 </Text>
               </View>
-              <View
-                style={[
-                  styles.infoRow,
-                  {
-                    borderTopColor: theme.colors.cardBorder,
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                  },
-                ]}
-              >
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Version</Text>
-                <Text style={[styles.infoValue, { color: theme.colors.text }]}>
-                  v{APP_VERSION} (Build {APP_BUILD_NUMBER})
-                </Text>
-              </View>
             </View>
 
             {/* Preferences Section */}
@@ -422,23 +420,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ]}
             >
               <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                TASK PREFERENCES
+                PREFERENCES
               </Text>
               <View style={styles.settingBlock}>
                 <View style={styles.settingRow}>
                   <View style={styles.settingTextCol}>
                     <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                      Task Box Size ({taskItemScale}%)
-                    </Text>
-                    <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                      Scale box padding, height, and tap targets (
-                      {taskItemScale > 100 ? `+${taskItemScale - 100}%` : 'Standard'})
+                      Task Box Size
                     </Text>
                   </View>
                   <View style={styles.stepperContainer}>
                     <TouchableOpacity
                       testID="settings-scale-decrement"
-                      style={[styles.stepperBtn, taskItemScale <= 100 && styles.stepperBtnDisabled]}
+                      style={[
+                        styles.stepperBtn,
+                        secondaryBtnSurface,
+                        taskItemScale <= 100 && styles.stepperBtnDisabled,
+                      ]}
                       disabled={taskItemScale <= 100}
                       onPress={() => {
                         const newScale = Math.max(100, taskItemScale - 25);
@@ -452,7 +450,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <Text
                         style={[
                           styles.stepperBtnText,
-                          { color: taskItemScale <= 100 ? '#8E8E93' : '#007AFF' },
+                          {
+                            color:
+                              taskItemScale <= 100
+                                ? theme.colors.textTertiary
+                                : theme.colors.accent,
+                          },
                         ]}
                       >
                         −
@@ -468,7 +471,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </View>
                     <TouchableOpacity
                       testID="settings-scale-increment"
-                      style={[styles.stepperBtn, taskItemScale >= 200 && styles.stepperBtnDisabled]}
+                      style={[
+                        styles.stepperBtn,
+                        secondaryBtnSurface,
+                        taskItemScale >= 200 && styles.stepperBtnDisabled,
+                      ]}
                       disabled={taskItemScale >= 200}
                       onPress={() => {
                         const newScale = Math.min(200, taskItemScale + 25);
@@ -482,7 +489,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <Text
                         style={[
                           styles.stepperBtnText,
-                          { color: taskItemScale >= 200 ? '#8E8E93' : '#007AFF' },
+                          {
+                            color:
+                              taskItemScale >= 200
+                                ? theme.colors.textTertiary
+                                : theme.colors.accent,
+                          },
                         ]}
                       >
                         +
@@ -502,11 +514,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         style={[
                           styles.presetChip,
                           isSelected
-                            ? { backgroundColor: '#007AFF', borderColor: '#007AFF' }
-                            : {
-                                backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                                borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
-                              },
+                            ? {
+                                backgroundColor: theme.colors.accent,
+                                borderColor: theme.colors.accent,
+                              }
+                            : secondaryBtnSurface,
                         ]}
                         onPress={() => {
                           setTaskItemScale(preset);
@@ -532,15 +544,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   })}
                 </View>
 
-                {/* Task Text Size (Separate setting) */}
-                <View style={[styles.settingRow, { marginTop: 16 }]}>
+                {/* Task Text Size */}
+                <View style={[styles.settingRow, { marginTop: 14 }]}>
                   <View style={styles.settingTextCol}>
                     <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                      Task Text Size ({taskItemTextScale}%)
-                    </Text>
-                    <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                      Scale title and metadata font size (
-                      {taskItemTextScale > 100 ? `+${taskItemTextScale - 100}%` : 'Standard'})
+                      Task Text Size
                     </Text>
                   </View>
                   <View style={styles.stepperContainer}>
@@ -548,6 +556,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       testID="settings-text-scale-decrement"
                       style={[
                         styles.stepperBtn,
+                        secondaryBtnSurface,
                         taskItemTextScale <= 100 && styles.stepperBtnDisabled,
                       ]}
                       disabled={taskItemTextScale <= 100}
@@ -563,7 +572,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <Text
                         style={[
                           styles.stepperBtnText,
-                          { color: taskItemTextScale <= 100 ? '#8E8E93' : '#007AFF' },
+                          {
+                            color:
+                              taskItemTextScale <= 100
+                                ? theme.colors.textTertiary
+                                : theme.colors.accent,
+                          },
                         ]}
                       >
                         −
@@ -581,6 +595,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       testID="settings-text-scale-increment"
                       style={[
                         styles.stepperBtn,
+                        secondaryBtnSurface,
                         taskItemTextScale >= 200 && styles.stepperBtnDisabled,
                       ]}
                       disabled={taskItemTextScale >= 200}
@@ -596,7 +611,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <Text
                         style={[
                           styles.stepperBtnText,
-                          { color: taskItemTextScale >= 200 ? '#8E8E93' : '#007AFF' },
+                          {
+                            color:
+                              taskItemTextScale >= 200
+                                ? theme.colors.textTertiary
+                                : theme.colors.accent,
+                          },
                         ]}
                       >
                         +
@@ -616,11 +636,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         style={[
                           styles.presetChip,
                           isSelected
-                            ? { backgroundColor: '#007AFF', borderColor: '#007AFF' }
-                            : {
-                                backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                                borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
-                              },
+                            ? {
+                                backgroundColor: theme.colors.accent,
+                                borderColor: theme.colors.accent,
+                              }
+                            : secondaryBtnSurface,
                         ]}
                         onPress={() => {
                           setTaskItemTextScale(preset);
@@ -680,7 +700,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Re-enable Staple Tasks
                   </Text>
                   <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                    Suggest previously completed grocery items when typing
+                    Suggest completed items when typing
                   </Text>
                 </View>
                 <Switch
@@ -690,7 +710,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     setReenableStaples(val);
                     safeHaptics.selection();
                   }}
-                  trackColor={{ false: theme.isDark ? '#3A3A3C' : '#D1D1D6', true: '#30D158' }}
+                  trackColor={{
+                    false: theme.colors.borderStrong,
+                    true: theme.colors.success,
+                  }}
                   thumbColor="#FFFFFF"
                 />
               </View>
@@ -707,17 +730,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 >
                   <View style={styles.settingTextCol}>
                     <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                      🔒 Biometric Unlock
-                    </Text>
-                    <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                      Require fingerprint or face ID to open app
+                      Biometric Lock
                     </Text>
                   </View>
                   <Switch
                     testID="settings-biometric-switch"
                     value={biometricActive}
                     onValueChange={handleToggleBiometric}
-                    trackColor={{ false: theme.isDark ? '#3A3A3C' : '#D1D1D6', true: '#30D158' }}
+                    trackColor={{
+                      false: theme.colors.borderStrong,
+                      true: theme.colors.success,
+                    }}
                     thumbColor="#FFFFFF"
                   />
                 </View>
@@ -750,14 +773,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   accessibilityRole="button"
                 >
                   <Text style={[styles.menuRowTitle, { color: theme.colors.text }]}>
-                    🏷️ Manage Labels
+                    Manage Labels
                   </Text>
                   <Text style={[styles.menuRowArrow, { color: theme.colors.textSecondary }]}>›</Text>
                 </TouchableOpacity>
               </View>
             )}
 
-            {/* On-Device Intelligence - only shown when supported */}
+            {/* Smart Grouping - only shown when supported */}
             {hasAICore && (
               <View
                 testID="settings-aicore-section"
@@ -770,32 +793,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  ON-DEVICE INTELLIGENCE
+                  SMART GROUPING
                 </Text>
                 <View style={styles.infoRow}>
                   <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
-                    Engine
+                    Mode
                   </Text>
                   <Text
                     testID="settings-aicore-engine-label"
-                    style={[
-                      styles.infoValue,
-                      { color: theme.isDark ? '#30D158' : '#15803D' },
-                    ]}
+                    style={[styles.infoValue, { color: theme.colors.textSecondary }]}
                   >
-                    {hasLivePromptApi
-                      ? '● Gemini Nano (On-Device Prompt API)'
-                      : '● On-Device Contextual Heuristics'}
+                    {hasLivePromptApi ? 'Gemini Nano (On-Device)' : 'On-Device Heuristics'}
                   </Text>
                 </View>
-                <Text style={[styles.aicoreDesc, { color: theme.colors.textSecondary }]}>
-                  {hasLivePromptApi
-                    ? 'On-device Gemini Nano Prompt API categorizes tasks locally on your device. Zero data is shared with external cloud servers.'
-                    : 'Local contextual task grouping runs 100% on-device using smart category heuristics. Zero data is shared with external cloud servers.'}
-                </Text>
                 <TouchableOpacity
                   testID="settings-clear-ai-cache-btn"
-                  style={styles.clearAiCacheBtn}
+                  style={[styles.secondaryActionBtn, secondaryBtnSurface]}
                   onPress={async () => {
                     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
                     await aiCoreModule.clearAICoreCache();
@@ -807,17 +820,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 >
                   <Text
                     style={[
-                      styles.clearAiCacheText,
-                      { color: theme.isDark ? '#30D158' : '#15803D' },
+                      styles.secondaryActionText,
+                      { color: clearedAiCache ? theme.colors.success : theme.colors.text },
                     ]}
                   >
-                    {clearedAiCache ? '✓ AI Cache Cleared' : 'Clear AI Category Cache'}
+                    {clearedAiCache ? '✓ Cache cleared' : 'Clear Category Cache'}
                   </Text>
                 </TouchableOpacity>
               </View>
             )}
 
-            {/* Google Play App Updates Section - ONLY rendered on native Android with Play Core support */}
+            {/* App Updates Section - ONLY rendered on native Android with Play Core support */}
             {nativeUpdatesSupported && (
               <View
                 testID="settings-updates-section"
@@ -832,62 +845,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
                   APP UPDATES
                 </Text>
-                <View style={styles.infoRow}>
-                  <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
-                    Installed Version
-                  </Text>
-                  <Text style={[styles.infoValue, { color: theme.colors.text }]}>
-                    v{APP_VERSION} (Build {APP_BUILD_NUMBER})
-                  </Text>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
-                    Google Play Status
-                  </Text>
-                  <Text
-                    style={[
-                      styles.infoValue,
-                      {
-                        color: updateInfo?.isAvailable
-                          ? theme.isDark
-                            ? '#30D158'
-                            : '#15803D'
-                          : isCheckingUpdate
-                          ? theme.colors.accent
-                          : theme.colors.textSecondary,
-                      },
-                    ]}
-                  >
-                    {isCheckingUpdate
-                      ? 'Checking Google Play...'
-                      : updateInfo?.isAvailable
-                      ? `● Build ${updateInfo.availableVersionCode} Available`
-                      : updateStatusMsg || 'Up to date'}
-                  </Text>
-                </View>
 
                 {updateInfo?.isAvailable ? (
-                  <TouchableOpacity
-                    testID="settings-install-update-btn"
-                    style={[styles.updateNowBtn, { backgroundColor: '#30D158' }]}
-                    onPress={() => {
-                      safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-                      startUpdate('flexible');
-                    }}
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.updateNowBtnText}>
-                      Update to Build {updateInfo.availableVersionCode}
-                    </Text>
-                  </TouchableOpacity>
+                  <>
+                    <View style={styles.infoRow}>
+                      <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                        Available
+                      </Text>
+                      <Text style={[styles.infoValue, { color: theme.colors.text }]}>
+                        Build {updateInfo.availableVersionCode}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      testID="settings-install-update-btn"
+                      style={[styles.primaryActionBtn, { backgroundColor: theme.colors.accent }]}
+                      onPress={() => {
+                        safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                        startUpdate('flexible');
+                      }}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.primaryActionBtnText}>
+                        Update to Build {updateInfo.availableVersionCode}
+                      </Text>
+                    </TouchableOpacity>
+                  </>
                 ) : (
                   <TouchableOpacity
                     testID="settings-check-updates-btn"
                     style={[
-                      styles.checkUpdatesBtn,
-                      isCheckingUpdate && styles.resetSyncBtnDisabled,
+                      styles.secondaryActionBtn,
+                      { marginTop: 0 },
+                      secondaryBtnSurface,
+                      isCheckingUpdate && styles.btnDisabled,
                     ]}
                     onPress={handleCheckForUpdates}
                     disabled={isCheckingUpdate}
@@ -896,17 +887,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   >
                     {isCheckingUpdate ? (
                       <View style={styles.centerRow}>
-                        <ActivityIndicator size="small" color="#0A84FF" />
-                        <Text style={[styles.resetSyncText, { color: theme.colors.accent }]}>
-                          Checking Play Services...
+                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                        <Text
+                          style={[
+                            styles.secondaryActionText,
+                            { color: theme.colors.textSecondary },
+                          ]}
+                        >
+                          Checking...
                         </Text>
                       </View>
                     ) : (
-                      <View style={styles.centerRow}>
-                        <Text style={[styles.checkUpdatesText, { color: theme.colors.accent }]}>
-                          {updateStatusMsg ? updateStatusMsg : '↻ Check for Updates'}
-                        </Text>
-                      </View>
+                      <Text
+                        style={[
+                          styles.secondaryActionText,
+                          {
+                            color: updateStatusMsg
+                              ? theme.colors.success
+                              : theme.colors.text,
+                          },
+                        ]}
+                      >
+                        {updateStatusMsg || 'Check for Updates'}
+                      </Text>
                     )}
                   </TouchableOpacity>
                 )}
@@ -924,7 +927,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ]}
             >
               <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                DATA & SYNC
+                SYNC
               </Text>
               <View style={styles.infoRow}>
                 <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Status</Text>
@@ -937,7 +940,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </View>
 
               {resetError ? (
-                <Text testID="settings-reset-error" style={styles.inlineErrorText}>
+                <Text
+                  testID="settings-reset-error"
+                  style={[styles.inlineErrorText, { color: theme.colors.danger }]}
+                >
                   {resetError}
                 </Text>
               ) : null}
@@ -945,9 +951,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <TouchableOpacity
                 testID="settings-reset-sync-btn"
                 style={[
-                  styles.resetSyncBtn,
-                  isResetting && styles.resetSyncBtnDisabled,
-                  resetSuccess && styles.resetSyncBtnSuccess,
+                  styles.secondaryActionBtn,
+                  secondaryBtnSurface,
+                  isResetting && styles.btnDisabled,
                 ]}
                 onPress={handleRequestResetAndSync}
                 disabled={isResetting}
@@ -956,28 +962,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               >
                 {isResetting ? (
                   <View style={styles.centerRow}>
-                    <ActivityIndicator size="small" color="#0A84FF" />
-                    <Text style={[styles.resetSyncText, { color: theme.colors.accent }]}>
-                      Resetting & syncing...
+                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                    <Text
+                      style={[styles.secondaryActionText, { color: theme.colors.textSecondary }]}
+                    >
+                      Syncing from server...
                     </Text>
                   </View>
                 ) : resetSuccess ? (
-                  <View style={styles.centerRow}>
-                    <Text
-                      style={[
-                        styles.resetSuccessText,
-                        { color: theme.isDark ? '#30D158' : '#15803D' },
-                      ]}
-                    >
-                      ✓ Overwrite Complete!
-                    </Text>
-                  </View>
+                  <Text style={[styles.secondaryActionText, { color: theme.colors.success }]}>
+                    ✓ Synced
+                  </Text>
                 ) : (
-                  <View style={styles.centerRow}>
-                    <Text style={[styles.resetSyncText, { color: theme.colors.accent }]}>
-                      ↻ Overwrite & Sync from Server
-                    </Text>
-                  </View>
+                  <Text style={[styles.secondaryActionText, { color: theme.colors.text }]}>
+                    Overwrite & Sync from Server
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -986,19 +985,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {onLogout && (
               <TouchableOpacity
                 testID="settings-logout-btn"
-                style={styles.logoutBtn}
+                style={[
+                  styles.logoutBtn,
+                  {
+                    borderColor: theme.isDark
+                      ? 'rgba(255, 69, 58, 0.35)'
+                      : 'rgba(215, 0, 21, 0.3)',
+                    backgroundColor: theme.isDark
+                      ? 'rgba(255, 69, 58, 0.12)'
+                      : 'rgba(215, 0, 21, 0.08)',
+                  },
+                ]}
                 onPress={handleRequestLogout}
                 activeOpacity={0.8}
                 accessibilityRole="button"
               >
-                <Text style={styles.logoutBtnText}>Log Out</Text>
+                <Text style={[styles.logoutBtnText, { color: theme.colors.danger }]}>Log Out</Text>
               </TouchableOpacity>
             )}
 
-            {/* App Version Footer */}
+            {/* Single Subtle App Version Footer */}
             <View style={styles.footerVersionRow}>
-              <Text style={[styles.footerVersionText, { color: theme.colors.textSecondary }]}>
-                {APP_NAME} v{APP_VERSION} • Build {APP_BUILD_NUMBER}
+              <Text
+                testID="settings-version-footer"
+                style={[styles.footerVersionText, { color: theme.colors.textSecondary }]}
+              >
+                {APP_NAME} v{APP_VERSION} ({APP_BUILD_NUMBER})
               </Text>
             </View>
           </ScrollView>
@@ -1023,7 +1035,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
   },
@@ -1035,7 +1047,7 @@ const styles = StyleSheet.create({
     padding: 6,
   },
   closeBtnText: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
   },
   confirmBanner: {
@@ -1055,12 +1067,22 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 8,
   },
-  confirmBtn: {
+  confirmCancelBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  confirmCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  confirmProceedBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
   },
-  confirmBtnText: {
+  confirmProceedBtnText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
@@ -1070,7 +1092,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    gap: 16,
+    gap: 14,
   },
   sectionCard: {
     borderRadius: 12,
@@ -1080,8 +1102,8 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 10,
+    letterSpacing: 0.6,
+    marginBottom: 8,
   },
   infoRow: {
     flexDirection: 'row',
@@ -1098,7 +1120,6 @@ const styles = StyleSheet.create({
     maxWidth: '70%',
   },
   inlineErrorText: {
-    color: '#FF453A',
     fontSize: 12,
     fontWeight: '600',
     marginTop: 6,
@@ -1118,14 +1139,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   settingSub: {
-    fontSize: 11,
+    fontSize: 12,
     marginTop: 2,
   },
   menuRowBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 6,
   },
   menuRowTitle: {
     fontSize: 14,
@@ -1141,88 +1162,48 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
-  resetSyncBtn: {
+  secondaryActionBtn: {
     marginTop: 10,
-    paddingVertical: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
     borderRadius: 8,
-    backgroundColor: 'rgba(10, 132, 255, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(10, 132, 255, 0.3)',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  resetSyncBtnDisabled: {
-    opacity: 0.6,
-  },
-  resetSyncBtnSuccess: {
-    backgroundColor: 'rgba(48, 209, 88, 0.15)',
-    borderColor: 'rgba(48, 209, 88, 0.4)',
-  },
-  resetSyncText: {
+  secondaryActionText: {
     fontSize: 13,
     fontWeight: '600',
   },
-  resetSuccessText: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  checkUpdatesBtn: {
+  primaryActionBtn: {
     marginTop: 10,
     paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: 'rgba(10, 132, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(10, 132, 255, 0.3)',
-    alignItems: 'center',
-  },
-  checkUpdatesText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  updateNowBtn: {
-    marginTop: 10,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  updateNowBtnText: {
+  primaryActionBtnText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
   },
+  btnDisabled: {
+    opacity: 0.55,
+  },
   logoutBtn: {
-    marginTop: 8,
-    paddingVertical: 14,
+    marginTop: 4,
+    paddingVertical: 13,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 69, 58, 0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 69, 58, 0.3)',
     alignItems: 'center',
   },
   logoutBtnText: {
-    color: '#FF453A',
     fontSize: 15,
     fontWeight: '700',
   },
-  aicoreDesc: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 8,
-    marginBottom: 10,
-  },
-  clearAiCacheBtn: {
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: 'rgba(48, 209, 88, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(48, 209, 88, 0.3)',
-    alignItems: 'center',
-  },
-  clearAiCacheText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
   settingBlock: {
-    paddingVertical: 4,
+    paddingVertical: 2,
   },
   stepperContainer: {
     flexDirection: 'row',
@@ -1233,13 +1214,12 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 8,
-    backgroundColor: 'rgba(0, 122, 255, 0.12)',
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   stepperBtnDisabled: {
-    opacity: 0.35,
-    backgroundColor: 'rgba(142, 142, 147, 0.12)',
+    opacity: 0.4,
   },
   stepperBtnText: {
     fontSize: 18,
@@ -1259,7 +1239,7 @@ const styles = StyleSheet.create({
   presetChipsRow: {
     flexDirection: 'row',
     gap: 6,
-    paddingTop: 8,
+    paddingTop: 6,
     paddingBottom: 4,
   },
   presetChip: {
@@ -1282,11 +1262,11 @@ const styles = StyleSheet.create({
   footerVersionRow: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 18,
+    paddingVertical: 16,
   },
   footerVersionText: {
     fontSize: 12,
     fontWeight: '500',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
 });

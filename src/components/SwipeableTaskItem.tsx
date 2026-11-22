@@ -10,13 +10,13 @@ import {
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
-import { getLabelBadgeStyles, normalizeHexColor } from '../utils/colors';
+import { getLabelBadgeStyles, hexToRgba, normalizeHexColor } from '../utils/colors';
 import {
   normalizeVikunjaDate,
   isOverdue as checkIsOverdue,
   formatDateDisplay,
 } from '../utils/dates';
-import { useAppTheme } from '../utils/theme';
+import { useAppTheme, ThemeTokens } from '../utils/theme';
 import { useTaskStore } from '../store/taskStore';
 import { Label, Task } from '../types/vikunja';
 
@@ -42,14 +42,23 @@ interface SwipeableTaskItemProps {
   textScale?: number;
 }
 
-const PRIORITY_COLORS: Record<number, string> = {
-  0: '#8E8E93', // None
-  1: '#007AFF', // Low
-  2: '#FF9500', // Medium
-  3: '#FF3B30', // High
-  4: '#AF52DE', // Urgent
-  5: '#FF2D55', // Critical
-};
+function getPriorityStripColor(priority: number, theme: ThemeTokens): string {
+  switch (priority) {
+    case 1:
+      return theme.colors.accent;
+    case 2:
+      return theme.colors.warning;
+    case 3:
+      return theme.colors.danger;
+    case 4:
+      return theme.isDark ? '#BF5AF2' : '#7E22CE';
+    case 5:
+      return theme.isDark ? '#FF375F' : '#BE123C';
+    case 0:
+    default:
+      return theme.colors.textTertiary;
+  }
+}
 
 function normalizePercentDoneDisplay(raw?: number | null): number {
   if (raw === undefined || raw === null || !Number.isFinite(raw) || raw <= 0) return 0;
@@ -124,7 +133,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         width: boxScale === 1.5 ? 28 : Math.round(19 * boxScale),
         height: boxScale === 1.5 ? 28 : Math.round(19 * boxScale),
         borderRadius: boxScale === 1.5 ? 14 : Math.round(9.5 * boxScale),
-        borderWidth: boxScale >= 1.4 ? 2 : 1.5,
+        borderWidth: boxScale >= 1.4 ? 2 : 1.75,
         marginRight: boxScale === 1.5 ? 12 : Math.round(8 * boxScale),
       },
       checkmark: {
@@ -172,12 +181,12 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
       },
       addLabelLink: {
         marginLeft: Math.round(6 * boxScale),
-        paddingHorizontal: Math.round(4 * boxScale),
-        paddingVertical: Math.round(1 * boxScale),
+        paddingHorizontal: Math.round(5 * boxScale),
+        paddingVertical: Math.round(1.5 * boxScale),
         borderRadius: Math.round(4 * boxScale),
       },
       addLabelLinkText: {
-        fontSize: Math.round(10 * textScale),
+        fontSize: Math.round(10.5 * textScale),
       },
       leftSwipeTray: {
         marginVertical: Math.round(1.5 * boxScale),
@@ -191,11 +200,8 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         marginVertical: Math.round(1.5 * boxScale),
         paddingRight: Math.round(18 * boxScale),
       },
-      swipeActionIcon: {
-        fontSize: Math.round(14 * textScale),
-      },
       swipeActionText: {
-        fontSize: Math.round(12 * textScale),
+        fontSize: Math.round(12.5 * textScale),
       },
       reorderBtn: {
         paddingHorizontal: Math.round(8 * boxScale),
@@ -229,10 +235,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
 
   // Read inbound Vikunja `hex_color` (as well as `color`) while ignoring unset "000000" black defaults
   const customTaskColor = normalizeHexColor(task.hex_color || task.color, true) ?? null;
-  const mappedPriorityColor = Object.prototype.hasOwnProperty.call(PRIORITY_COLORS, task.priority)
-    ? PRIORITY_COLORS[task.priority]
-    : PRIORITY_COLORS[0];
-  const priorityColor = customTaskColor || mappedPriorityColor;
+  const priorityColor = customTaskColor || getPriorityStripColor(task.priority, theme);
   const showPriorityStrip = task.priority > 0 || Boolean(customTaskColor);
 
   const handleToggle = () => {
@@ -283,7 +286,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
 
   const pctDisplay = normalizePercentDoneDisplay(task.percent_done);
 
-  // Slide RIGHT reveals LEFT actions: Move & Delete (prevents accidental instant swipe deletion & exposes Move on mobile!)
+  // Slide RIGHT reveals LEFT actions: Move (accent blue) + Delete (danger red) with clean labels
   const renderLeftActions = (
     _progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>
@@ -306,7 +309,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           testID={`swipe-move-btn-${task.id}`}
           style={[
             styles.leftSwipeBtn,
-            styles.leftSwipeMoveBtn,
+            { backgroundColor: theme.colors.accent },
             isLarge && styles.leftSwipeBtnLarge,
             dynamicStyles?.leftSwipeBtn,
           ]}
@@ -316,15 +319,6 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           accessibilityLabel={`Move ${task.title} to another list`}
         >
           <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
-            <Text
-              style={[
-                styles.swipeActionIcon,
-                isLarge && styles.swipeActionIconLarge,
-                dynamicStyles?.swipeActionIcon,
-              ]}
-            >
-              📁
-            </Text>
             <Text
               style={[
                 styles.swipeActionText,
@@ -341,7 +335,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           testID={`swipe-delete-btn-${task.id}`}
           style={[
             styles.leftSwipeBtn,
-            styles.leftSwipeDeleteBtn,
+            { backgroundColor: theme.colors.danger },
             isLarge && styles.leftSwipeBtnLarge,
             dynamicStyles?.leftSwipeBtn,
           ]}
@@ -351,15 +345,6 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           accessibilityLabel={`Delete ${task.title}`}
         >
           <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
-            <Text
-              style={[
-                styles.swipeActionIcon,
-                isLarge && styles.swipeActionIconLarge,
-                dynamicStyles?.swipeActionIcon,
-              ]}
-            >
-              🗑️
-            </Text>
             <Text
               style={[
                 styles.swipeActionText,
@@ -375,7 +360,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
     );
   };
 
-  // Slide LEFT reveals RIGHT action: Done (Green with Check)
+  // Slide LEFT reveals RIGHT action: Done / Undo (success green)
   const renderRightActions = (
     _progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>
@@ -390,20 +375,12 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
       <View
         style={[
           styles.rightSwipeAction,
+          { backgroundColor: theme.colors.success },
           isLarge && styles.rightSwipeActionLarge,
           dynamicStyles?.rightSwipeAction,
         ]}
       >
         <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
-          <Text
-            style={[
-              styles.swipeActionIcon,
-              isLarge && styles.swipeActionIconLarge,
-              dynamicStyles?.swipeActionIcon,
-            ]}
-          >
-            ✓
-          </Text>
           <Text
             style={[
               styles.swipeActionText,
@@ -434,14 +411,11 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
               : '#FFFFFF'
             : theme.colors.cardBackground,
           borderColor: isDragging
-            ? '#007AFF'
+            ? theme.colors.accent
             : task.done
-            ? theme.isDark
-              ? '#2C2C2E'
-              : '#E5E5EA'
+            ? theme.colors.border
             : theme.colors.cardBorder,
           borderWidth: isDragging ? 1.5 : 1,
-          opacity: task.done ? (theme.isDark ? 0.7 : 0.88) : 1,
         },
         isDragging && styles.cardDragging,
       ]}
@@ -473,16 +447,20 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         />
       )}
 
-      {/* Tactile Accessible Checkbox */}
+      {/* Tactile Accessible Night-Legible Checkbox */}
       <TouchableOpacity
         testID={`task-checkbox-${task.id}`}
         style={[
           styles.checkbox,
           isLarge && styles.checkboxLarge,
           dynamicStyles?.checkbox,
-          task.done && styles.checkboxDone,
           {
-            borderColor: task.done ? '#30D158' : theme.isDark ? '#636366' : '#8E8E93',
+            backgroundColor: task.done
+              ? theme.colors.success
+              : theme.isDark
+              ? 'rgba(255, 255, 255, 0.03)'
+              : 'transparent',
+            borderColor: task.done ? theme.colors.success : theme.colors.checkboxBorder,
           },
         ]}
         onPress={handleToggle}
@@ -525,6 +503,12 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                   styles.progressBadge,
                   isLarge && styles.progressBadgeLarge,
                   dynamicStyles?.progressBadge,
+                  {
+                    backgroundColor: hexToRgba(
+                      pctDisplay >= 100 ? theme.colors.success : theme.colors.accent,
+                      0.14
+                    ),
+                  },
                 ]}
               >
                 <Text
@@ -534,11 +518,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                     dynamicStyles?.progressText,
                     {
                       color:
-                        pctDisplay >= 100
-                          ? theme.isDark
-                            ? '#30D158'
-                            : '#15803D'
-                          : '#007AFF',
+                        pctDisplay >= 100 ? theme.colors.success : theme.colors.accent,
                     },
                   ]}
                 >
@@ -555,13 +535,12 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                   styles.dateBadge,
                   isLarge && styles.dateBadgeLarge,
                   dynamicStyles?.dateBadge,
-                  isOverdue && styles.dateBadgeOverdue,
                   {
                     backgroundColor: isOverdue
-                      ? 'rgba(255, 69, 58, 0.15)'
-                      : theme.isDark
-                      ? '#2C2C2E'
-                      : '#E5E5EA',
+                      ? hexToRgba(theme.colors.danger, 0.15)
+                      : theme.colors.surfaceSecondary,
+                    borderWidth: isOverdue ? 1 : 0,
+                    borderColor: isOverdue ? hexToRgba(theme.colors.danger, 0.4) : 'transparent',
                   },
                 ]}
               >
@@ -572,31 +551,46 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                     dynamicStyles?.dueDateText,
                     isOverdue && styles.dueDateTextOverdue,
                     {
-                      color: isOverdue
-                        ? theme.isDark
-                          ? '#FF453A'
-                          : '#DC2626'
-                        : theme.colors.textSecondary,
+                      color: isOverdue ? theme.colors.danger : theme.colors.textSecondary,
                     },
                   ]}
                 >
-                  {isOverdue ? '⚠️ ' : '📅 '}
                   {formattedDueDate}
                 </Text>
               </View>
             )}
 
-            {/* Repeat Icon */}
+            {/* Repeat Glyph */}
             {isRepeating && (
               <View testID={`task-repeat-icon-${task.id}`} style={styles.iconBadge}>
-                <Text style={{ fontSize: Math.round(10.5 * textScale) }}>🔁</Text>
+                <Text
+                  style={[
+                    styles.metaGlyphText,
+                    {
+                      fontSize: Math.round(11 * textScale),
+                      color: theme.colors.textSecondary,
+                    },
+                  ]}
+                >
+                  ↻
+                </Text>
               </View>
             )}
 
-            {/* Reminder Icon */}
+            {/* Reminder Glyph */}
             {Boolean(task.reminders && task.reminders.length > 0) && (
               <View testID={`task-reminder-icon-${task.id}`} style={styles.iconBadge}>
-                <Text style={{ fontSize: Math.round(10.5 * textScale) }}>🔔</Text>
+                <Text
+                  style={[
+                    styles.metaGlyphText,
+                    {
+                      fontSize: Math.round(11 * textScale),
+                      color: theme.colors.textSecondary,
+                    },
+                  ]}
+                >
+                  ◷
+                </Text>
               </View>
             )}
 
@@ -611,8 +605,8 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                     isLarge && styles.assigneeBadgeLarge,
                     dynamicStyles?.assigneeBadge,
                     {
-                      backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                      borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                      backgroundColor: theme.colors.surfaceSecondary,
+                      borderColor: theme.colors.borderStrong,
                     },
                   ]}
                 >
@@ -629,7 +623,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                 </View>
               ))}
 
-            {/* Label Pills (Clean without tag icon) */}
+            {/* Label Pills */}
             {task.labels &&
               task.labels.map((label) => {
                 const badgeStyle = getLabelBadgeStyles(label, labelDefinitions, theme.isDark);
@@ -676,9 +670,8 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                   styles.title,
                   isLarge && styles.titleLarge,
                   dynamicStyles?.title,
-                  { color: theme.colors.text },
+                  { color: task.done ? theme.colors.textSecondary : theme.colors.text },
                   task.done && styles.titleDone,
-                  task.done && { color: theme.colors.textSecondary },
                 ]}
                 numberOfLines={3}
                 ellipsizeMode="tail"
@@ -707,9 +700,8 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                   styles.title,
                   isLarge && styles.titleLarge,
                   dynamicStyles?.title,
-                  { color: theme.colors.text },
+                  { color: task.done ? theme.colors.textSecondary : theme.colors.text },
                   task.done && styles.titleDone,
-                  task.done && { color: theme.colors.textSecondary },
                 ]}
                 numberOfLines={1}
                 ellipsizeMode="tail"
@@ -737,9 +729,8 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                 styles.title,
                 isLarge && styles.titleLarge,
                 dynamicStyles?.title,
-                { color: theme.colors.text },
+                { color: task.done ? theme.colors.textSecondary : theme.colors.text },
                 task.done && styles.titleDone,
-                task.done && { color: theme.colors.textSecondary },
               ]}
               numberOfLines={3}
               ellipsizeMode="tail"
@@ -750,7 +741,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         );
       })()}
 
-      {/* Small subtle "+#" link or Drag Handle / Reorder Controls on the right of the item */}
+      {/* "+#" Quick Label Button or Drag Handle / Reorder Controls */}
       {isReordering ? (
         <View style={styles.reorderControls}>
           {drag ? (
@@ -788,6 +779,14 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                   styles.reorderBtn,
                   isLarge && styles.reorderBtnLarge,
                   dynamicStyles?.reorderBtn,
+                  {
+                    backgroundColor: canMoveUp
+                      ? hexToRgba(theme.colors.accent, 0.14)
+                      : 'transparent',
+                    borderColor: canMoveUp
+                      ? hexToRgba(theme.colors.accent, 0.35)
+                      : theme.colors.border,
+                  },
                   !canMoveUp && styles.reorderBtnDisabled,
                 ]}
                 onPress={onMoveUp}
@@ -802,7 +801,9 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                     styles.reorderBtnText,
                     isLarge && styles.reorderBtnTextLarge,
                     dynamicStyles?.reorderBtnText,
-                    !canMoveUp && styles.reorderBtnTextDisabled,
+                    {
+                      color: canMoveUp ? theme.colors.accent : theme.colors.textTertiary,
+                    },
                   ]}
                 >
                   ▲
@@ -814,6 +815,14 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                   styles.reorderBtn,
                   isLarge && styles.reorderBtnLarge,
                   dynamicStyles?.reorderBtn,
+                  {
+                    backgroundColor: canMoveDown
+                      ? hexToRgba(theme.colors.accent, 0.14)
+                      : 'transparent',
+                    borderColor: canMoveDown
+                      ? hexToRgba(theme.colors.accent, 0.35)
+                      : theme.colors.border,
+                  },
                   !canMoveDown && styles.reorderBtnDisabled,
                 ]}
                 onPress={onMoveDown}
@@ -828,7 +837,9 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                     styles.reorderBtnText,
                     isLarge && styles.reorderBtnTextLarge,
                     dynamicStyles?.reorderBtnText,
-                    !canMoveDown && styles.reorderBtnTextDisabled,
+                    {
+                      color: canMoveDown ? theme.colors.accent : theme.colors.textTertiary,
+                    },
                   ]}
                 >
                   ▼
@@ -845,6 +856,10 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
               styles.addLabelLink,
               isLarge && styles.addLabelLinkLarge,
               dynamicStyles?.addLabelLink,
+              {
+                backgroundColor: theme.colors.surfaceSecondary,
+                borderColor: theme.colors.borderStrong,
+              },
             ]}
             onPress={() => onEditLabels(task)}
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
@@ -857,6 +872,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                 styles.addLabelLinkText,
                 isLarge && styles.addLabelLinkTextLarge,
                 dynamicStyles?.addLabelLinkText,
+                { color: theme.colors.textSecondary },
               ]}
             >
               +#
@@ -880,10 +896,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           accessibilityLabel={isWeb ? `Move ${task.title}` : undefined}
           style={
             isWeb
-              ? [
-                  styles.webActionBtn,
-                  { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
-                ]
+              ? [styles.webActionBtn, { backgroundColor: theme.colors.surfaceSecondary }]
               : styles.hiddenAction
           }
           onPress={handleMove}
@@ -902,20 +915,16 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           accessibilityLabel={isWeb ? `Delete ${task.title}` : undefined}
           style={
             isWeb
-              ? [styles.webActionBtn, styles.webDeleteBtn]
+              ? [
+                  styles.webActionBtn,
+                  { backgroundColor: hexToRgba(theme.colors.danger, 0.15) },
+                ]
               : styles.hiddenAction
           }
           onPress={handleDelete}
         >
           {isWeb ? (
-            <Text
-              style={[
-                styles.webActionText,
-                { color: theme.isDark ? '#FF453A' : '#DC2626' },
-              ]}
-            >
-              ✕
-            </Text>
+            <Text style={[styles.webActionText, { color: theme.colors.danger }]}>✕</Text>
           ) : null}
         </TouchableOpacity>
       </View>
@@ -957,7 +966,6 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E1E22',
     borderRadius: 7,
     marginHorizontal: 8,
     marginVertical: 1.5,
@@ -987,7 +995,7 @@ const styles = StyleSheet.create({
     width: 19,
     height: 19,
     borderRadius: 9.5,
-    borderWidth: 1.5,
+    borderWidth: 1.75,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
@@ -999,9 +1007,6 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 2,
     marginRight: 12,
-  },
-  checkboxDone: {
-    backgroundColor: '#30D158',
   },
   checkmark: {
     color: '#FFFFFF',
@@ -1035,7 +1040,6 @@ const styles = StyleSheet.create({
   title: {
     flexShrink: 1,
     fontSize: 13.5,
-    color: '#F2F2F7',
     fontWeight: '500',
     marginRight: 6,
   },
@@ -1057,7 +1061,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   progressBadge: {
-    backgroundColor: 'rgba(10, 132, 255, 0.12)',
     paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 4,
@@ -1075,7 +1078,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   dateBadge: {
-    backgroundColor: '#2C2C2E',
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderRadius: 4,
@@ -1085,12 +1087,8 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 6,
   },
-  dateBadgeOverdue: {
-    backgroundColor: 'rgba(255, 69, 58, 0.15)',
-  },
   dueDateText: {
     fontSize: 10.5,
-    color: '#8E8E93',
     fontWeight: '500',
   },
   dueDateTextLarge: {
@@ -1104,12 +1102,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  metaGlyphText: {
+    fontWeight: '700',
+  },
   labelPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2C2C2E',
     borderWidth: 1,
-    borderColor: '#3A3A3C',
     borderRadius: 5,
     paddingHorizontal: 5,
     paddingVertical: 1,
@@ -1121,7 +1120,6 @@ const styles = StyleSheet.create({
   },
   labelText: {
     fontSize: 10.5,
-    color: '#0A84FF',
     fontWeight: '700',
   },
   labelTextLarge: {
@@ -1129,10 +1127,10 @@ const styles = StyleSheet.create({
   },
   addLabelLink: {
     marginLeft: 6,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
     borderRadius: 4,
-    backgroundColor: 'rgba(142, 142, 147, 0.12)',
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1143,8 +1141,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   addLabelLinkText: {
-    fontSize: 10,
-    color: '#8E8E93',
+    fontSize: 10.5,
     fontWeight: '700',
   },
   addLabelLinkTextLarge: {
@@ -1171,14 +1168,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 18,
   },
-  leftSwipeMoveBtn: {
-    backgroundColor: '#0A84FF',
-  },
-  leftSwipeDeleteBtn: {
-    backgroundColor: '#FF453A',
-  },
   rightSwipeAction: {
-    backgroundColor: '#30D158',
     justifyContent: 'center',
     alignItems: 'flex-end',
     borderRadius: 7,
@@ -1197,16 +1187,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
   },
-  swipeActionIcon: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    fontWeight: '900',
-  },
-  swipeActionIconLarge: {
-    fontSize: 20,
-  },
   swipeActionText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#FFFFFF',
   },
@@ -1232,9 +1214,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-  },
-  webDeleteBtn: {
-    backgroundColor: 'rgba(255,69,58,0.16)',
   },
   webActionText: {
     fontSize: 11,
@@ -1267,12 +1246,10 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   reorderBtn: {
-    backgroundColor: '#007AFF20',
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#007AFF50',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1282,20 +1259,14 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   reorderBtnDisabled: {
-    backgroundColor: 'transparent',
-    borderColor: '#3A3A3C',
-    opacity: 0.3,
+    opacity: 0.4,
   },
   reorderBtnText: {
-    color: '#007AFF',
     fontSize: 13,
     fontWeight: '700',
   },
   reorderBtnTextLarge: {
     fontSize: 17,
-  },
-  reorderBtnTextDisabled: {
-    color: '#8E8E93',
   },
   cardDragging: {
     shadowColor: '#000',

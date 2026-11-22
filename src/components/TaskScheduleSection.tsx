@@ -154,7 +154,6 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
       return true;
     }
 
-    // field === 'endDate': enforce endDate >= startDate
     if (safeStartDate && candidateDate.getTime() < new Date(safeStartDate).getTime()) {
       setDateValidationError('End date cannot be earlier than start date.');
       return false;
@@ -222,13 +221,11 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
     const combined = buildCombinedDate(field, mode, selectedDate);
 
     if (Platform.OS === 'ios') {
-      // On iOS spinner, wheel scroll fires onChange repeatedly — keep picker open until user taps Done!
       setPendingIosDate(combined);
       commitIsoToField(field, combined);
       return;
     }
 
-    // Android dialog: commit and close
     commitIsoToField(field, combined);
     setActivePicker(null);
   };
@@ -294,7 +291,6 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
       return;
     }
 
-    // mode === 'time'
     const tm = raw.match(/^(\d{1,2}):(\d{2})$/);
     if (!tm) {
       setWebInputError('Enter time in 24-hour format HH:MM.');
@@ -340,6 +336,16 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
     ? pendingIosDate || getBaseDateForField(activePicker.field)
     : new Date();
 
+  const secondarySurface = {
+    backgroundColor: theme.colors.surfaceSecondary,
+    borderColor: theme.colors.borderStrong,
+  };
+
+  const activeAccentStyle = {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
+  };
+
   return (
     <View style={styles.container}>
       {/* DUE DATE SECTION */}
@@ -349,11 +355,11 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           <TouchableOpacity
             testID="clear-due-date-btn"
             onPress={handleClearDueDate}
-            style={styles.clearBtn}
+            style={[styles.clearBtn, secondarySurface]}
             accessibilityRole="button"
             accessibilityLabel="Clear due date"
           >
-            <Text style={styles.clearBtnText}>Clear</Text>
+            <Text style={[styles.clearBtnText, { color: theme.colors.textSecondary }]}>Clear</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -364,14 +370,19 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           testID="picker-due-date-trigger"
           style={[
             styles.dateBadge,
-            { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.border },
+            { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.borderStrong },
           ]}
           onPress={() => openPicker('dueDate', 'date')}
           accessibilityRole="button"
           accessibilityLabel="Select due date"
         >
-          <Text style={[styles.dateBadgeText, { color: theme.colors.text }]}>
-            {safeDueDate ? formatDateDisplay(safeDueDate) : 'No due date set'}
+          <Text
+            style={[
+              styles.dateBadgeText,
+              { color: safeDueDate ? theme.colors.text : theme.colors.textSecondary },
+            ]}
+          >
+            {safeDueDate ? formatDateDisplay(safeDueDate) : 'Not set'}
           </Text>
         </TouchableOpacity>
 
@@ -380,7 +391,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             testID="picker-due-time-trigger"
             style={[
               styles.timeBadge,
-              { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.border },
+              { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.borderStrong },
             ]}
             onPress={() => openPicker('dueDate', 'time')}
             accessibilityRole="button"
@@ -397,10 +408,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
       <View style={styles.presetsRow}>
         <TouchableOpacity
           testID="preset-today"
-          style={[
-            styles.presetChip,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-          ]}
+          style={[styles.presetChip, secondarySurface]}
           onPress={() => handleApplyPreset('today')}
           accessibilityRole="button"
         >
@@ -409,10 +417,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
         <TouchableOpacity
           testID="preset-tomorrow"
-          style={[
-            styles.presetChip,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-          ]}
+          style={[styles.presetChip, secondarySurface]}
           onPress={() => handleApplyPreset('tomorrow')}
           accessibilityRole="button"
         >
@@ -421,10 +426,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
         <TouchableOpacity
           testID="preset-weekend"
-          style={[
-            styles.presetChip,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-          ]}
+          style={[styles.presetChip, secondarySurface]}
           onPress={() => handleApplyPreset('this_weekend')}
           accessibilityRole="button"
         >
@@ -433,10 +435,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
         <TouchableOpacity
           testID="preset-next-week"
-          style={[
-            styles.presetChip,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-          ]}
+          style={[styles.presetChip, secondarySurface]}
           onPress={() => handleApplyPreset('next_week')}
           accessibilityRole="button"
         >
@@ -451,45 +450,55 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
       <View style={styles.startEndRow}>
         {/* Start Date */}
         <View style={styles.startEndCol}>
-          <Text style={[styles.subLabel, { color: theme.colors.textTertiary }]}>Starts</Text>
+          <Text style={[styles.subLabel, { color: theme.colors.textSecondary }]}>Starts</Text>
           <TouchableOpacity
             testID="picker-start-date-trigger"
             style={[
               styles.dateBadge,
-              { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.border },
+              { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.borderStrong },
             ]}
             onPress={() => openPicker('startDate', 'date')}
             accessibilityRole="button"
             accessibilityLabel="Select start date"
           >
-            <Text style={[styles.dateBadgeText, { color: theme.colors.text }]}>
+            <Text
+              style={[
+                styles.dateBadgeText,
+                { color: safeStartDate ? theme.colors.text : theme.colors.textSecondary },
+              ]}
+            >
               {safeStartDate ? formatDateDisplay(safeStartDate) : 'Not set'}
             </Text>
           </TouchableOpacity>
           {safeStartDate && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+            <View style={styles.inlineTimeActionsRow}>
               <TouchableOpacity
                 testID="picker-start-time-trigger"
                 style={[
-                  styles.timeBadge,
-                  { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.border, paddingHorizontal: 8, paddingVertical: 4 },
+                  styles.smallTimeBadge,
+                  { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.borderStrong },
                 ]}
                 onPress={() => openPicker('startDate', 'time')}
                 accessibilityRole="button"
                 accessibilityLabel="Select start time"
               >
                 <Text style={[styles.dateBadgeText, { color: theme.colors.accent, fontSize: 12 }]}>
-                  {new Date(safeStartDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(safeStartDate).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 testID="clear-start-date-btn"
                 onPress={handleClearStartDate}
-                style={styles.smallClearBtn}
+                style={[styles.clearBtn, secondarySurface]}
                 accessibilityRole="button"
                 accessibilityLabel="Clear start date"
               >
-                <Text style={styles.clearBtnText}>Clear</Text>
+                <Text style={[styles.clearBtnText, { color: theme.colors.textSecondary }]}>
+                  Clear
+                </Text>
               </TouchableOpacity>
             </View>
           )}
@@ -497,45 +506,55 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
         {/* End Date */}
         <View style={styles.startEndCol}>
-          <Text style={[styles.subLabel, { color: theme.colors.textTertiary }]}>Ends</Text>
+          <Text style={[styles.subLabel, { color: theme.colors.textSecondary }]}>Ends</Text>
           <TouchableOpacity
             testID="picker-end-date-trigger"
             style={[
               styles.dateBadge,
-              { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.border },
+              { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.borderStrong },
             ]}
             onPress={() => openPicker('endDate', 'date')}
             accessibilityRole="button"
             accessibilityLabel="Select end date"
           >
-            <Text style={[styles.dateBadgeText, { color: theme.colors.text }]}>
+            <Text
+              style={[
+                styles.dateBadgeText,
+                { color: safeEndDate ? theme.colors.text : theme.colors.textSecondary },
+              ]}
+            >
               {safeEndDate ? formatDateDisplay(safeEndDate) : 'Not set'}
             </Text>
           </TouchableOpacity>
           {safeEndDate && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+            <View style={styles.inlineTimeActionsRow}>
               <TouchableOpacity
                 testID="picker-end-time-trigger"
                 style={[
-                  styles.timeBadge,
-                  { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.border, paddingHorizontal: 8, paddingVertical: 4 },
+                  styles.smallTimeBadge,
+                  { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.borderStrong },
                 ]}
                 onPress={() => openPicker('endDate', 'time')}
                 accessibilityRole="button"
                 accessibilityLabel="Select end time"
               >
                 <Text style={[styles.dateBadgeText, { color: theme.colors.accent, fontSize: 12 }]}>
-                  {new Date(safeEndDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(safeEndDate).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 testID="clear-end-date-btn"
                 onPress={handleClearEndDate}
-                style={styles.smallClearBtn}
+                style={[styles.clearBtn, secondarySurface]}
                 accessibilityRole="button"
                 accessibilityLabel="Clear end date"
               >
-                <Text style={styles.clearBtnText}>Clear</Text>
+                <Text style={[styles.clearBtnText, { color: theme.colors.textSecondary }]}>
+                  Clear
+                </Text>
               </TouchableOpacity>
             </View>
           )}
@@ -543,18 +562,21 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
       </View>
 
       {dateValidationError ? (
-        <Text testID="schedule-date-error" style={styles.validationErrorText}>
+        <Text
+          testID="schedule-date-error"
+          style={[styles.validationErrorText, { color: theme.colors.danger }]}
+        >
           {dateValidationError}
         </Text>
       ) : null}
 
-      {/* Active Date/Time Picker UI (Platform-specific: Web vs iOS Spinner vs Android Dialog) */}
+      {/* Active Date/Time Picker UI */}
       {activePicker && Platform.OS === 'web' && (
         <View
           testID="web-picker-container"
           style={[
             styles.pickerCard,
-            { backgroundColor: theme.colors.cardSecondary, borderColor: theme.colors.border },
+            { backgroundColor: theme.colors.cardSecondary, borderColor: theme.colors.borderStrong },
           ]}
         >
           <Text style={[styles.pickerCardTitle, { color: theme.colors.text }]}>
@@ -568,7 +590,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                 {
                   backgroundColor: theme.colors.inputBg,
                   color: theme.colors.text,
-                  borderColor: theme.colors.border,
+                  borderColor: theme.colors.borderStrong,
                 },
               ]}
               value={webInputText}
@@ -577,7 +599,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                 if (webInputError) setWebInputError(null);
               }}
               placeholder={activePicker.mode === 'date' ? 'YYYY-MM-DD' : 'HH:MM'}
-              placeholderTextColor={theme.colors.textTertiary}
+              placeholderTextColor={theme.colors.placeholder}
               onSubmitEditing={handleWebApply}
               autoFocus
             />
@@ -591,18 +613,21 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             </TouchableOpacity>
             <TouchableOpacity
               testID="web-picker-cancel-btn"
-              style={[styles.pickerActionBtn, { backgroundColor: '#8E8E93' }]}
+              style={[styles.pickerCancelBtn, secondarySurface]}
               onPress={() => {
                 setWebInputError(null);
                 setActivePicker(null);
               }}
               accessibilityRole="button"
             >
-              <Text style={styles.pickerActionBtnText}>Cancel</Text>
+              <Text style={[styles.pickerCancelBtnText, { color: theme.colors.text }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
           {webInputError ? (
-            <Text testID="web-picker-error" style={styles.validationErrorText}>
+            <Text
+              testID="web-picker-error"
+              style={[styles.validationErrorText, { color: theme.colors.danger }]}
+            >
               {webInputError}
             </Text>
           ) : null}
@@ -614,7 +639,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           testID="ios-picker-container"
           style={[
             styles.pickerCard,
-            { backgroundColor: theme.colors.cardSecondary, borderColor: theme.colors.border },
+            { backgroundColor: theme.colors.cardSecondary, borderColor: theme.colors.borderStrong },
           ]}
         >
           <View style={[styles.iosPickerToolbar, { borderBottomColor: theme.colors.border }]}>
@@ -676,11 +701,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
       <View style={styles.presetsRow}>
         <TouchableOpacity
           testID="repeat-preset-never"
-          style={[
-            styles.presetChip,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-            isNeverSelected && styles.activeChip,
-          ]}
+          style={[styles.presetChip, isNeverSelected ? activeAccentStyle : secondarySurface]}
           onPress={() => {
             safeHaptics.selection();
             onChangeRepeat(0, RepeatMode.FromDueDate);
@@ -691,7 +712,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           <Text
             style={[
               styles.presetText,
-              { color: isNeverSelected ? '#FFFFFF' : theme.colors.text },
+              { color: isNeverSelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
             Never
@@ -700,11 +721,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
         <TouchableOpacity
           testID="repeat-preset-daily"
-          style={[
-            styles.presetChip,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-            isDailySelected && styles.activeChip,
-          ]}
+          style={[styles.presetChip, isDailySelected ? activeAccentStyle : secondarySurface]}
           onPress={() => {
             safeHaptics.selection();
             const nextMode =
@@ -717,7 +734,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           <Text
             style={[
               styles.presetText,
-              { color: isDailySelected ? '#FFFFFF' : theme.colors.text },
+              { color: isDailySelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
             Daily
@@ -726,11 +743,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
         <TouchableOpacity
           testID="repeat-preset-weekly"
-          style={[
-            styles.presetChip,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-            isWeeklySelected && styles.activeChip,
-          ]}
+          style={[styles.presetChip, isWeeklySelected ? activeAccentStyle : secondarySurface]}
           onPress={() => {
             safeHaptics.selection();
             const nextMode =
@@ -743,7 +756,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           <Text
             style={[
               styles.presetText,
-              { color: isWeeklySelected ? '#FFFFFF' : theme.colors.text },
+              { color: isWeeklySelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
             Weekly
@@ -752,11 +765,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
         <TouchableOpacity
           testID="repeat-preset-monthly"
-          style={[
-            styles.presetChip,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.cardSecondary },
-            isMonthlySelected && styles.activeChip,
-          ]}
+          style={[styles.presetChip, isMonthlySelected ? activeAccentStyle : secondarySurface]}
           onPress={() => {
             safeHaptics.selection();
             onChangeRepeat(2592000, RepeatMode.Monthly);
@@ -767,7 +776,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           <Text
             style={[
               styles.presetText,
-              { color: isMonthlySelected ? '#FFFFFF' : theme.colors.text },
+              { color: isMonthlySelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
             Monthly
@@ -775,14 +784,13 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Repeat Mode Selector — All 3 Vikunja Repeat Modes (0 = From Due Date, 1 = Monthly, 2 = After Completion) */}
+      {/* Repeat Mode Selector */}
       <View style={styles.repeatModeRow}>
         <TouchableOpacity
           testID="repeat-mode-from-due-date"
           style={[
             styles.modeButton,
-            { backgroundColor: theme.colors.inputBg },
-            repeatMode === RepeatMode.FromDueDate && styles.activeModeButton,
+            repeatMode === RepeatMode.FromDueDate ? activeAccentStyle : secondarySurface,
           ]}
           onPress={() => {
             safeHaptics.selection();
@@ -811,8 +819,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           testID="repeat-mode-monthly"
           style={[
             styles.modeButton,
-            { backgroundColor: theme.colors.inputBg },
-            repeatMode === RepeatMode.Monthly && styles.activeModeButton,
+            repeatMode === RepeatMode.Monthly ? activeAccentStyle : secondarySurface,
           ]}
           onPress={() => {
             safeHaptics.selection();
@@ -841,8 +848,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           testID="repeat-mode-from-completion"
           style={[
             styles.modeButton,
-            { backgroundColor: theme.colors.inputBg },
-            repeatMode === RepeatMode.FromCompletion && styles.activeModeButton,
+            repeatMode === RepeatMode.FromCompletion ? activeAccentStyle : secondarySurface,
           ]}
           onPress={() => {
             safeHaptics.selection();
@@ -869,7 +875,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
       </View>
 
       {(repeatAfter > 0 || repeatMode === RepeatMode.Monthly) && (
-        <Text style={[styles.repeatSummaryText, { color: theme.colors.textTertiary }]}>
+        <Text style={[styles.repeatSummaryText, { color: theme.colors.textSecondary }]}>
           {formatRepeatDescription(
             repeatMode === RepeatMode.Monthly && repeatAfter <= 0 ? 2592000 : repeatAfter,
             repeatMode
@@ -886,7 +892,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           onPress={() => setShowReminderMenu(!showReminderMenu)}
           accessibilityRole="button"
         >
-          <Text style={[styles.addReminderBtnText, { color: theme.colors.accent }]}>＋ Add</Text>
+          <Text style={[styles.addReminderBtnText, { color: theme.colors.accent }]}>+ Add</Text>
         </TouchableOpacity>
       </View>
 
@@ -894,12 +900,12 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
         <View
           style={[
             styles.reminderMenuCard,
-            { backgroundColor: theme.colors.cardSecondary, borderColor: theme.colors.border },
+            { backgroundColor: theme.colors.cardSecondary, borderColor: theme.colors.borderStrong },
           ]}
         >
           <TouchableOpacity
             testID="reminder-preset-0"
-            style={styles.reminderMenuItem}
+            style={[styles.reminderMenuItem, { borderBottomColor: theme.colors.border }]}
             onPress={() => handleAddReminderPreset(0)}
           >
             <Text style={[styles.reminderMenuItemText, { color: theme.colors.text }]}>
@@ -908,7 +914,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           </TouchableOpacity>
           <TouchableOpacity
             testID="reminder-preset-15m"
-            style={styles.reminderMenuItem}
+            style={[styles.reminderMenuItem, { borderBottomColor: theme.colors.border }]}
             onPress={() => handleAddReminderPreset(-900)}
           >
             <Text style={[styles.reminderMenuItemText, { color: theme.colors.text }]}>
@@ -917,7 +923,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           </TouchableOpacity>
           <TouchableOpacity
             testID="reminder-preset-1h"
-            style={styles.reminderMenuItem}
+            style={[styles.reminderMenuItem, { borderBottomColor: theme.colors.border }]}
             onPress={() => handleAddReminderPreset(-3600)}
           >
             <Text style={[styles.reminderMenuItemText, { color: theme.colors.text }]}>
@@ -926,7 +932,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           </TouchableOpacity>
           <TouchableOpacity
             testID="reminder-preset-1d"
-            style={styles.reminderMenuItem}
+            style={[styles.reminderMenuItem, { borderBottomWidth: 0 }]}
             onPress={() => handleAddReminderPreset(-86400)}
           >
             <Text style={[styles.reminderMenuItemText, { color: theme.colors.text }]}>
@@ -938,20 +944,17 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
       {/* Reminders List */}
       {reminders.length === 0 ? (
-        <Text style={[styles.emptyRemindersText, { color: theme.colors.textTertiary }]}>
-          No reminders scheduled
+        <Text style={[styles.emptyRemindersText, { color: theme.colors.textSecondary }]}>
+          No reminders
         </Text>
       ) : (
         reminders.map((reminder, idx) => (
           <View
             key={idx}
-            style={[
-              styles.reminderItem,
-              { backgroundColor: theme.colors.cardSecondary, borderColor: theme.colors.border },
-            ]}
+            style={[styles.reminderItem, secondarySurface]}
           >
             <Text style={[styles.reminderItemText, { color: theme.colors.text }]}>
-              🔔 {formatReminderDescription(reminder)}
+              {formatReminderDescription(reminder)}
             </Text>
             <TouchableOpacity
               testID={`remove-reminder-${idx}`}
@@ -960,7 +963,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               accessibilityRole="button"
               accessibilityLabel={`Remove reminder ${idx + 1}`}
             >
-              <Text style={styles.removeReminderBtnText}>✕</Text>
+              <Text style={[styles.removeReminderBtnText, { color: theme.colors.danger }]}>✕</Text>
             </TouchableOpacity>
           </View>
         ))
@@ -971,7 +974,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    marginVertical: 12,
+    marginVertical: 4,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -982,20 +985,23 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
   },
   clearBtn: {
-    paddingVertical: 2,
-    paddingHorizontal: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
   },
   clearBtnText: {
-    color: '#FF453A',
     fontSize: 12,
     fontWeight: '600',
   },
-  smallClearBtn: {
-    marginTop: 4,
-    alignSelf: 'flex-start',
+  inlineTimeActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
   },
   dateRow: {
     flexDirection: 'row',
@@ -1018,6 +1024,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     justifyContent: 'center',
   },
+  smallTimeBadge: {
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    justifyContent: 'center',
+  },
   dateBadgeText: {
     fontSize: 14,
     fontWeight: '500',
@@ -1037,10 +1050,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  activeChip: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
   startEndRow: {
     flexDirection: 'row',
     gap: 12,
@@ -1055,7 +1064,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   validationErrorText: {
-    color: '#FF453A',
     fontSize: 12,
     fontWeight: '600',
     marginTop: 6,
@@ -1117,6 +1125,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  pickerCancelBtn: {
+    height: 38,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pickerCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   repeatModeRow: {
     flexDirection: 'row',
     gap: 6,
@@ -1127,10 +1147,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 6,
     borderRadius: 6,
+    borderWidth: 1,
     alignItems: 'center',
-  },
-  activeModeButton: {
-    backgroundColor: '#007AFF',
   },
   modeButtonText: {
     fontSize: 11.5,
@@ -1138,7 +1156,6 @@ const styles = StyleSheet.create({
   },
   repeatSummaryText: {
     fontSize: 12,
-    fontStyle: 'italic',
     marginTop: 6,
   },
   addReminderBtn: {
@@ -1159,14 +1176,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(128,128,128,0.2)',
   },
   reminderMenuItemText: {
     fontSize: 13,
   },
   emptyRemindersText: {
     fontSize: 13,
-    fontStyle: 'italic',
     marginTop: 4,
   },
   reminderItem: {
@@ -1187,8 +1202,7 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   removeReminderBtnText: {
-    color: '#FF453A',
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: '700',
   },
 });

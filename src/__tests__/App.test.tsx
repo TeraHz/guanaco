@@ -160,8 +160,11 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
 
     const { findByTestId, queryByText, findByText } = render(<App />);
 
-    // Biometric lock screen is shown; tasks AND update modal are strictly hidden!
+    // Biometric lock screen is shown with clean minimal UI (Guanaco + Unlock + Sign Out, zero bloat); tasks AND update modal are strictly hidden!
     expect(await findByTestId('biometric-lock-screen')).toBeTruthy();
+    expect(await findByText('Guanaco')).toBeTruthy();
+    expect(await findByText('Unlock')).toBeTruthy();
+    expect(queryByText(/Guanaco is Locked/i)).toBeNull();
     expect(queryByText('Offline Secret Task')).toBeNull();
     expect(queryByText(/Update Available/i)).toBeNull();
 
