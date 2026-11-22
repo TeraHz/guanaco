@@ -19,7 +19,8 @@ import * as Haptics from 'expo-haptics';
 import { useTaskStore } from '../store/taskStore';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
-import { wouldCreateProjectCycle, flattenProjectTree, buildProjectTree } from '../utils/projectTree';
+import { normalizeHexColor } from '../utils/colors';
+import { wouldCreateProjectCycle } from '../utils/projectTree';
 
 const PALETTE = [
   '#0A84FF', // Blue
@@ -70,13 +71,19 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showParentDropdown, setShowParentDropdown] = useState(false);
+  const [showWebDeleteConfirm, setShowWebDeleteConfirm] = useState(false);
+
+  const safeAllProjects = React.useMemo(
+    () => (Array.isArray(allProjects) ? allProjects.filter((p) => p.id > 0) : []),
+    [allProjects]
+  );
 
   useEffect(() => {
     if (visible) {
       if (project) {
         setTitle(project.title || '');
         setDescription(project.description || '');
-        setHexColor(project.hex_color || PALETTE[0]);
+        setHexColor(normalizeHexColor(project.hex_color ?? undefined, true) || PALETTE[0]);
         setParentProjectId(project.parent_project_id || undefined);
         setIsFavorite(Boolean(project.is_favorite));
       } else {
@@ -88,21 +95,24 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       }
       setErrorMessage(null);
       setShowParentDropdown(false);
+      setShowWebDeleteConfirm(false);
     }
-  }, [visible, project]);
+  }, [visible, project?.id]);
 
-  // Filter valid parent projects (prevent self and descendants cycle) and sort alphabetically
+  // Filter valid parent projects (exclude archived unless already selected, prevent self and descendants cycle)
   const validParentProjects = React.useMemo(() => {
-    return allProjects
+    return safeAllProjects
       .filter((p) => {
+        if (p.is_archived && p.id !== project?.parent_project_id) return false;
         if (!isEditMode || !project) return true;
         if (p.id === project.id) return false;
-        return !wouldCreateProjectCycle(allProjects, project.id, p.id);
+        return !wouldCreateProjectCycle(safeAllProjects, project.id, p.id);
       })
       .sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
-  }, [allProjects, isEditMode, project]);
+  }, [safeAllProjects, isEditMode, project]);
 
-  const parentProjectName = allProjects.find((p) => p.id === parentProjectId)?.title || 'None (Top Level)';
+  const parentProjectName =
+    safeAllProjects.find((p) => p.id === parentProjectId)?.title || 'None (Top Level)';
 
   const handleSave = async () => {
     const trimmedTitle = title.trim();
@@ -115,11 +125,12 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
     setErrorMessage(null);
 
     try {
+      const normalizedColor = normalizeHexColor(hexColor, true) || PALETTE[0];
       if (isEditMode && project) {
         const updated = await updateProject(project.id, {
           title: trimmedTitle,
           description: description.trim(),
-          hex_color: hexColor,
+          hex_color: normalizedColor,
           parent_project_id: parentProjectId || 0,
           is_favorite: isFavorite,
         });
@@ -129,7 +140,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
         const created = await createProject({
           title: trimmedTitle,
           description: description.trim(),
-          hex_color: hexColor,
+          hex_color: normalizedColor,
           parent_project_id: parentProjectId,
           is_favorite: isFavorite,
         });
@@ -139,7 +150,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       onClose();
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err.message || 'Failed to save list.');
+      setErrorMessage(err?.message || 'Failed to save list.');
     } finally {
       setIsLoading(false);
     }
@@ -156,7 +167,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       onClose();
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err.message || 'Failed to update archive status.');
+      setErrorMessage(err?.message || 'Failed to update archive status.');
     } finally {
       setIsLoading(false);
     }
@@ -172,7 +183,25 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       onClose();
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err.message || 'Failed to duplicate list.');
+      setErrorMessage(err?.message || 'Failed to duplicate list.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const performDeleteProject = async () => {
+    if (!project) return;
+    setShowWebDeleteConfirm(false);
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      await deleteProject(project.id);
+      safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+      onDeleted?.(project.id);
+      onClose();
+    } catch (err: any) {
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setErrorMessage(err?.message || 'Failed to delete list.');
     } finally {
       setIsLoading(false);
     }
@@ -180,33 +209,32 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
   const handleDelete = () => {
     if (!project) return;
-    Alert.alert(
-      'Delete List',
-      `Are you sure you want to delete "${project.title}"? All tasks inside will be deleted.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setIsLoading(true);
-            setErrorMessage(null);
-            try {
-              await deleteProject(project.id);
-              safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-              onDeleted?.(project.id);
-              onClose();
-            } catch (err: any) {
-              safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-              setErrorMessage(err.message || 'Failed to delete list.');
-            } finally {
-              setIsLoading(false);
-            }
-          },
-        },
-      ]
-    );
+    const message = `Are you sure you want to delete "${project.title}"? All tasks inside will be deleted.`;
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        if (window.confirm(`Delete List\n\n${message}`)) {
+          performDeleteProject();
+        }
+      } else {
+        setShowWebDeleteConfirm(true);
+      }
+      return;
+    }
+
+    Alert.alert('Delete List', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: performDeleteProject,
+      },
+    ]);
   };
+
+  if (!visible) return null;
+
+  const selectedRingColor = theme.isDark ? '#FFFFFF' : '#1C1C1E';
 
   return (
     <Modal
@@ -238,6 +266,8 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   onPress={onClose}
                   style={styles.closeBtn}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close list editor"
                 >
                   <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
                 </TouchableOpacity>
@@ -245,8 +275,39 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
               {/* Error Banner */}
               {errorMessage ? (
-                <View style={styles.errorBanner}>
+                <View style={styles.errorBanner} accessibilityRole="alert">
                   <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+              ) : null}
+
+              {/* Inline Web Delete Confirmation Fallback */}
+              {showWebDeleteConfirm && project ? (
+                <View
+                  testID="project-web-delete-confirm"
+                  style={[
+                    styles.confirmBanner,
+                    { backgroundColor: theme.colors.cardSecondary, borderColor: '#FF453A' },
+                  ]}
+                >
+                  <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
+                    Permanently delete "{project.title}" and all its tasks?
+                  </Text>
+                  <View style={styles.confirmBannerActions}>
+                    <TouchableOpacity
+                      testID="project-confirm-cancel-btn"
+                      style={[styles.confirmSmallBtn, { backgroundColor: '#8E8E93' }]}
+                      onPress={() => setShowWebDeleteConfirm(false)}
+                    >
+                      <Text style={styles.confirmSmallBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      testID="project-confirm-delete-btn"
+                      style={[styles.confirmSmallBtn, { backgroundColor: '#FF453A' }]}
+                      onPress={performDeleteProject}
+                    >
+                      <Text style={styles.confirmSmallBtnText}>Delete</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ) : null}
 
@@ -300,7 +361,10 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                 <Text style={[styles.label, { color: theme.colors.textSecondary }]}>COLOR</Text>
                 <View style={styles.paletteRow}>
                   {PALETTE.map((color) => {
-                    const isSelected = hexColor.toLowerCase() === color.toLowerCase();
+                    const isSelected =
+                      (normalizeHexColor(hexColor, true) || '').toLowerCase() ===
+                      color.toLowerCase();
+                    const isLightSwatch = color.toUpperCase() === '#FFD60A';
                     return (
                       <TouchableOpacity
                         key={color}
@@ -308,14 +372,29 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                         style={[
                           styles.colorDot,
                           { backgroundColor: color },
-                          isSelected && styles.colorDotSelected,
+                          isSelected && [
+                            styles.colorDotSelected,
+                            { borderColor: selectedRingColor },
+                          ],
                         ]}
                         onPress={() => {
                           safeHaptics.selection();
                           setHexColor(color);
                         }}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                        accessibilityLabel={`Select color ${color}`}
                       >
-                        {isSelected && <Text style={styles.colorCheckmark}>✓</Text>}
+                        {isSelected && (
+                          <Text
+                            style={[
+                              styles.colorCheckmark,
+                              isLightSwatch && { color: '#1C1C1E' },
+                            ]}
+                          >
+                            ✓
+                          </Text>
+                        )}
                       </TouchableOpacity>
                     );
                   })}
@@ -333,6 +412,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                     },
                   ]}
                   onPress={() => setShowParentDropdown(!showParentDropdown)}
+                  accessibilityRole="button"
                 >
                   <Text style={[styles.selectorBtnText, { color: theme.colors.text }]}>
                     {parentProjectName}
@@ -371,6 +451,8 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                     </TouchableOpacity>
                     {validParentProjects.map((p) => {
                       const isSelected = p.id === parentProjectId;
+                      const dotColor =
+                        normalizeHexColor(p.hex_color ?? undefined, true) || theme.colors.accent;
                       return (
                         <TouchableOpacity
                           key={p.id}
@@ -383,7 +465,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                           <View
                             style={[
                               styles.smallColorDot,
-                              { backgroundColor: p.hex_color || theme.colors.accent },
+                              { backgroundColor: dotColor },
                             ]}
                           />
                           <Text
@@ -423,6 +505,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       ]}
                       onPress={handleDuplicate}
                       disabled={isLoading}
+                      accessibilityRole="button"
                     >
                       <Text style={[styles.secondaryBtnText, { color: theme.colors.text }]}>
                         Duplicate List
@@ -437,6 +520,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       ]}
                       onPress={handleArchiveToggle}
                       disabled={isLoading}
+                      accessibilityRole="button"
                     >
                       <Text style={[styles.secondaryBtnText, { color: theme.colors.text }]}>
                         {project?.is_archived ? 'Unarchive List' : 'Archive List'}
@@ -445,9 +529,10 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
                     <TouchableOpacity
                       testID="project-modal-delete-btn"
-                      style={[styles.destructiveBtn]}
+                      style={styles.destructiveBtn}
                       onPress={handleDelete}
                       disabled={isLoading}
+                      accessibilityRole="button"
                     >
                       <Text style={styles.destructiveBtnText}>Delete List</Text>
                     </TouchableOpacity>
@@ -467,6 +552,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   onPress={handleSave}
                   disabled={isLoading}
                   activeOpacity={0.8}
+                  accessibilityRole="button"
                 >
                   {isLoading ? (
                     <ActivityIndicator color="#FFFFFF" size="small" />
@@ -540,6 +626,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
   },
+  confirmBanner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+  },
+  confirmBannerText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  confirmBannerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  confirmSmallBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  confirmSmallBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   content: {
     flexGrow: 1,
   },
@@ -580,8 +693,7 @@ const styles = StyleSheet.create({
   },
   colorDotSelected: {
     transform: [{ scale: 1.15 }],
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderWidth: 2.5,
   },
   colorCheckmark: {
     color: '#FFFFFF',

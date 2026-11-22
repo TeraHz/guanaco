@@ -1,53 +1,94 @@
 import { Task } from '../types/vikunja';
 
-const SHOPPING_KEYWORDS = [
-  'grocer',
-  'shop',
-  'supermarket',
-  'market',
-  'pantry',
-  'costco',
-  'trader joe',
-  'target',
-  'walmart',
-  'store',
-  'food',
-  'пазар',
-  'покупк',
-  'магазин',
-  'хран',
+const SHOPPING_PATTERNS: RegExp[] = [
+  /\bgrocer(?:y|ies)?\b/i,
+  /\bshop(?:ping|s)?\b/i,
+  /\bsupermarket(?:s)?\b/i,
+  /\bmarket(?:s)?\b/i,
+  /\bpantry\b/i,
+  /\bcostco\b/i,
+  /\btrader\s*joe(?:'?s)?\b/i,
+  /\bwalmart\b/i,
+  /\bwhole\s*foods\b/i,
+  /\baldi\b/i,
+  /\blidl\b/i,
+  /\btarget\b/i,
+  /\bstore\b/i,
+  /\bfood(?:s)?\b/i,
+  /(?:^|[^\p{L}])(пазар|покупк|магазин|хран|супермаркет)/iu,
 ];
+
+const NON_SHOPPING_STORE_EXCLUSIONS = /\b(?:app\s+store|play\s+store|sales\s+target|revenue\s+target|q[1-4]\s+target)\b/i;
+
+const IGNORED_COLON_PREFIXES = new Set([
+  're',
+  'fw',
+  'fwd',
+  'note',
+  'notes',
+  'todo',
+  'todos',
+  'fixme',
+  'wip',
+  'fyi',
+  'nb',
+  'ps',
+  'http',
+  'https',
+  'mailto',
+  'tel',
+  'step',
+  'part',
+  'ch',
+  'chapter',
+  'reminder',
+  'update',
+  'warning',
+  'error',
+  'info',
+  'бележка',
+  'забележка',
+]);
 
 /**
  * Checks if a project/list is contextually related to shopping or groceries.
  */
 export function isShoppingList(listTitle?: string): boolean {
-  if (!listTitle) return false;
-  const lower = listTitle.toLowerCase();
-  return SHOPPING_KEYWORDS.some((kw) => lower.includes(kw));
+  if (!listTitle || typeof listTitle !== 'string') return false;
+  const trimmed = listTitle.trim();
+  if (!trimmed) return false;
+  if (NON_SHOPPING_STORE_EXCLUSIONS.test(trimmed)) return false;
+  return SHOPPING_PATTERNS.some((re) => re.test(trimmed));
 }
 
 /**
  * Contextually classifies a task into a category based on explicit title syntax.
  * Prioritizes:
- * 1. Bracketed prefixes in the title (e.g. "[Bakery] Croissant", "[Produce] Apples")
- * 2. Colon prefixes in the title (e.g. "Produce: Apples", "Deli: Ham")
- * 3. Fallback to "General" (allowing AI / zero-shot semantic grouping to classify the item)
- *
- * Note: Labels/tags (like store tags #Costco, #Trader Joe's, #Caraluzzi) are metadata tags
- * and do not override the department category/section header.
+ * 1. Bracketed prefixes in the title (e.g. "[Bakery] Croissant", "[Отдел] Хляб")
+ * 2. Colon prefixes in the title (e.g. "Produce: Apples", "Отдел: Хляб"), ignoring Re:/Fwd:/Note:/TODO:
+ * 3. Fallback to "General"
  */
-export function classifyTaskContextually(task: Task, contextTitle?: string): string {
-  // 1. Bracketed prefix: [Produce] Apples -> Produce
-  const bracketMatch = task.title.match(/^\[(.*?)\]/);
+export function classifyTaskContextually(task: Task, _contextTitle?: string): string {
+  if (!task?.title || typeof task.title !== 'string') return 'General';
+  const trimmed = task.title.trim();
+  if (!trimmed) return 'General';
+
+  // 1. Bracketed prefix: [Produce] Apples or [Отдел] Хляб -> ignore markdown checkboxes [ ] / [x]
+  const bracketMatch = trimmed.match(/^\[([^\]]{2,25})\]\s+\S/u);
   if (bracketMatch && bracketMatch[1]?.trim()) {
-    return bracketMatch[1].trim();
+    const candidate = bracketMatch[1].trim();
+    if (!/^[xX\s\d]$/.test(candidate)) {
+      return candidate;
+    }
   }
 
-  // 2. Colon prefix: Produce: Apples -> Produce
-  const colonMatch = task.title.match(/^([A-Za-z0-9\s]{2,15}):\s+/);
+  // 2. Colon prefix: Produce: Apples or Отдел: Хляб (Unicode-aware, ignoring email/note prefixes)
+  const colonMatch = trimmed.match(/^([\p{L}][\p{L}\p{N}\s&/-]{1,20}):\s+\S/u);
   if (colonMatch && colonMatch[1]?.trim()) {
-    return colonMatch[1].trim();
+    const candidate = colonMatch[1].trim();
+    if (!IGNORED_COLON_PREFIXES.has(candidate.toLowerCase())) {
+      return candidate;
+    }
   }
 
   return 'General';
@@ -62,9 +103,11 @@ export interface TaskGroup {
  * Groups tasks by contextual category.
  */
 export function groupTasksContextually(tasks: Task[], contextTitle?: string): TaskGroup[] {
+  if (!Array.isArray(tasks)) return [];
   const groupsMap = new Map<string, Task[]>();
 
   for (const task of tasks) {
+    if (!task) continue;
     const category = classifyTaskContextually(task, contextTitle);
     if (!groupsMap.has(category)) {
       groupsMap.set(category, []);

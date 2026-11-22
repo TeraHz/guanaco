@@ -2,9 +2,9 @@
 
 /**
  * Publish Android App Bundle (.aab) directly to Google Play Console via the Google Play Developer API.
- * 
+ *
  * Usage:
- *   node scripts/publish-play-store.js [--track internal|alpha|beta|production] [--aab path/to/bundle.aab]
+ *   node scripts/publish-play-store.js [--track internal|alpha|beta|production] [--aab path/to/bundle.aab] [--notes "Release notes"]
  */
 
 const fs = require('fs');
@@ -12,26 +12,49 @@ const path = require('path');
 const { androidpublisher } = require('@googleapis/androidpublisher');
 const { GoogleAuth } = require('google-auth-library');
 
-const SERVICE_ACCOUNT_PATH = path.resolve(__dirname, '../play-service-account.json');
+const SERVICE_ACCOUNT_PATH = process.env.PLAY_SERVICE_ACCOUNT_PATH
+  ? path.resolve(process.cwd(), process.env.PLAY_SERVICE_ACCOUNT_PATH)
+  : path.resolve(__dirname, '../play-service-account.json');
 const APP_JSON_PATH = path.resolve(__dirname, '../app.json');
 const ROOT_AAB_PATH = path.resolve(__dirname, '../guanaco-release.aab');
 const DEFAULT_AAB_PATH = fs.existsSync(ROOT_AAB_PATH)
   ? ROOT_AAB_PATH
   : path.resolve(__dirname, '../android/app/build/outputs/bundle/release/app-release.aab');
 
-// Parse CLI args
+const VALID_TRACKS = new Set(['internal', 'alpha', 'beta', 'production']);
+
+// Parse CLI args strictly
 const args = process.argv.slice(2);
 let track = 'internal';
 let aabPath = DEFAULT_AAB_PATH;
 let releaseNotes = null;
 
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--track' && args[i + 1]) {
-    track = args[++i];
-  } else if (args[i] === '--aab' && args[i + 1]) {
-    aabPath = path.resolve(process.cwd(), args[++i]);
-  } else if (args[i] === '--notes' && args[i + 1]) {
-    releaseNotes = args[++i];
+  const arg = args[i];
+  if (arg === '--track') {
+    const val = args[++i];
+    if (!val || val.startsWith('--') || !VALID_TRACKS.has(val)) {
+      console.error(`❌ Invalid --track value "${val || ''}". Expected one of: internal, alpha, beta, production`);
+      process.exit(1);
+    }
+    track = val;
+  } else if (arg === '--aab') {
+    const val = args[++i];
+    if (!val || val.startsWith('--')) {
+      console.error('❌ Missing file path after --aab');
+      process.exit(1);
+    }
+    aabPath = path.resolve(process.cwd(), val);
+  } else if (arg === '--notes') {
+    const val = args[++i];
+    if (val === undefined) {
+      console.error('❌ Missing text after --notes');
+      process.exit(1);
+    }
+    releaseNotes = val;
+  } else {
+    console.error(`❌ Unknown option: ${arg}`);
+    process.exit(1);
   }
 }
 
@@ -40,19 +63,19 @@ async function main() {
 
   // 1. Verify service account key
   if (!fs.existsSync(SERVICE_ACCOUNT_PATH)) {
-    console.error(`\n❌ Error: Google Play Service Account key not found at:`);
+    console.error('\n❌ Error: Google Play Service Account key not found at:');
     console.error(`   ${SERVICE_ACCOUNT_PATH}\n`);
     console.error('To set up API access:');
     console.error('1. Go to Google Play Console -> Settings -> API access');
     console.error('2. Create/link a Service Account and download the JSON private key');
-    console.error('3. Save it to your project root as "play-service-account.json"');
+    console.error('3. Save it to your project root as "play-service-account.json" (or set PLAY_SERVICE_ACCOUNT_PATH)');
     console.error('4. Grant the Service Account "Release manager" permissions for Guanaco\n');
     process.exit(1);
   }
 
   // 2. Verify AAB file
   if (!fs.existsSync(aabPath)) {
-    console.error(`\n❌ Error: App Bundle (.aab) not found at:`);
+    console.error('\n❌ Error: App Bundle (.aab) not found at:');
     console.error(`   ${aabPath}\n`);
     console.error('Run "npm run build:bundle" first to generate the local .aab file.\n');
     process.exit(1);
@@ -61,7 +84,7 @@ async function main() {
   // 3. Read package name and version from app.json
   const appConfig = JSON.parse(fs.readFileSync(APP_JSON_PATH, 'utf8'));
   const packageName = appConfig.expo?.android?.package || 'com.geodar.guanaco';
-  const versionCode = appConfig.expo?.android?.versionCode || 1;
+  const versionCode = Number(appConfig.expo?.android?.versionCode || 1);
   const versionName = appConfig.expo?.version || '1.0.0';
 
   console.log(`📦 App: ${packageName}`);
@@ -89,7 +112,7 @@ async function main() {
 
     // 6. Check existing bundles or upload the AAB bundle
     const bundlesRes = await publisher.edits.bundles.list({ editId, packageName });
-    const existingCodes = (bundlesRes.data.bundles || []).map(b => b.versionCode);
+    const existingCodes = (bundlesRes.data.bundles || []).map((b) => Number(b.versionCode));
     if (existingCodes.includes(versionCode)) {
       console.log(`📦 Bundle version code ${versionCode} is already uploaded in Google Play. Reusing existing bundle.`);
     } else {

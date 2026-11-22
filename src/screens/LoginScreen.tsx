@@ -15,37 +15,63 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
+import { useAppTheme } from '../utils/theme';
 import {
   getStoredAuth,
+  checkBiometricAvailable,
   isBiometricEnabled,
   authenticateWithBiometrics,
+  isPersonalApiToken,
+  STORAGE_KEY_SERVER_URL,
+  STORAGE_KEY_USERNAME,
+  STORAGE_KEY_SAVED_USERNAME,
 } from '../utils/biometrics';
+import {
+  parseAndValidateServerUrl,
+  isTotpRequiredError,
+} from '../api/client';
 
-interface LoginScreenProps {
-  onConnect: (serverUrl: string, username: string, pass: string) => Promise<void>;
+export interface LoginConnectOptions {
+  authMethod?: 'password' | 'api_token';
+  totpPasscode?: string;
+  allowInsecureHttp?: boolean;
+}
+
+export interface LoginScreenProps {
+  onConnect: (
+    serverUrl: string,
+    username: string,
+    pass: string,
+    options?: LoginConnectOptions
+  ) => Promise<void>;
+  onBiometricUnlock?: () => Promise<void>;
   defaultServerUrl?: string;
 }
 
-const STORAGE_KEY_URL = '@vikunja_server_url';
-const STORAGE_KEY_USERNAME = '@vikunja_username';
-
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onConnect,
+  onBiometricUnlock,
   defaultServerUrl = '',
 }) => {
+  const theme = useAppTheme();
+
   const [serverUrl, setServerUrl] = useState(defaultServerUrl);
+  const [authMode, setAuthMode] = useState<'password' | 'api_token'>('password');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [totpPasscode, setTotpPasscode] = useState('');
+  const [showTotp, setShowTotp] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pendingInsecureHttpUrl, setPendingInsecureHttpUrl] = useState<string | null>(null);
+  const [confirmedInsecureHttpUrl, setConfirmedInsecureHttpUrl] = useState<string | null>(null);
   const [canBiometricUnlock, setCanBiometricUnlock] = useState(false);
-  const [savedAuthData, setSavedAuthData] = useState<{
-    serverUrl: string;
-    username: string;
-    password: string;
-  } | null>(null);
+  const usernameInputRef = React.useRef<TextInput>(null);
+  const passwordInputRef = React.useRef<TextInput>(null);
+  const totpInputRef = React.useRef<TextInput>(null);
 
-  // Restore saved URL, Username, and check Biometric Unlock capability on mount
+  // Restore saved URL, Username, and check offline-capable Biometric Unlock capability on mount
   useEffect(() => {
     let mounted = true;
     const loadSavedCredentials = async () => {
@@ -56,19 +82,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         if (stored.serverUrl) setServerUrl(stored.serverUrl);
         if (stored.username) setUsername(stored.username);
 
-        const biometricActive = await isBiometricEnabled();
-        if (
-          biometricActive &&
-          stored.serverUrl &&
-          stored.username &&
-          stored.password
-        ) {
+        const biometricActive =
+          (await isBiometricEnabled()) && (await checkBiometricAvailable());
+        if (!mounted) return;
+
+        if (biometricActive && stored.serverUrl && stored.token && onBiometricUnlock) {
           setCanBiometricUnlock(true);
-          setSavedAuthData({
-            serverUrl: stored.serverUrl,
-            username: stored.username,
-            password: stored.password,
-          });
         }
       } catch (_) {}
     };
@@ -76,20 +95,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [onBiometricUnlock]);
 
   const handleBiometricUnlock = async () => {
-    if (!savedAuthData) return;
+    if (!onBiometricUnlock) return;
     setErrorMessage(null);
     try {
       const passed = await authenticateWithBiometrics('Unlock Guanaco');
       if (passed) {
         setLoading(true);
-        await onConnect(
-          savedAuthData.serverUrl,
-          savedAuthData.username,
-          savedAuthData.password
-        );
+        await onBiometricUnlock();
         safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
       }
     } catch (err: any) {
@@ -100,47 +115,129 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     }
   };
 
-  const handleSubmit = async () => {
+  const executeConnect = async (allowInsecureHttpOverride = false) => {
     setErrorMessage(null);
 
-    const cleanUrl = serverUrl.trim();
+    const rawUrl = serverUrl.trim();
     const cleanUser = username.trim();
-    const cleanPass = password.trim();
+    const autoDetectedToken = isPersonalApiToken(password);
+    const effectiveTokenMode = authMode === 'api_token' || autoDetectedToken;
+    // IMPORTANT: Never call password.trim() for user passwords! Only trim pasted API tokens.
+    const secretValue = effectiveTokenMode ? password.trim() : password;
 
-    if (!cleanUrl || !cleanUser || !cleanPass) {
+    if (!rawUrl || !secretValue || (!effectiveTokenMode && !cleanUser)) {
       setErrorMessage('Please fill in all fields');
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
-    setLoading(true);
+    let normalizedUrl: string;
+    let isInsecureHttp: boolean;
     try {
-      await onConnect(cleanUrl, cleanUser, cleanPass);
+      const validated = parseAndValidateServerUrl(rawUrl);
+      normalizedUrl = validated.serverUrl;
+      isInsecureHttp = validated.isInsecureHttp;
+    } catch (urlErr: any) {
+      setErrorMessage(urlErr.message || 'Invalid server URL');
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      return;
+    }
 
-      // Persist credentials on successful connection (Regression Issue #3)
+    const isHttpConfirmed =
+      allowInsecureHttpOverride || confirmedInsecureHttpUrl === normalizedUrl;
+
+    if (isInsecureHttp && !isHttpConfirmed) {
+      setPendingInsecureHttpUrl(normalizedUrl);
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
+      return;
+    }
+
+    setPendingInsecureHttpUrl(null);
+    setLoading(true);
+
+    try {
+      const cleanTotp = totpPasscode.trim();
+      const needsOptions =
+        effectiveTokenMode || Boolean(cleanTotp) || isInsecureHttp;
+
+      if (needsOptions) {
+        const opts: LoginConnectOptions = {};
+        if (effectiveTokenMode) opts.authMethod = 'api_token';
+        if (cleanTotp && !effectiveTokenMode) opts.totpPasscode = cleanTotp;
+        if (isInsecureHttp) opts.allowInsecureHttp = true;
+        await onConnect(normalizedUrl, cleanUser, secretValue, opts);
+      } else {
+        // Keep exact 3-arg call signature for standard HTTPS password login
+        await onConnect(normalizedUrl, cleanUser, secretValue);
+      }
+
       try {
-        await Promise.all([
-          AsyncStorage.setItem(STORAGE_KEY_URL, cleanUrl),
-          AsyncStorage.setItem(STORAGE_KEY_USERNAME, cleanUser),
-        ]);
+        const existingStored = await getStoredAuth();
+        const writes: Promise<void>[] = [];
+        if (!existingStored.serverUrl || existingStored.serverUrl !== normalizedUrl) {
+          writes.push(AsyncStorage.setItem(STORAGE_KEY_SERVER_URL, normalizedUrl));
+        }
+        if (!effectiveTokenMode && cleanUser && !existingStored.username) {
+          writes.push(AsyncStorage.setItem(STORAGE_KEY_USERNAME, cleanUser));
+          writes.push(AsyncStorage.setItem(STORAGE_KEY_SAVED_USERNAME, cleanUser));
+        }
+        if (writes.length > 0) {
+          await Promise.all(writes);
+        }
       } catch (_) {}
 
       safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to connect to Vikunja server');
+      if (!effectiveTokenMode && isTotpRequiredError(err)) {
+        const hadCode = totpPasscode.trim().length > 0;
+        setShowTotp(true);
+        setErrorMessage(
+          hadCode
+            ? 'Invalid two-factor authentication code. Please try again.'
+            : 'Two-factor authentication is required. Enter your 6-digit code below.'
+        );
+      } else {
+        setErrorMessage(err.message || 'Failed to connect to Vikunja server');
+      }
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
     }
   };
 
+  const handleSubmit = () => {
+    executeConnect(false);
+  };
+
+  const handleSwitchToHttps = () => {
+    if (pendingInsecureHttpUrl) {
+      const upgraded = pendingInsecureHttpUrl.replace(/^http:\/\//i, 'https://');
+      setServerUrl(upgraded);
+    }
+    setPendingInsecureHttpUrl(null);
+  };
+
+  const handleConfirmInsecureHttp = () => {
+    if (pendingInsecureHttpUrl) {
+      setConfirmedInsecureHttpUrl(pendingInsecureHttpUrl);
+    }
+    executeConnect(true);
+  };
+
+  const isTokenMode = authMode === 'api_token';
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+    >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardView}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
           {/* Logo / Header */}
           <View style={styles.header}>
             <Image
@@ -148,66 +245,369 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               style={styles.logoImage}
               resizeMode="cover"
             />
-            <Text style={styles.title}>Guanaco</Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.title, { color: theme.colors.text }]}>Guanaco</Text>
+            <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
               Connect your self-hosted or cloud Vikunja instance
             </Text>
           </View>
 
           {/* Form Card */}
-          <View style={styles.card}>
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: theme.colors.cardBackground,
+                borderColor: theme.colors.cardBorder,
+              },
+            ]}
+          >
+            {/* Auth Mode Tabs */}
+            <View
+              style={[
+                styles.modeTabs,
+                { backgroundColor: theme.colors.inputBg },
+              ]}
+            >
+              <TouchableOpacity
+                testID="login-mode-password-btn"
+                accessibilityRole="tab"
+                accessibilityState={{ selected: !isTokenMode }}
+                style={[
+                  styles.modeTab,
+                  !isTokenMode && [
+                    styles.modeTabActive,
+                    { backgroundColor: theme.colors.cardBackground },
+                  ],
+                ]}
+                onPress={() => {
+                  setAuthMode('password');
+                  setErrorMessage(null);
+                }}
+                disabled={loading}
+              >
+                <Text
+                  style={[
+                    styles.modeTabText,
+                    {
+                      color: !isTokenMode
+                        ? theme.colors.text
+                        : theme.colors.textSecondary,
+                      fontWeight: !isTokenMode ? '700' : '500',
+                    },
+                  ]}
+                >
+                  Password
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                testID="login-mode-token-btn"
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isTokenMode }}
+                style={[
+                  styles.modeTab,
+                  isTokenMode && [
+                    styles.modeTabActive,
+                    { backgroundColor: theme.colors.cardBackground },
+                  ],
+                ]}
+                onPress={() => {
+                  setAuthMode('api_token');
+                  setErrorMessage(null);
+                }}
+                disabled={loading}
+              >
+                <Text
+                  style={[
+                    styles.modeTabText,
+                    {
+                      color: isTokenMode
+                        ? theme.colors.text
+                        : theme.colors.textSecondary,
+                      fontWeight: isTokenMode ? '700' : '500',
+                    },
+                  ]}
+                >
+                  API Token
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             {errorMessage && (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{errorMessage}</Text>
+              <View
+                testID="login-error-banner"
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+                style={[
+                  styles.errorBanner,
+                  {
+                    backgroundColor: theme.isDark
+                      ? 'rgba(255, 69, 58, 0.16)'
+                      : 'rgba(215, 0, 21, 0.08)',
+                    borderColor: theme.isDark ? '#FF453A' : '#D70015',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.errorText,
+                    { color: theme.isDark ? '#FF453A' : '#D70015' },
+                  ]}
+                >
+                  {errorMessage}
+                </Text>
+              </View>
+            )}
+
+            {pendingInsecureHttpUrl && (
+              <View
+                testID="insecure-http-warning"
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+                style={[
+                  styles.warningBanner,
+                  {
+                    backgroundColor: theme.isDark
+                      ? 'rgba(255, 159, 10, 0.16)'
+                      : 'rgba(197, 108, 0, 0.1)',
+                    borderColor: theme.isDark ? '#FF9F0A' : '#C56C00',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.warningTitle,
+                    { color: theme.isDark ? '#FFB340' : '#9A5000' },
+                  ]}
+                >
+                  Insecure Cleartext HTTP Connection
+                </Text>
+                <Text
+                  style={[
+                    styles.warningBody,
+                    { color: theme.colors.text },
+                  ]}
+                >
+                  Connecting to {pendingInsecureHttpUrl} sends your credentials and tasks unencrypted. Use HTTPS unless this host is on a trusted private network or VPN.
+                </Text>
+                <View style={styles.warningActions}>
+                  <TouchableOpacity
+                    testID="http-switch-https-btn"
+                    accessibilityRole="button"
+                    style={[styles.warningSafeBtn, { backgroundColor: theme.colors.accent }]}
+                    onPress={handleSwitchToHttps}
+                  >
+                    <Text style={styles.warningSafeBtnText}>Use HTTPS</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="http-confirm-insecure-btn"
+                    accessibilityRole="button"
+                    style={[
+                      styles.warningProceedBtn,
+                      {
+                        borderColor: theme.isDark ? '#FF9F0A' : '#C56C00',
+                      },
+                    ]}
+                    onPress={handleConfirmInsecureHttp}
+                  >
+                    <Text
+                      style={[
+                        styles.warningProceedBtnText,
+                        { color: theme.isDark ? '#FFB340' : '#9A5000' },
+                      ]}
+                    >
+                      Connect Over HTTP Anyway
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Server URL</Text>
+              <Text style={[styles.label, { color: theme.colors.text }]}>Server URL</Text>
               <TextInput
-                style={styles.input}
+                testID="login-server-url-input"
+                accessibilityLabel="Server URL"
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: theme.colors.inputBg,
+                    borderColor: theme.colors.border,
+                    color: theme.colors.text,
+                  },
+                ]}
                 placeholder="https://vikunja.example.com"
-                placeholderTextColor="#636366"
+                placeholderTextColor={theme.colors.textTertiary}
                 value={serverUrl}
-                onChangeText={setServerUrl}
+                onChangeText={(val) => {
+                  setServerUrl(val);
+                  if (pendingInsecureHttpUrl) setPendingInsecureHttpUrl(null);
+                }}
                 autoCapitalize="none"
                 autoCorrect={false}
+                spellCheck={false}
                 keyboardType="url"
                 returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => {
+                  if (isTokenMode) {
+                    passwordInputRef.current?.focus();
+                  } else {
+                    usernameInputRef.current?.focus();
+                  }
+                }}
               />
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Username or Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Username"
-                placeholderTextColor="#636366"
-                value={username}
-                onChangeText={setUsername}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="next"
-              />
-            </View>
+            {!isTokenMode && (
+              <View style={styles.inputGroup}>
+                <Text style={[styles.label, { color: theme.colors.text }]}>
+                  Username or Email
+                </Text>
+                <TextInput
+                  ref={usernameInputRef}
+                  testID="login-username-input"
+                  accessibilityLabel="Username or Email"
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: theme.colors.inputBg,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text,
+                    },
+                  ]}
+                  placeholder="Username"
+                  placeholderTextColor={theme.colors.textTertiary}
+                  value={username}
+                  onChangeText={setUsername}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  spellCheck={false}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => passwordInputRef.current?.focus()}
+                />
+              </View>
+            )}
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Password / API Token</Text>
+              <View style={styles.labelRow}>
+                <Text style={[styles.label, { color: theme.colors.text, marginBottom: 0 }]}>
+                  {isTokenMode ? 'Personal API Token' : 'Password / API Token'}
+                </Text>
+                <TouchableOpacity
+                  testID="login-toggle-secret-visibility-btn"
+                  accessibilityRole="button"
+                  accessibilityLabel={showSecret ? 'Hide password' : 'Show password'}
+                  onPress={() => setShowSecret((prev) => !prev)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={[styles.inlineLink, { color: theme.colors.accent }]}>
+                    {showSecret ? 'Hide' : 'Show'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
               <TextInput
-                style={styles.input}
-                placeholder="Password"
-                placeholderTextColor="#636366"
+                ref={passwordInputRef}
+                testID="login-password-input"
+                accessibilityLabel={
+                  isTokenMode ? 'Personal API Token' : 'Password or API Token'
+                }
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: theme.colors.inputBg,
+                    borderColor: theme.colors.border,
+                    color: theme.colors.text,
+                  },
+                ]}
+                placeholder={isTokenMode ? 'tk_...' : 'Password'}
+                placeholderTextColor={theme.colors.textTertiary}
                 value={password}
                 onChangeText={setPassword}
-                secureTextEntry
-                returnKeyType="go"
-                onSubmitEditing={handleSubmit}
+                secureTextEntry={!showSecret}
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                textContentType={isTokenMode ? 'none' : 'password'}
+                autoComplete={isTokenMode ? 'off' : 'password'}
+                returnKeyType={showTotp && !isTokenMode ? 'next' : 'go'}
+                blurOnSubmit={!(showTotp && !isTokenMode)}
+                onSubmitEditing={
+                  showTotp && !isTokenMode
+                    ? () => totpInputRef.current?.focus()
+                    : handleSubmit
+                }
               />
             </View>
+
+            {!isTokenMode && (
+              <>
+                {showTotp ? (
+                  <View style={styles.inputGroup}>
+                    <View style={styles.labelRow}>
+                      <Text style={[styles.label, { color: theme.colors.text, marginBottom: 0 }]}>
+                        Two-Factor Code (TOTP)
+                      </Text>
+                      <TouchableOpacity
+                        testID="login-hide-totp-btn"
+                        accessibilityRole="button"
+                        onPress={() => {
+                          setShowTotp(false);
+                          setTotpPasscode('');
+                        }}
+                      >
+                        <Text style={[styles.inlineLink, { color: theme.colors.textSecondary }]}>
+                          Cancel 2FA
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TextInput
+                      ref={totpInputRef}
+                      testID="login-totp-input"
+                      accessibilityLabel="Two-Factor Code"
+                      style={[
+                        styles.input,
+                        {
+                          backgroundColor: theme.colors.inputBg,
+                          borderColor: theme.colors.border,
+                          color: theme.colors.text,
+                        },
+                      ]}
+                      placeholder="6-digit 2FA code"
+                      placeholderTextColor={theme.colors.textTertiary}
+                      value={totpPasscode}
+                      onChangeText={setTotpPasscode}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      keyboardType="number-pad"
+                      textContentType="oneTimeCode"
+                      autoComplete="one-time-code"
+                      maxLength={8}
+                      returnKeyType="go"
+                      onSubmitEditing={handleSubmit}
+                    />
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    testID="login-toggle-totp-btn"
+                    accessibilityRole="button"
+                    style={styles.totpToggleRow}
+                    onPress={() => setShowTotp(true)}
+                  >
+                    <Text style={[styles.inlineLink, { color: theme.colors.accent }]}>
+                      Have a 2FA / TOTP code?
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
 
             {canBiometricUnlock && (
               <TouchableOpacity
                 testID="login-biometric-btn"
+                accessibilityRole="button"
                 style={[styles.biometricButton, loading && styles.buttonDisabled]}
                 onPress={handleBiometricUnlock}
                 disabled={loading}
@@ -219,7 +619,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
             <TouchableOpacity
               testID="login-submit-btn"
-              style={[styles.button, loading && styles.buttonDisabled]}
+              accessibilityRole="button"
+              style={[
+                styles.button,
+                { backgroundColor: theme.colors.accent },
+                loading && styles.buttonDisabled,
+              ]}
               onPress={handleSubmit}
               disabled={loading}
               activeOpacity={0.8}
@@ -240,7 +645,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0D0D0E',
   },
   keyboardView: {
     flex: 1,
@@ -253,7 +657,7 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 28,
   },
   logoImage: {
     width: 76,
@@ -262,60 +666,132 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     shadowColor: '#8B5CF6',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.45,
+    shadowOpacity: 0.35,
     shadowRadius: 16,
   },
   title: {
     fontSize: 26,
     fontWeight: '800',
-    color: '#FFFFFF',
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 14,
-    color: '#8E8E93',
     textAlign: 'center',
     lineHeight: 20,
   },
   card: {
-    backgroundColor: '#1C1C1E',
     borderRadius: 20,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#2C2C2E',
+    maxWidth: 460,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  modeTabs: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 16,
+  },
+  modeTab: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modeTabActive: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  modeTabText: {
+    fontSize: 13,
   },
   errorBanner: {
-    backgroundColor: 'rgba(255, 69, 58, 0.15)',
     borderWidth: 1,
-    borderColor: '#FF453A',
     borderRadius: 10,
     padding: 12,
     marginBottom: 16,
   },
   errorText: {
-    color: '#FF453A',
     fontSize: 13,
     fontWeight: '500',
+  },
+  warningBanner: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  warningTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  warningBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  warningActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  warningSafeBtn: {
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  warningSafeBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  warningProceedBtn: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  warningProceedBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   inputGroup: {
     marginBottom: 16,
   },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
   label: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#E5E5EA',
     marginBottom: 8,
   },
+  inlineLink: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  totpToggleRow: {
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+    paddingVertical: 2,
+  },
   input: {
-    backgroundColor: '#2C2C2E',
     borderRadius: 12,
+    borderWidth: 1,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    color: '#FFFFFF',
     fontSize: 15,
   },
   biometricButton: {
-    backgroundColor: '#30D158',
+    backgroundColor: '#248A3D',
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
@@ -328,7 +804,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   button: {
-    backgroundColor: '#007AFF',
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',

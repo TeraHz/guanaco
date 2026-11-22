@@ -14,8 +14,7 @@ dist/
 coverage/
 *.lcov
 
-# Native build folders (if ever generated via prebuild / eject)
-/android/
+# iOS native build folder (if generated via prebuild)
 /ios/
 
 # Environment / Secrets
@@ -25,8 +24,11 @@ coverage/
 *.jks
 *.aab
 *.apk
+*.ap_
 play-service-account*.json
 credentials.json
+*.p12
+*.mobileprovision
 
 # OS
 .DS_Store

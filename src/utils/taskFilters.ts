@@ -15,12 +15,15 @@ export function isTaskAssignedToUser(
   task: Task,
   user?: User | { id?: number; username?: string } | null
 ): boolean {
-  if (!task.assignees || task.assignees.length === 0 || !user) return false;
+  if (!task || !Array.isArray(task.assignees) || task.assignees.length === 0 || !user) {
+    return false;
+  }
 
   const targetUsername = user.username?.trim().toLowerCase();
   const targetId = user.id;
 
   return task.assignees.some((assignee) => {
+    if (!assignee) return false;
     if (targetId && assignee.id && targetId > 0 && assignee.id > 0 && targetId === assignee.id) {
       return true;
     }
@@ -42,6 +45,6 @@ export function filterTasksForUser(
   tasks: Task[],
   user?: User | { id?: number; username?: string } | null
 ): Task[] {
-  if (!user) return [];
+  if (!Array.isArray(tasks) || !user) return [];
   return tasks.filter((t) => isTaskAssignedToUser(t, user));
 }

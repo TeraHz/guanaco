@@ -8,9 +8,10 @@ import {
   StyleSheet,
   TouchableWithoutFeedback,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
 import { Project } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
+import { safeHaptics } from '../utils/haptics';
+import { normalizeHexColor } from '../utils/colors';
 
 interface MoveListModalProps {
   visible: boolean;
@@ -30,18 +31,21 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
   const theme = useAppTheme();
 
   const sortedProjects = React.useMemo(() => {
-    return [...projects].sort((a, b) =>
-      (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
-    );
-  }, [projects]);
+    const safeList = Array.isArray(projects) ? projects : [];
+    return safeList
+      .filter((p) => p.id > 0 && (!p.is_archived || p.id === currentProjectId))
+      .sort((a, b) =>
+        (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
+      );
+  }, [projects, currentProjectId]);
 
   const handleSelect = (projectId: number) => {
-    try {
-      Haptics.selectionAsync?.();
-    } catch (_) {}
+    safeHaptics.selection();
     onSelectProject(projectId);
     onClose();
   };
+
+  if (!visible) return null;
 
   return (
     <Modal
@@ -68,47 +72,69 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
                   testID="move-modal-close"
                   style={styles.closeBtn}
                   onPress={onClose}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close move to list dialog"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
                 </TouchableOpacity>
               </View>
 
-              <ScrollView style={styles.list}>
-                {sortedProjects.map((proj) => {
-                  const isCurrent = proj.id === currentProjectId;
-                  return (
-                    <TouchableOpacity
-                      key={proj.id}
-                      testID={`move-project-option-${proj.id}`}
-                      style={[
-                        styles.projectRow,
-                        isCurrent && {
-                          backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                        },
-                      ]}
-                      onPress={() => handleSelect(proj.id)}
-                      activeOpacity={0.7}
-                    >
-                      <View
+              {sortedProjects.length === 0 ? (
+                <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+                  No active lists available.
+                </Text>
+              ) : (
+                <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
+                  {sortedProjects.map((proj) => {
+                    const isCurrent = proj.id === currentProjectId;
+                    const dotColor = normalizeHexColor(proj.hex_color ?? undefined, true) || '#007AFF';
+                    return (
+                      <TouchableOpacity
+                        key={proj.id}
+                        testID={`move-project-option-${proj.id}`}
                         style={[
-                          styles.colorDot,
-                          { backgroundColor: proj.hex_color || '#007AFF' },
+                          styles.projectRow,
+                          isCurrent && {
+                            backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                          },
                         ]}
-                      />
-                      <Text
-                        style={[
-                          styles.projectTitle,
-                          { color: theme.colors.text },
-                          isCurrent && styles.projectTitleCurrent,
-                        ]}
+                        onPress={() => handleSelect(proj.id)}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isCurrent }}
+                        accessibilityLabel={`Move to ${proj.title}${isCurrent ? ', current list' : ''}`}
                       >
-                        {proj.title}
-                      </Text>
-                      {isCurrent ? <Text style={styles.currentBadge}>Current</Text> : null}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+                        <View
+                          testID={`move-project-dot-${proj.id}`}
+                          style={[
+                            styles.colorDot,
+                            { backgroundColor: dotColor },
+                          ]}
+                        />
+                        <Text
+                          style={[
+                            styles.projectTitle,
+                            { color: theme.colors.text },
+                            isCurrent && {
+                              color: theme.isDark ? '#30D158' : '#15803D',
+                              fontWeight: '600',
+                            },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {proj.title}
+                        </Text>
+                        {isCurrent ? (
+                          <Text style={[styles.currentBadge, { color: theme.colors.textSecondary }]}>
+                            Current
+                          </Text>
+                        ) : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              )}
             </View>
           </TouchableWithoutFeedback>
         </View>
@@ -124,7 +150,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: '#1C1C1E',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 16,
@@ -132,7 +157,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     maxHeight: '70%',
     borderWidth: 1,
-    borderColor: '#2C2C2E',
   },
   header: {
     flexDirection: 'row',
@@ -141,20 +165,23 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#2C2C2E',
   },
   title: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
   closeBtn: {
     padding: 6,
   },
   closeBtnText: {
-    color: '#8E8E93',
     fontSize: 16,
     fontWeight: '600',
+  },
+  emptyText: {
+    fontSize: 14,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 20,
   },
   list: {
     marginBottom: 8,
@@ -167,9 +194,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 4,
   },
-  projectRowCurrent: {
-    backgroundColor: '#2C2C2E',
-  },
   colorDot: {
     width: 12,
     height: 12,
@@ -179,16 +203,11 @@ const styles = StyleSheet.create({
   projectTitle: {
     flex: 1,
     fontSize: 16,
-    color: '#F2F2F7',
     fontWeight: '500',
-  },
-  projectTitleCurrent: {
-    color: '#30D158',
-    fontWeight: '600',
   },
   currentBadge: {
     fontSize: 12,
-    color: '#8E8E93',
     fontWeight: '500',
+    marginLeft: 8,
   },
 });

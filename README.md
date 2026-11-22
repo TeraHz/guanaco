@@ -5,13 +5,13 @@
 </p>
 
 <p align="center">
-  <strong>Fast, private, and intuitive mobile task management for your Vikunja server.</strong>
+  <strong>Fast, private, offline-first mobile &amp; tablet task management for your self-hosted Vikunja server.</strong>
 </p>
 
 <p align="center">
-  <a href="#-features">Features</a> •
-  <a href="#-privacy--zero-telemetry">Privacy</a> •
-  <a href="#-architecture">Architecture</a> •
+  <a href="#-key-features">Features</a> •
+  <a href="#-privacy--security">Privacy</a> •
+  <a href="#-architecture--tech-stack">Architecture</a> •
   <a href="#-development--testing">Development</a> •
   <a href="PRIVACY_POLICY.md">Privacy Policy</a> •
   <a href="LICENSE">License</a>
@@ -21,95 +21,111 @@
 
 ## 🎯 Key Features
 
-1. **0ms Optimistic UI & Offline-First Sync**:
-   - Ticking off tasks, creating tasks, and moving items happen instantly with 0ms UI latency.
-   - Robust persistent mutation queue automatically retries and syncs changes with your Vikunja server.
-   - Smart active-window polling preserves battery and bandwidth.
+1. **0ms Optimistic UI, Offline-First Sync & Flexible Auth**:
+   - Completing, creating, editing, reordering, and moving tasks happen instantaneously with 0ms UI latency.
+   - Persistent offline mutation queue (`SyncQueue`) safely replays edits, resolves optimistic temporary IDs across restarts, and preserves unsynced user work across network drops or token expirations.
+   - Sign in with **Username/Password + optional TOTP 2FA** (with automatic JWT renewal) or **Personal API Tokens (`tk_...`)** — with zero plaintext password storage.
+   - Multi-page server pagination and active-window polling keep large Vikunja accounts synchronized without draining battery.
 
 2. **Rapid Chained Task Entry (`QuickAddBar`)**:
-   - Persistent bottom input bar designed for rapid consecutive capture.
-   - Natural language shortcut syntax:
-     - `#tag` for label tagging
-     - `!urgent`, `!high`, `!medium`, `!low` for priority
-     - `@date` (`@today`, `@tomorrow`, etc.) for deadlines
-     - `@user` for assignment
-   - Real-time autocomplete suggestions and 1-tap priority cycling.
+   - Persistent bottom capture bar for rapid consecutive task entry, with live autocomplete and staple item suggestions.
+   - Natural-language shortcut syntax (wrap entire input in `"quotes"` to bypass parsing):
+     - `#tag` or `*tag` (and `#"multi word"` / `*"multi word"`) for labels
+     - `!1`–`!5` or `!low`, `!medium`, `!high`, `!urgent`, `!critical` for priority
+     - `+Project` or `+"Project Name"` for target list/project
+     - `@user` for task assignment
+     - `@today`, `@tomorrow`, `@tonight`, `today`, `tomorrow`, `tonight`, `in N days`, weekdays (`mon`–`sun` / `next monday`), `at 5pm` / `at 17:00` for due dates & times
+     - `every [N] hour(s)/day(s)/week(s)/month(s)/year(s)` for recurring tasks
 
 3. **Tactile Gestures & Haptics (`SwipeableTaskItem`)**:
-   - **Swipe Right**: Instant completion toggle with haptic feedback.
-   - **Swipe Left**: Quick actions for moving between projects or deletion.
+   - **Swipe Left**: Instant completion / undo toggle (`✓ Done` / `Undo`) with tactile haptic feedback.
+   - **Swipe Right**: Reveals **Move** (relocate task to another list) and **Delete** (protected by a 5-second **Undo** toast banner), alongside inline `+#` quick label controls.
+   - **Reorder Mode**: Drag-and-drop (`☰`) or accessible `▲` / `▼` step reordering.
 
-4. **Multi-Project Navigation & Smart Views**:
-   - Drawer with live task count badges.
-   - Consolidated **All Tasks** and **My Open Tasks** views.
-   - Custom project colors and 1-tap task list relocation.
+4. **Multi-Project Navigation, Smart Views & Tablet Split-View**:
+   - Nested project hierarchy drawer with live open-task count badges, project sharing, and collapsible **Archived Lists** management.
+   - Consolidated **All Tasks** and **My Open Tasks** views, smart on-device category/aisle grouping, and adaptive Light/Dark themes.
+   - Dedicated sidebar split-view on tablets/foldables (`>= 768px`) and independent **Task Box Size** & **Task Text Size** scaling (`100%`–`200%`).
 
-5. **Deep Task Details & Organization**:
-   - Subtasks, percentage progress tracking, assignees, dates, reminders, and Markdown notes.
+5. **Full Vikunja Task Details & Local Reminders**:
+   - Descriptions/notes, percentage progress (`0%`–`100%`), start/due/end dates, flexible repeat modes (from due date, monthly, after completion), relative & absolute local reminders, labels, colors, and assignees.
 
 ---
 
-## 🔒 Privacy & Zero Telemetry
+## 🔒 Privacy & Security
 
 Guanaco is built strictly for personal privacy and data sovereignty:
-- **Direct Connection:** All traffic travels exclusively between your device and your self-hosted Vikunja instance.
-- **Zero Third-Party SDKs:** No Google Analytics, no Firebase, no Sentry, no crashlytics, and no ad trackers.
-- **Hardware-Backed Encryption:** Server credentials and API tokens are encrypted on-device via `expo-secure-store` / Android Keystore.
-- **Biometric App Lock:** Optional fingerprint and Face ID protection powered entirely by native Android hardware.
+- **Direct Connection Only:** All traffic travels exclusively between your device and your configured Vikunja instance (HTTPS by default; explicit confirmation required for local cleartext HTTP).
+- **Zero Telemetry & Zero Third-Party SDKs:** No Google Analytics, Firebase, Sentry, Crashlytics, or advertising identifiers.
+- **Zero Plaintext Password Persistence:** Passwords and TOTP 2FA codes are used once to authenticate and immediately discarded. Only session JWTs or Personal API Tokens (`tk_...`) are stored in hardware-backed `expo-secure-store` (Android Keystore / iOS Keychain).
+- **Cloud Auto-Backup Disabled (`android:allowBackup="false"`):** Local task caches are excluded from third-party cloud auto-backups.
+- **100% Local Notifications & Resume-Aware Biometric Lock:** Task reminders run locally via `expo-notifications` without push relays or `SCHEDULE_EXACT_ALARM`. Optional fingerprint / Face ID lock protects app launch and background resume offline.
 
-See our full [Privacy Policy](PRIVACY_POLICY.md).
+See the full [Privacy Policy](PRIVACY_POLICY.md).
 
 ---
 
 ## 🛠️ Architecture & Tech Stack
 
-- **Framework**: React Native & Expo (TypeScript)
-- **State & Sync Queue**: Zustand + `@react-native-async-storage/async-storage`
-- **Secure Storage**: `expo-secure-store` (Android Keystore)
+- **Framework**: React Native `0.86` & Expo `57` (TypeScript, New Architecture + Hermes)
+- **State & Offline Sync**: Zustand + `@react-native-async-storage/async-storage`
+- **Hardware Token Storage & Biometrics**: `expo-secure-store` + `expo-local-authentication`
 - **Gestures & Animations**: `react-native-gesture-handler` + `react-native-reanimated` + `expo-haptics`
-- **Icons**: `lucide-react-native`
-- **Compiler & Dex Optimization**: Android R8 full-mode code shrinking with deobfuscation mapping pipeline
-- **Testing**: Jest + `@testing-library/react-native` (Full TDD suite with 288 passing tests)
+- **Native Android**: Tracked `android/` Gradle project (`armeabi-v7a`, `arm64-v8a`), R8 full-mode shrinking + mapping upload, and native Kotlin `InAppUpdateModule` (`com.google.android.play:app-update-ktx`)
+- **Testing & CI**: Jest + `@testing-library/react-native`, verified across `UTC`, `America/Los_Angeles`, and `Asia/Tokyo` timezones in GitHub Actions
 
 ---
 
 ## 🧪 Development & Testing
 
 ```bash
-# Install dependencies
-npm install
+# Install exact locked dependencies
+npm ci
 
-# Run full test suite (288 tests across 27 suites)
-npm test
-
-# Run tests with code coverage
-npm run test:coverage
-
-# TypeScript type check
+# TypeScript static type check
 npm run typecheck
 
-# Start local dev server
-npm start
+# Run full Jest test suite
+npm test
 
-# Run web preview
+# Verify timezone safety across UTC, US Pacific, and Tokyo offsets
+TZ=UTC npm test
+TZ=America/Los_Angeles npm test
+TZ=Asia/Tokyo npm test
+
+# Run tests with coverage report
+npm run test:coverage
+
+# Start Expo dev server / Web preview
+npm start
 npm run web
 ```
 
 ---
 
-## 📦 Building & Publishing
+## 📦 Building & Publishing (Android)
+
+Release builds never use hardcoded signing credentials. Provide your release keystore credentials via environment variables (or `~/.gradle/gradle.properties`):
 
 ```bash
+export GUANACO_KEYSTORE_FILE="guanaco-release.keystore" # optional, defaults to android/app/guanaco-release.keystore
+export GUANACO_KEYSTORE_PASSWORD="<your-keystore-password>"
+export GUANACO_KEY_ALIAS="<your-key-alias>"
+export GUANACO_KEY_PASSWORD="<your-key-password>"
+
+# Bump semver + Android versionCode across package.json, app.json, version.ts, and build.gradle
+npm run bump -- patch
+
 # Build production Android App Bundle (.aab) with R8 optimization locally
 npm run build:bundle
 
-# Publish bundle to Google Play Console via developer API
-npm run publish:play
+# Publish bundle + R8 mapping.txt to Google Play Console (requires play-service-account.json)
+npm run publish:play -- --track internal
 ```
 
 ---
 
 ## 📄 License
 
-Guanaco is open source software licensed under the [GNU General Public License v3.0 (GPL-3.0-or-later)](LICENSE).
+Guanaco is free and open-source software licensed under the [GNU General Public License v3.0 (GPL-3.0-or-later)](LICENSE).  
 Vikunja is an open-source project created by Kolaente.

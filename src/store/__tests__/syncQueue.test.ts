@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SyncQueue, Mutation } from '../syncQueue';
 import { VikunjaClient } from '../../api/client';
 
@@ -5,7 +6,8 @@ describe('SyncQueue', () => {
   let queue: SyncQueue;
   let mockClient: jest.Mocked<VikunjaClient>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
     mockClient = {
       createTask: jest.fn(),
       updateTask: jest.fn(),
@@ -13,6 +15,8 @@ describe('SyncQueue', () => {
       toggleTaskDone: jest.fn(),
       moveTask: jest.fn(),
       reorderTask: jest.fn(),
+      setTaskLabels: jest.fn(),
+      setTaskAssignees: jest.fn(),
     } as unknown as jest.Mocked<VikunjaClient>;
 
     queue = new SyncQueue(mockClient);
@@ -62,7 +66,7 @@ describe('SyncQueue', () => {
     expect(queue.getQueue()).toHaveLength(0);
   });
 
-  it('should process CREATE_TASK and execute onResolved callback with remote task', async () => {
+  it('should process CREATE_TASK and execute onSuccess callback with remote task', async () => {
     const onResolved = jest.fn();
     mockClient.createTask.mockResolvedValue({
       id: 99,
@@ -97,8 +101,45 @@ describe('SyncQueue', () => {
     expect(queue.getQueue()).toHaveLength(0);
   });
 
+  it('processes CREATE_TASK and invokes persistent onTaskCreated callback across cold restarts', async () => {
+    mockClient.createTask.mockResolvedValue({
+      id: 99,
+      title: 'Cold Restart Task',
+      done: false,
+      priority: 2,
+      project_id: 1,
+    });
+
+    queue.enqueue({
+      id: 'm-create-cold',
+      type: 'CREATE_TASK',
+      payload: {
+        tempId: -100,
+        projectId: 1,
+        taskData: { title: 'Cold Restart Task', priority: 2, project_id: 1 },
+      },
+      timestamp: Date.now(),
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    const restartedQueue = new SyncQueue(mockClient);
+    const onTaskCreated = jest.fn();
+    restartedQueue.onTaskCreated = onTaskCreated;
+    await restartedQueue.loadFromStorage();
+
+    expect(restartedQueue.getQueue()).toHaveLength(1);
+    await restartedQueue.processQueue();
+
+    expect(onTaskCreated).toHaveBeenCalledWith(
+      -100,
+      expect.objectContaining({ id: 99, title: 'Cold Restart Task' })
+    );
+    expect(restartedQueue.getQueue()).toHaveLength(0);
+  });
+
   it('should synchronize task labels when CREATE_TASK contains labels', async () => {
-    mockClient.setTaskLabels = jest.fn().mockResolvedValue([
+    mockClient.setTaskLabels.mockResolvedValue([
       { id: 1, title: 'Costco' },
       { id: 2, title: 'Groceries' },
     ]);
@@ -108,7 +149,7 @@ describe('SyncQueue', () => {
       done: false,
       priority: 1,
       project_id: 1,
-      labels: null as any, // Vikunja returns null labels from createTask
+      labels: null as any,
     });
 
     const onResolved = jest.fn();
@@ -121,7 +162,10 @@ describe('SyncQueue', () => {
         taskData: {
           title: 'Buy Milk',
           project_id: 1,
-          labels: [{ id: -1, title: 'Costco' }, { id: -2, title: 'Groceries' }],
+          labels: [
+            { id: -1, title: 'Costco' },
+            { id: -2, title: 'Groceries' },
+          ],
         },
       },
       timestamp: Date.now(),
@@ -135,7 +179,6 @@ describe('SyncQueue', () => {
       { id: -1, title: 'Costco' },
       { id: -2, title: 'Groceries' },
     ]);
-    // The resolved task must have labels attached!
     expect(onResolved).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 50,
@@ -148,9 +191,7 @@ describe('SyncQueue', () => {
   });
 
   it('should process SET_TASK_LABELS mutation to update labels on server', async () => {
-    mockClient.setTaskLabels = jest.fn().mockResolvedValue([
-      { id: 1, title: 'Costco' },
-    ]);
+    mockClient.setTaskLabels.mockResolvedValue([{ id: 1, title: 'Costco' }]);
 
     queue.enqueue({
       id: 'm-set-labels',
@@ -164,9 +205,34 @@ describe('SyncQueue', () => {
 
     await queue.processQueue();
 
-    expect(mockClient.setTaskLabels).toHaveBeenCalledWith(50, [
-      { id: 1, title: 'Costco' },
-    ]);
+    expect(mockClient.setTaskLabels).toHaveBeenCalledWith(50, [{ id: 1, title: 'Costco' }]);
+    expect(queue.getQueue()).toHaveLength(0);
+  });
+
+  it('should process SET_TASK_ASSIGNEES mutation and notify onTaskAssigneesSynced', async () => {
+    mockClient.setTaskAssignees.mockResolvedValue([{ id: 7, username: 'alice' }]);
+    const onAssigneesSynced = jest.fn();
+    queue.onTaskAssigneesSynced = onAssigneesSynced;
+
+    queue.enqueue({
+      id: 'm-set-assignees',
+      type: 'SET_TASK_ASSIGNEES',
+      payload: {
+        taskId: 50,
+        assignees: [{ id: -1, username: 'alice' }],
+        previousAssignees: [],
+      },
+      timestamp: Date.now(),
+    });
+
+    await queue.processQueue();
+
+    expect(mockClient.setTaskAssignees).toHaveBeenCalledWith(
+      50,
+      [{ id: -1, username: 'alice' }],
+      []
+    );
+    expect(onAssigneesSynced).toHaveBeenCalledWith(50, [{ id: 7, username: 'alice' }]);
     expect(queue.getQueue()).toHaveLength(0);
   });
 
@@ -182,7 +248,6 @@ describe('SyncQueue', () => {
 
     await queue.processQueue();
 
-    // Queue should still hold m1 because network failed
     expect(queue.getQueue()).toHaveLength(1);
     expect(queue.getQueue()[0].id).toBe('m1');
     expect(queue.getQueue()[0].retryCount).toBe(1);
@@ -196,7 +261,6 @@ describe('SyncQueue', () => {
 
     expect(queue.getStatus()).toBe('synced');
 
-    // Make network fail initially
     mockClient.toggleTaskDone.mockRejectedValueOnce(new Error('Network disconnected'));
 
     queue.enqueue({
@@ -213,7 +277,6 @@ describe('SyncQueue', () => {
     expect(queue.getStatus()).toBe('offline');
     expect(queue.getQueue()).toHaveLength(1);
 
-    // Connection restored
     mockClient.toggleTaskDone.mockResolvedValueOnce({
       id: 1,
       title: 'Apples',
@@ -226,6 +289,8 @@ describe('SyncQueue', () => {
 
     expect(queue.getStatus()).toBe('synced');
     expect(queue.getQueue()).toHaveLength(0);
+    expect(statusHistory).toContain('offline:1');
+    expect(statusHistory[statusHistory.length - 1]).toBe('synced:0');
   });
 
   it('should remap temporary negative task IDs to remote ID across subsequent queued mutations', async () => {
@@ -247,7 +312,6 @@ describe('SyncQueue', () => {
       project_id: 1,
     });
 
-    // Enqueue create followed by toggle on the tempId
     queue.enqueue({
       id: `create-${tempId}`,
       type: 'CREATE_TASK',
@@ -272,10 +336,171 @@ describe('SyncQueue', () => {
 
     await queue.processQueue();
 
-    expect(mockClient.createTask).toHaveBeenCalledWith(1, expect.objectContaining({ title: 'Offline Created Task' }));
-    // updateTask should have been called with the remapped real remoteId, NOT tempId!
-    expect(mockClient.updateTask).toHaveBeenCalledWith(remoteId, expect.objectContaining({ done: true }));
+    expect(mockClient.createTask).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ title: 'Offline Created Task' })
+    );
+    expect(mockClient.updateTask).toHaveBeenCalledWith(
+      remoteId,
+      expect.objectContaining({ done: true })
+    );
     expect(queue.getQueue()).toHaveLength(0);
+  });
+
+  it('cancels pending CREATE_TASK and dependent mutations when DELETE_TASK is enqueued for unsynced tempId < 0', async () => {
+    const tempId = -555;
+    queue.enqueue({
+      id: `create-${tempId}`,
+      type: 'CREATE_TASK',
+      payload: {
+        tempId,
+        projectId: 1,
+        taskData: { title: 'Draft Task', project_id: 1 },
+      },
+      timestamp: 1000,
+    });
+    queue.enqueue({
+      id: `update-${tempId}`,
+      type: 'UPDATE_TASK',
+      payload: { taskId: tempId, data: { title: 'Edited Draft' } },
+      timestamp: 1500,
+    });
+
+    queue.enqueue({
+      id: `delete-${tempId}`,
+      type: 'DELETE_TASK',
+      payload: { taskId: tempId },
+      timestamp: 2000,
+    });
+
+    expect(queue.getQueue()).toHaveLength(0);
+    expect(queue.getStatus()).toBe('synced');
+
+    await queue.processQueue();
+    expect(mockClient.createTask).not.toHaveBeenCalled();
+    expect(mockClient.deleteTask).not.toHaveBeenCalled();
+  });
+
+  it('remaps queued DELETE_TASK to positive server ID if CREATE_TASK was already in-flight when deleted', async () => {
+    const tempId = -777;
+    let resolveCreate!: (val: any) => void;
+    mockClient.createTask.mockImplementationOnce(
+      () =>
+        new Promise((res) => {
+          resolveCreate = res;
+        })
+    );
+    mockClient.deleteTask.mockResolvedValueOnce({ message: 'deleted' });
+
+    queue.enqueue({
+      id: `create-${tempId}`,
+      type: 'CREATE_TASK',
+      payload: {
+        tempId,
+        projectId: 1,
+        taskData: { title: 'In-flight task', project_id: 1 },
+      },
+      timestamp: 1000,
+    });
+
+    const processingPromise = queue.processQueue();
+
+    queue.enqueue({
+      id: `delete-${tempId}`,
+      type: 'DELETE_TASK',
+      payload: { taskId: tempId },
+      timestamp: 1100,
+    });
+
+    resolveCreate({ id: 808, title: 'In-flight task', done: false, priority: 0, project_id: 1 });
+    await processingPromise;
+
+    expect(mockClient.deleteTask).toHaveBeenCalledWith(808);
+    expect(queue.getQueue()).toHaveLength(0);
+  });
+
+  it('propagates transient setTaskLabels / setTaskAssignees failures during CREATE_TASK into retryable queue items without duplicating task', async () => {
+    mockClient.createTask.mockResolvedValueOnce({
+      id: 50,
+      title: 'Buy Milk',
+      done: false,
+      priority: 1,
+      project_id: 1,
+    });
+    mockClient.setTaskLabels
+      .mockRejectedValueOnce(new Error('Network glitch attaching labels'))
+      .mockResolvedValueOnce([{ id: 1, title: 'Costco' }]);
+    mockClient.setTaskAssignees
+      .mockRejectedValueOnce(new Error('Network glitch attaching assignees'))
+      .mockResolvedValueOnce([{ id: 7, username: 'alice' }]);
+
+    queue.enqueue({
+      id: 'm-create-with-meta',
+      type: 'CREATE_TASK',
+      payload: {
+        tempId: -50,
+        projectId: 1,
+        taskData: { title: 'Buy Milk', project_id: 1 },
+        labels: [{ id: -1, title: 'Costco' }],
+        assignees: [{ id: -2, username: 'alice' }],
+      },
+      timestamp: Date.now(),
+    });
+
+    await queue.processQueue();
+
+    expect(mockClient.createTask).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus()).toBe('offline');
+    expect(queue.getQueue().map((m) => m.type)).toEqual([
+      'SET_TASK_LABELS',
+      'SET_TASK_ASSIGNEES',
+    ]);
+
+    await queue.retry();
+    expect(mockClient.createTask).toHaveBeenCalledTimes(1);
+    expect(mockClient.setTaskLabels).toHaveBeenCalledTimes(2);
+    expect(mockClient.setTaskAssignees).toHaveBeenCalledTimes(2);
+    expect(queue.getQueue()).toHaveLength(0);
+    expect(queue.getStatus()).toBe('synced');
+  });
+
+  it('strips negative temporary label/user/task IDs from UPDATE_TASK snapshots', async () => {
+    mockClient.updateTask.mockResolvedValueOnce({
+      id: 42,
+      title: 'Clean Snapshot',
+      done: false,
+      priority: 1,
+      project_id: 1,
+    });
+
+    queue.enqueue({
+      id: 'm-update-neg',
+      type: 'UPDATE_TASK',
+      payload: {
+        taskId: 42,
+        data: {
+          id: -42,
+          title: 'Clean Snapshot',
+          labels: [
+            { id: -1, title: 'UnsyncedLabel' },
+            { id: 5, title: 'SyncedLabel' },
+          ],
+          assignees: [
+            { id: -9, username: 'pendingUser' },
+            { id: 3, username: 'realUser' },
+          ],
+        },
+      },
+      timestamp: Date.now(),
+    });
+
+    await queue.processQueue();
+
+    expect(mockClient.updateTask).toHaveBeenCalledWith(42, {
+      title: 'Clean Snapshot',
+      labels: [{ id: 5, title: 'SyncedLabel' }],
+      assignees: [{ id: 3, username: 'realUser' }],
+    });
   });
 
   it('should drop permanent 4xx errors and continue processing subsequent queued items', async () => {
@@ -293,7 +518,6 @@ describe('SyncQueue', () => {
 
     const onError = jest.fn();
 
-    // Enqueue an invalid task followed by a valid task
     queue.enqueue({
       id: 'm-bad-404',
       type: 'UPDATE_TASK',
@@ -311,12 +535,30 @@ describe('SyncQueue', () => {
 
     await queue.processQueue();
 
-    // 404 item was notified of error and discarded
     expect(onError).toHaveBeenCalledWith(error404);
-    // Queue did NOT get stuck; valid item was processed!
     expect(mockClient.toggleTaskDone).toHaveBeenCalledWith(2, true);
     expect(queue.getQueue()).toHaveLength(0);
     expect(queue.getStatus()).toBe('synced');
+  });
+
+  it('preserves queue on 401, 403, 408, and 429 errors without dropping user mutations', async () => {
+    for (const retryableStatus of [401, 403, 408, 429]) {
+      const q = new SyncQueue(mockClient);
+      const err: any = new Error(`HTTP ${retryableStatus}`);
+      err.status = retryableStatus;
+      mockClient.toggleTaskDone.mockRejectedValueOnce(err);
+
+      q.enqueue({
+        id: `m-${retryableStatus}`,
+        type: 'TOGGLE_TASK',
+        payload: { taskId: 10, done: true },
+        timestamp: 1000,
+      });
+
+      await q.processQueue();
+      expect(q.getQueue()).toHaveLength(1);
+      expect(q.getStatus()).toBe(retryableStatus === 401 ? 'auth_required' : 'offline');
+    }
   });
 
   it('should not retry mutation if onSuccess throws an error', async () => {
@@ -342,14 +584,10 @@ describe('SyncQueue', () => {
 
     await queue.processQueue();
 
-    // Item must be removed from queue so it is not re-executed creating duplicate tasks
     expect(queue.getQueue()).toHaveLength(0);
   });
 
   it('should persist queue to AsyncStorage on enqueue and rehydrate on loadFromStorage', async () => {
-    const AsyncStorage = require('@react-native-async-storage/async-storage');
-    await AsyncStorage.clear();
-
     const mutation: Mutation = {
       id: 'persist-1',
       type: 'TOGGLE_TASK',
@@ -359,8 +597,6 @@ describe('SyncQueue', () => {
     };
 
     queue.enqueue(mutation);
-
-    // Wait microtask for async storage write
     await new Promise((r) => setTimeout(r, 10));
 
     const stored = await AsyncStorage.getItem('@vikunja_sync_queue');
@@ -369,10 +605,8 @@ describe('SyncQueue', () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0].id).toBe('persist-1');
     expect(parsed[0].payload.taskId).toBe(42);
-    // Callbacks should not be stored
     expect(parsed[0].onSuccess).toBeUndefined();
 
-    // Create a new fresh queue instance and load from storage
     const newQueue = new SyncQueue(mockClient);
     await newQueue.loadFromStorage();
 
@@ -380,7 +614,6 @@ describe('SyncQueue', () => {
     expect(newQueue.getQueue()[0].id).toBe('persist-1');
     expect(newQueue.getStatus()).toBe('syncing');
 
-    // Processing the new queue executes the persisted mutation and clears storage
     mockClient.toggleTaskDone.mockResolvedValueOnce({
       id: 42,
       done: true,
@@ -393,12 +626,10 @@ describe('SyncQueue', () => {
     expect(newQueue.getQueue()).toHaveLength(0);
 
     await new Promise((r) => setTimeout(r, 10));
-    const storedAfter = await AsyncStorage.getItem('@vikunja_sync_queue');
-    expect(storedAfter).toBeNull();
+    expect(await AsyncStorage.getItem('@vikunja_sync_queue')).toBeNull();
   });
 
   it('should clear AsyncStorage when queue.clear() is called', async () => {
-    const AsyncStorage = require('@react-native-async-storage/async-storage');
     queue.enqueue({
       id: 'persist-2',
       type: 'DELETE_TASK',
@@ -410,13 +641,12 @@ describe('SyncQueue', () => {
     expect(await AsyncStorage.getItem('@vikunja_sync_queue')).not.toBeNull();
 
     await queue.clear();
-    await new Promise((r) => setTimeout(r, 10));
     expect(await AsyncStorage.getItem('@vikunja_sync_queue')).toBeNull();
     expect(queue.getQueue()).toHaveLength(0);
   });
 
-  describe('REORDER_TASK Deduplication & Processing', () => {
-    it('should deduplicate REORDER_TASK mutations in-place for the same task ID', () => {
+  describe('REORDER_TASK Deduplication & Concurrency Safety', () => {
+    it('should deduplicate non-in-flight REORDER_TASK mutations in-place for the same task ID', () => {
       queue.enqueue({
         id: 'reorder-10-1',
         type: 'REORDER_TASK',
@@ -427,7 +657,6 @@ describe('SyncQueue', () => {
       expect(queue.getQueue()).toHaveLength(1);
       expect(queue.getQueue()[0].payload.position).toBe(1000);
 
-      // Reordering again while still queued updates the existing entry in-place
       queue.enqueue({
         id: 'reorder-10-2',
         type: 'REORDER_TASK',
@@ -455,6 +684,43 @@ describe('SyncQueue', () => {
       expect(mockClient.reorderTask).toHaveBeenCalledWith(42, 2000, 7);
       expect(queue.getQueue()).toHaveLength(0);
       expect(queue.getStatus()).toBe('synced');
+    });
+
+    it('never overwrites an in-flight REORDER_TASK queue[0] item when a new drag arrives mid-flight', async () => {
+      let resolveFirstReorder!: (val: any) => void;
+      mockClient.reorderTask
+        .mockImplementationOnce(
+          () =>
+            new Promise((res) => {
+              resolveFirstReorder = res;
+            })
+        )
+        .mockResolvedValueOnce({ success: true });
+
+      queue.enqueue({
+        id: 'reorder-10-first',
+        type: 'REORDER_TASK',
+        payload: { taskId: 10, position: 1000, projectViewId: 5 },
+        timestamp: 100,
+      });
+
+      const runPromise = queue.processQueue();
+
+      queue.enqueue({
+        id: 'reorder-10-second',
+        type: 'REORDER_TASK',
+        payload: { taskId: 10, position: 3000, projectViewId: 5 },
+        timestamp: 200,
+      });
+
+      expect(queue.getQueue()).toHaveLength(2);
+
+      resolveFirstReorder({ success: true });
+      await runPromise;
+
+      expect(mockClient.reorderTask).toHaveBeenNthCalledWith(1, 10, 1000, 5);
+      expect(mockClient.reorderTask).toHaveBeenNthCalledWith(2, 10, 3000, 5);
+      expect(queue.getQueue()).toHaveLength(0);
     });
   });
 });

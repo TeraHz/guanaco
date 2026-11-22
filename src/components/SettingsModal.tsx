@@ -9,7 +9,7 @@ import {
   Switch,
   ActivityIndicator,
   Platform,
-  StatusBar,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -20,11 +20,14 @@ import {
   checkBiometricAvailable,
   isBiometricEnabled,
   setBiometricEnabled,
+  authenticateWithBiometrics,
+  getStoredAuth,
 } from '../utils/biometrics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { isAICoreSupported, clearAICoreCache } from '../utils/aiCore';
+import * as aiCoreModule from '../utils/aiCore';
 import { APP_VERSION, APP_BUILD_NUMBER, APP_NAME } from '../constants/version';
 import { useUpdateStore } from '../store/updateStore';
+import { isNativeUpdateSupported } from '../services/appUpdateChecker';
 
 interface SettingsModalProps {
   visible: boolean;
@@ -62,7 +65,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [biometricActive, setBiometricActive] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
-  const resetTimerRef = React.useRef<any>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [pendingConfirmAction, setPendingConfirmAction] = useState<'reset' | 'logout' | null>(null);
+  const resetTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const serverUrl = client ? client.getBaseApiUrl().replace(/\/api\/v1$/, '') : '';
   const displayUsername =
@@ -70,12 +75,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     savedUsername ||
     (cachedUsers && cachedUsers.length > 0 ? cachedUsers[0].username : null);
 
-  const hasAICore = isAICoreSupported();
+  const hasAICore = aiCoreModule.isAICoreSupported();
+  const hasLivePromptApi =
+    typeof (aiCoreModule as any).isPromptAPIAvailable === 'function'
+      ? Boolean((aiCoreModule as any).isPromptAPIAvailable())
+      : Boolean(
+          (globalThis as any).ai?.languageModel ||
+            (typeof window !== 'undefined' && (window as any).ai?.languageModel)
+        );
+
+  const nativeUpdatesSupported = isNativeUpdateSupported();
+
   const [clearedAiCache, setClearedAiCache] = useState(false);
-  const aiCacheTimerRef = React.useRef<any>(null);
+  const aiCacheTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
-  const updateStatusTimerRef = React.useRef<any>(null);
+  const updateStatusTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     updateInfo,
@@ -100,36 +115,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   useEffect(() => {
     return () => {
-      if (resetTimerRef.current) {
-        clearTimeout(resetTimerRef.current);
-      }
-      if (aiCacheTimerRef.current) {
-        clearTimeout(aiCacheTimerRef.current);
-      }
-      if (updateStatusTimerRef.current) {
-        clearTimeout(updateStatusTimerRef.current);
-      }
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      if (aiCacheTimerRef.current) clearTimeout(aiCacheTimerRef.current);
+      if (updateStatusTimerRef.current) clearTimeout(updateStatusTimerRef.current);
     };
   }, []);
 
   useEffect(() => {
     let mounted = true;
-    async function loadBiometrics() {
-      const avail = await checkBiometricAvailable();
+    async function loadSettingsMetadata() {
+      const [avail, enabled, storedAuth, legacyValues] = await Promise.all([
+        checkBiometricAvailable().catch(() => false),
+        isBiometricEnabled().catch(() => false),
+        getStoredAuth().catch(() => null),
+        AsyncStorage.multiGet(['@vikunja_saved_username', '@vikunja_username']).catch(
+          () => [] as [string, string | null][]
+        ),
+      ]);
+
       if (!mounted) return;
-      setBiometricAvailable(avail);
-      if (avail) {
-        const enabled = await isBiometricEnabled();
-        if (mounted) setBiometricActive(enabled);
-      }
+
+      setBiometricAvailable((prev) => (prev === avail ? prev : avail));
+      const nextBioActive = avail ? enabled : false;
+      setBiometricActive((prev) => (prev === nextBioActive ? prev : nextBioActive));
+
+      const legacySaved = legacyValues.find(([k]) => k === '@vikunja_saved_username')?.[1] || null;
+      const legacyUser = legacyValues.find(([k]) => k === '@vikunja_username')?.[1] || null;
+      const resolvedUser = storedAuth?.username || legacyUser || legacySaved || null;
+      setSavedUsername((prev) => (prev === resolvedUser ? prev : resolvedUser));
     }
+
     if (visible) {
-      loadBiometrics();
-      AsyncStorage.getItem('@vikunja_saved_username')
-        .then((saved) => {
-          if (mounted && saved) setSavedUsername(saved);
-        })
-        .catch(() => {});
+      setPendingConfirmAction(null);
+      setResetError(null);
+      loadSettingsMetadata();
     }
     return () => {
       mounted = false;
@@ -137,15 +156,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, [visible]);
 
   const handleToggleBiometric = async (value: boolean) => {
-    setBiometricActive(value);
-    await setBiometricEnabled(value);
-    safeHaptics.selection();
+    const promptReason = value
+      ? 'Verify identity to enable Biometric Unlock'
+      : 'Verify identity to disable Biometric Unlock';
+    try {
+      const passed = await authenticateWithBiometrics(promptReason);
+      if (!passed) {
+        safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+        return;
+      }
+      await setBiometricEnabled(value);
+      setBiometricActive(value);
+      safeHaptics.selection();
+    } catch {
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+    }
   };
 
-  const handleResetAndSync = async () => {
+  const executeResetAndSync = async () => {
     if (isResetting) return;
+    setPendingConfirmAction(null);
     setIsResetting(true);
     setResetSuccess(false);
+    setResetError(null);
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
@@ -153,12 +186,100 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setResetSuccess(true);
       safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
       resetTimerRef.current = setTimeout(() => setResetSuccess(false), 2500);
-    } catch (_) {
+    } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setResetError(err?.message || 'Failed to sync from server.');
     } finally {
       setIsResetting(false);
     }
   };
+
+  const handleRequestResetAndSync = () => {
+    if (isResetting) return;
+    const message =
+      pendingSyncCount > 0
+        ? `You have ${pendingSyncCount} unsynced offline change(s) that will be permanently discarded. Replace all local data with server data?`
+        : 'This will clear local cached data and re-download all lists and tasks from the server. Continue?';
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        if (window.confirm(`Overwrite & Sync from Server\n\n${message}`)) {
+          executeResetAndSync();
+        }
+      } else {
+        setPendingConfirmAction('reset');
+      }
+      return;
+    }
+
+    Alert.alert('Overwrite & Sync from Server', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Overwrite',
+        style: 'destructive',
+        onPress: () => executeResetAndSync(),
+      },
+    ]);
+  };
+
+  const executeLogout = () => {
+    setPendingConfirmAction(null);
+    safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
+    onClose();
+    onLogout?.();
+  };
+
+  const handleRequestLogout = () => {
+    if (pendingSyncCount > 0) {
+      const message = `You have ${pendingSyncCount} unsynced offline change(s). Logging out now will permanently discard them. Log out anyway?`;
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+          if (window.confirm(`Unsynced Changes\n\n${message}`)) {
+            executeLogout();
+          }
+        } else {
+          setPendingConfirmAction('logout');
+        }
+        return;
+      }
+
+      Alert.alert('Unsynced Changes', message, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: executeLogout,
+        },
+      ]);
+      return;
+    }
+
+    executeLogout();
+  };
+
+  const syncStatusColor =
+    syncStatus === 'synced'
+      ? theme.isDark
+        ? '#30D158'
+        : '#15803D'
+      : syncStatus === 'syncing'
+      ? theme.colors.accent
+      : (syncStatus as string) === 'auth_required'
+      ? '#FF453A'
+      : theme.isDark
+      ? '#FF9F0A'
+      : '#B45309';
+
+  const syncStatusLabel =
+    syncStatus === 'synced'
+      ? '● Fully Synced'
+      : syncStatus === 'syncing'
+      ? '◌ Syncing...'
+      : (syncStatus as string) === 'auth_required'
+      ? `🔒 Re-authentication Required (${pendingSyncCount} pending)`
+      : `⚡ Offline (${pendingSyncCount} pending)`;
+
+  if (!visible) return null;
 
   return (
     <Modal
@@ -176,347 +297,69 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             },
           ]}
         >
-        {/* Header */}
-        <View
-          style={[
-            styles.header,
-            {
-              backgroundColor: theme.colors.cardBackground,
-              borderBottomColor: theme.colors.cardBorder,
-            },
-          ]}
-        >
-          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Settings</Text>
-          <TouchableOpacity
-            testID="close-settings-btn"
-            style={styles.closeBtn}
-            onPress={onClose}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView
-          style={styles.content}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Account & Server Section */}
+          {/* Header */}
           <View
             style={[
-              styles.sectionCard,
+              styles.header,
               {
                 backgroundColor: theme.colors.cardBackground,
-                borderColor: theme.colors.cardBorder,
+                borderBottomColor: theme.colors.cardBorder,
               },
             ]}
           >
-            <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-              VIKUNJA SERVER & ACCOUNT
-            </Text>
-            <View style={styles.infoRow}>
-              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Server</Text>
-              <Text style={[styles.infoValue, { color: theme.colors.text }]} numberOfLines={1}>
-                {serverUrl}
-              </Text>
-            </View>
-            <View style={[styles.infoRow, { borderTopColor: theme.colors.cardBorder, borderTopWidth: StyleSheet.hairlineWidth }]}>
-              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>User</Text>
-              <Text style={[styles.infoValue, { color: theme.colors.text }]}>
-                {displayUsername ? `@${displayUsername}` : 'Connected'}
-              </Text>
-            </View>
-            <View style={[styles.infoRow, { borderTopColor: theme.colors.cardBorder, borderTopWidth: StyleSheet.hairlineWidth }]}>
-              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Version</Text>
-              <Text style={[styles.infoValue, { color: theme.colors.text }]}>
-                v{APP_VERSION} (Build {APP_BUILD_NUMBER})
-              </Text>
-            </View>
+            <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Settings</Text>
+            <TouchableOpacity
+              testID="close-settings-btn"
+              style={styles.closeBtn}
+              onPress={onClose}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Close settings"
+            >
+              <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
+            </TouchableOpacity>
           </View>
 
-          {/* Preferences Section */}
-          <View
-            style={[
-              styles.sectionCard,
-              {
-                backgroundColor: theme.colors.cardBackground,
-                borderColor: theme.colors.cardBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-              TASK PREFERENCES
-            </Text>
-            <View style={styles.settingBlock}>
-              <View style={styles.settingRow}>
-                <View style={styles.settingTextCol}>
-                  <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                    Task Box Size ({taskItemScale}%)
-                  </Text>
-                  <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                    Scale box padding, height, and tap targets ({taskItemScale > 100 ? `+${taskItemScale - 100}%` : 'Standard'})
-                  </Text>
-                </View>
-                <View style={styles.stepperContainer}>
-                  <TouchableOpacity
-                    testID="settings-scale-decrement"
-                    style={[styles.stepperBtn, taskItemScale <= 100 && styles.stepperBtnDisabled]}
-                    disabled={taskItemScale <= 100}
-                    onPress={() => {
-                      const newScale = Math.max(100, taskItemScale - 25);
-                      setTaskItemScale(newScale);
-                      safeHaptics.selection();
-                    }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text
-                      style={[
-                        styles.stepperBtnText,
-                        { color: taskItemScale <= 100 ? '#8E8E93' : '#007AFF' },
-                      ]}
-                    >
-                      −
-                    </Text>
-                  </TouchableOpacity>
-                  <View style={styles.stepperValueBadge}>
-                    <Text
-                      testID="settings-scale-value"
-                      style={[styles.stepperValueText, { color: theme.colors.text }]}
-                    >
-                      {taskItemScale}%
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    testID="settings-scale-increment"
-                    style={[styles.stepperBtn, taskItemScale >= 200 && styles.stepperBtnDisabled]}
-                    disabled={taskItemScale >= 200}
-                    onPress={() => {
-                      const newScale = Math.min(200, taskItemScale + 25);
-                      setTaskItemScale(newScale);
-                      safeHaptics.selection();
-                    }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text
-                      style={[
-                        styles.stepperBtnText,
-                        { color: taskItemScale >= 200 ? '#8E8E93' : '#007AFF' },
-                      ]}
-                    >
-                      +
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Preset chips for Box Size */}
-              <View style={styles.presetChipsRow}>
-                {[100, 125, 150, 175, 200].map((preset) => {
-                  const isSelected = taskItemScale === preset;
-                  return (
-                    <TouchableOpacity
-                      key={preset}
-                      testID={`settings-scale-preset-${preset}`}
-                      style={[
-                        styles.presetChip,
-                        isSelected
-                          ? { backgroundColor: '#007AFF', borderColor: '#007AFF' }
-                          : {
-                              backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                              borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
-                            },
-                      ]}
-                      onPress={() => {
-                        setTaskItemScale(preset);
-                        safeHaptics.selection();
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.presetChipText,
-                          {
-                            color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
-                            fontWeight: isSelected ? '700' : '500',
-                          },
-                        ]}
-                      >
-                        {preset === 100 ? '100%' : `${preset}%`}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Task Text Size (Separate setting) */}
-              <View style={[styles.settingRow, { marginTop: 16 }]}>
-                <View style={styles.settingTextCol}>
-                  <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                    Task Text Size ({taskItemTextScale}%)
-                  </Text>
-                  <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                    Scale title and metadata font size ({taskItemTextScale > 100 ? `+${taskItemTextScale - 100}%` : 'Standard'})
-                  </Text>
-                </View>
-                <View style={styles.stepperContainer}>
-                  <TouchableOpacity
-                    testID="settings-text-scale-decrement"
-                    style={[styles.stepperBtn, taskItemTextScale <= 100 && styles.stepperBtnDisabled]}
-                    disabled={taskItemTextScale <= 100}
-                    onPress={() => {
-                      const newScale = Math.max(100, taskItemTextScale - 25);
-                      setTaskItemTextScale(newScale);
-                      safeHaptics.selection();
-                    }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text
-                      style={[
-                        styles.stepperBtnText,
-                        { color: taskItemTextScale <= 100 ? '#8E8E93' : '#007AFF' },
-                      ]}
-                    >
-                      −
-                    </Text>
-                  </TouchableOpacity>
-                  <View style={styles.stepperValueBadge}>
-                    <Text
-                      testID="settings-text-scale-value"
-                      style={[styles.stepperValueText, { color: theme.colors.text }]}
-                    >
-                      {taskItemTextScale}%
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    testID="settings-text-scale-increment"
-                    style={[styles.stepperBtn, taskItemTextScale >= 200 && styles.stepperBtnDisabled]}
-                    disabled={taskItemTextScale >= 200}
-                    onPress={() => {
-                      const newScale = Math.min(200, taskItemTextScale + 25);
-                      setTaskItemTextScale(newScale);
-                      safeHaptics.selection();
-                    }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text
-                      style={[
-                        styles.stepperBtnText,
-                        { color: taskItemTextScale >= 200 ? '#8E8E93' : '#007AFF' },
-                      ]}
-                    >
-                      +
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Preset chips for Text Size */}
-              <View style={styles.presetChipsRow}>
-                {[100, 125, 150, 175, 200].map((preset) => {
-                  const isSelected = taskItemTextScale === preset;
-                  return (
-                    <TouchableOpacity
-                      key={preset}
-                      testID={`settings-text-scale-preset-${preset}`}
-                      style={[
-                        styles.presetChip,
-                        isSelected
-                          ? { backgroundColor: '#007AFF', borderColor: '#007AFF' }
-                          : {
-                              backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                              borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
-                            },
-                      ]}
-                      onPress={() => {
-                        setTaskItemTextScale(preset);
-                        safeHaptics.selection();
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.presetChipText,
-                          {
-                            color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
-                            fontWeight: isSelected ? '700' : '500',
-                          },
-                        ]}
-                      >
-                        {preset === 100 ? '100%' : `${preset}%`}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            {/* Test automation and accessibility fallback switch */}
-            <View style={styles.hiddenAutomation}>
-              <Switch
-                testID="settings-large-items-switch"
-                value={largeTaskItems}
-                onValueChange={(val) => {
-                  setLargeTaskItems(val);
-                  safeHaptics.selection();
-                }}
-              />
-            </View>
-
+          {pendingConfirmAction ? (
             <View
+              testID="settings-confirm-banner"
               style={[
-                styles.settingRow,
-                { borderTopColor: theme.colors.cardBorder, borderTopWidth: StyleSheet.hairlineWidth },
+                styles.confirmBanner,
+                { backgroundColor: theme.colors.cardBackground, borderColor: '#FF453A' },
               ]}
             >
-              <View style={styles.settingTextCol}>
-                <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                  Re-enable Staple Tasks
-                </Text>
-                <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                  Suggest previously completed grocery items when typing
-                </Text>
+              <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
+                {pendingConfirmAction === 'reset'
+                  ? 'Overwrite local data and re-sync from server?'
+                  : `Discard ${pendingSyncCount} unsynced change(s) and log out?`}
+              </Text>
+              <View style={styles.confirmBannerActions}>
+                <TouchableOpacity
+                  testID="settings-confirm-cancel-btn"
+                  style={[styles.confirmBtn, { backgroundColor: '#8E8E93' }]}
+                  onPress={() => setPendingConfirmAction(null)}
+                >
+                  <Text style={styles.confirmBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  testID="settings-confirm-proceed-btn"
+                  style={[styles.confirmBtn, { backgroundColor: '#FF453A' }]}
+                  onPress={pendingConfirmAction === 'reset' ? executeResetAndSync : executeLogout}
+                >
+                  <Text style={styles.confirmBtnText}>
+                    {pendingConfirmAction === 'reset' ? 'Overwrite' : 'Log Out'}
+                  </Text>
+                </TouchableOpacity>
               </View>
-              <Switch
-                testID="settings-staples-switch"
-                value={reenableStaples}
-                onValueChange={(val) => {
-                  setReenableStaples(val);
-                  safeHaptics.selection();
-                }}
-                trackColor={{ false: '#3A3A3C', true: '#30D158' }}
-                thumbColor="#FFFFFF"
-              />
             </View>
+          ) : null}
 
-            {biometricAvailable && (
-              <View
-                style={[
-                  styles.settingRow,
-                  { borderTopColor: theme.colors.cardBorder, borderTopWidth: StyleSheet.hairlineWidth },
-                ]}
-              >
-                <View style={styles.settingTextCol}>
-                  <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                    🔒 Biometric Unlock
-                  </Text>
-                  <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                    Require fingerprint or face ID to open app
-                  </Text>
-                </View>
-                <Switch
-                  testID="settings-biometric-switch"
-                  value={biometricActive}
-                  onValueChange={handleToggleBiometric}
-                  trackColor={{ false: '#3A3A3C', true: '#30D158' }}
-                  thumbColor="#FFFFFF"
-                />
-              </View>
-            )}
-          </View>
-
-          {/* Labels Management */}
-          {onOpenLabelManagement && (
+          <ScrollView
+            style={styles.content}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Account & Server Section */}
             <View
               style={[
                 styles.sectionCard,
@@ -527,221 +370,639 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ]}
             >
               <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                ORGANIZATION
-              </Text>
-              <TouchableOpacity
-                testID="settings-manage-labels-btn"
-                style={styles.menuRowBtn}
-                onPress={() => {
-                  safeHaptics.selection();
-                  onOpenLabelManagement();
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.menuRowTitle, { color: theme.colors.text }]}>🏷️ Manage Labels</Text>
-                <Text style={[styles.menuRowArrow, { color: theme.colors.textSecondary }]}>›</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* On-Device Intelligence (Pixel AICore) - only shown when supported */}
-          {hasAICore && (
-            <View
-              testID="settings-aicore-section"
-              style={[
-                styles.sectionCard,
-                {
-                  backgroundColor: theme.colors.cardBackground,
-                  borderColor: theme.colors.cardBorder,
-                },
-              ]}
-            >
-              <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                ON-DEVICE INTELLIGENCE
+                VIKUNJA SERVER & ACCOUNT
               </Text>
               <View style={styles.infoRow}>
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Engine</Text>
-                <Text style={[styles.infoValue, { color: '#30D158' }]}>
-                  ● Android AICore (Gemini Nano)
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Server</Text>
+                <Text style={[styles.infoValue, { color: theme.colors.text }]} numberOfLines={1}>
+                  {serverUrl}
                 </Text>
               </View>
-              <Text style={[styles.aicoreDesc, { color: theme.colors.textSecondary }]}>
-                On-device contextual task grouping runs locally on your Pixel device. Zero data is shared with external cloud servers.
-              </Text>
-              <TouchableOpacity
-                testID="settings-clear-ai-cache-btn"
-                style={styles.clearAiCacheBtn}
-                onPress={async () => {
-                  safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-                  await clearAICoreCache();
-                  setClearedAiCache(true);
-                  aiCacheTimerRef.current = setTimeout(() => setClearedAiCache(false), 2000);
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.clearAiCacheText}>
-                  {clearedAiCache ? '✓ AI Cache Cleared' : 'Clear AI Category Cache'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* App Updates Section */}
-          <View
-            testID="settings-updates-section"
-            style={[
-              styles.sectionCard,
-              {
-                backgroundColor: theme.colors.cardBackground,
-                borderColor: theme.colors.cardBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-              APP UPDATES
-            </Text>
-            <View style={styles.infoRow}>
-              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Installed Version</Text>
-              <Text style={[styles.infoValue, { color: theme.colors.text }]}>
-                v{APP_VERSION} (Build {APP_BUILD_NUMBER})
-              </Text>
-            </View>
-
-            <View style={styles.infoRow}>
-              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Google Play Status</Text>
-              <Text
+              <View
                 style={[
-                  styles.infoValue,
+                  styles.infoRow,
                   {
-                    color: updateInfo?.isAvailable
-                      ? '#30D158'
-                      : isCheckingUpdate
-                      ? '#0A84FF'
-                      : theme.colors.textSecondary,
+                    borderTopColor: theme.colors.cardBorder,
+                    borderTopWidth: StyleSheet.hairlineWidth,
                   },
                 ]}
               >
-                {isCheckingUpdate
-                  ? 'Checking Google Play...'
-                  : updateInfo?.isAvailable
-                  ? `● Build ${updateInfo.availableVersionCode} Available`
-                  : updateStatusMsg || 'Up to date'}
-              </Text>
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>User</Text>
+                <Text
+                  testID="settings-display-username"
+                  style={[styles.infoValue, { color: theme.colors.text }]}
+                >
+                  {displayUsername ? `@${displayUsername}` : 'Connected'}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.infoRow,
+                  {
+                    borderTopColor: theme.colors.cardBorder,
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}
+              >
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Version</Text>
+                <Text style={[styles.infoValue, { color: theme.colors.text }]}>
+                  v{APP_VERSION} (Build {APP_BUILD_NUMBER})
+                </Text>
+              </View>
             </View>
 
-            {updateInfo?.isAvailable ? (
-              <TouchableOpacity
-                testID="settings-install-update-btn"
-                style={[styles.updateNowBtn, { backgroundColor: '#30D158' }]}
-                onPress={() => {
-                  safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-                  startUpdate('flexible');
-                }}
-                activeOpacity={0.8}
+            {/* Preferences Section */}
+            <View
+              style={[
+                styles.sectionCard,
+                {
+                  backgroundColor: theme.colors.cardBackground,
+                  borderColor: theme.colors.cardBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                TASK PREFERENCES
+              </Text>
+              <View style={styles.settingBlock}>
+                <View style={styles.settingRow}>
+                  <View style={styles.settingTextCol}>
+                    <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                      Task Box Size ({taskItemScale}%)
+                    </Text>
+                    <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
+                      Scale box padding, height, and tap targets (
+                      {taskItemScale > 100 ? `+${taskItemScale - 100}%` : 'Standard'})
+                    </Text>
+                  </View>
+                  <View style={styles.stepperContainer}>
+                    <TouchableOpacity
+                      testID="settings-scale-decrement"
+                      style={[styles.stepperBtn, taskItemScale <= 100 && styles.stepperBtnDisabled]}
+                      disabled={taskItemScale <= 100}
+                      onPress={() => {
+                        const newScale = Math.max(100, taskItemScale - 25);
+                        setTaskItemScale(newScale);
+                        safeHaptics.selection();
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Decrease task box size"
+                    >
+                      <Text
+                        style={[
+                          styles.stepperBtnText,
+                          { color: taskItemScale <= 100 ? '#8E8E93' : '#007AFF' },
+                        ]}
+                      >
+                        −
+                      </Text>
+                    </TouchableOpacity>
+                    <View style={styles.stepperValueBadge}>
+                      <Text
+                        testID="settings-scale-value"
+                        style={[styles.stepperValueText, { color: theme.colors.text }]}
+                      >
+                        {taskItemScale}%
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      testID="settings-scale-increment"
+                      style={[styles.stepperBtn, taskItemScale >= 200 && styles.stepperBtnDisabled]}
+                      disabled={taskItemScale >= 200}
+                      onPress={() => {
+                        const newScale = Math.min(200, taskItemScale + 25);
+                        setTaskItemScale(newScale);
+                        safeHaptics.selection();
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Increase task box size"
+                    >
+                      <Text
+                        style={[
+                          styles.stepperBtnText,
+                          { color: taskItemScale >= 200 ? '#8E8E93' : '#007AFF' },
+                        ]}
+                      >
+                        +
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Preset chips for Box Size */}
+                <View style={styles.presetChipsRow}>
+                  {[100, 125, 150, 175, 200].map((preset) => {
+                    const isSelected = taskItemScale === preset;
+                    return (
+                      <TouchableOpacity
+                        key={preset}
+                        testID={`settings-scale-preset-${preset}`}
+                        style={[
+                          styles.presetChip,
+                          isSelected
+                            ? { backgroundColor: '#007AFF', borderColor: '#007AFF' }
+                            : {
+                                backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                                borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                              },
+                        ]}
+                        onPress={() => {
+                          setTaskItemScale(preset);
+                          safeHaptics.selection();
+                        }}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                      >
+                        <Text
+                          style={[
+                            styles.presetChipText,
+                            {
+                              color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
+                              fontWeight: isSelected ? '700' : '500',
+                            },
+                          ]}
+                        >
+                          {preset}%
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Task Text Size (Separate setting) */}
+                <View style={[styles.settingRow, { marginTop: 16 }]}>
+                  <View style={styles.settingTextCol}>
+                    <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                      Task Text Size ({taskItemTextScale}%)
+                    </Text>
+                    <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
+                      Scale title and metadata font size (
+                      {taskItemTextScale > 100 ? `+${taskItemTextScale - 100}%` : 'Standard'})
+                    </Text>
+                  </View>
+                  <View style={styles.stepperContainer}>
+                    <TouchableOpacity
+                      testID="settings-text-scale-decrement"
+                      style={[
+                        styles.stepperBtn,
+                        taskItemTextScale <= 100 && styles.stepperBtnDisabled,
+                      ]}
+                      disabled={taskItemTextScale <= 100}
+                      onPress={() => {
+                        const newScale = Math.max(100, taskItemTextScale - 25);
+                        setTaskItemTextScale(newScale);
+                        safeHaptics.selection();
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Decrease task text size"
+                    >
+                      <Text
+                        style={[
+                          styles.stepperBtnText,
+                          { color: taskItemTextScale <= 100 ? '#8E8E93' : '#007AFF' },
+                        ]}
+                      >
+                        −
+                      </Text>
+                    </TouchableOpacity>
+                    <View style={styles.stepperValueBadge}>
+                      <Text
+                        testID="settings-text-scale-value"
+                        style={[styles.stepperValueText, { color: theme.colors.text }]}
+                      >
+                        {taskItemTextScale}%
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      testID="settings-text-scale-increment"
+                      style={[
+                        styles.stepperBtn,
+                        taskItemTextScale >= 200 && styles.stepperBtnDisabled,
+                      ]}
+                      disabled={taskItemTextScale >= 200}
+                      onPress={() => {
+                        const newScale = Math.min(200, taskItemTextScale + 25);
+                        setTaskItemTextScale(newScale);
+                        safeHaptics.selection();
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Increase task text size"
+                    >
+                      <Text
+                        style={[
+                          styles.stepperBtnText,
+                          { color: taskItemTextScale >= 200 ? '#8E8E93' : '#007AFF' },
+                        ]}
+                      >
+                        +
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Preset chips for Text Size */}
+                <View style={styles.presetChipsRow}>
+                  {[100, 125, 150, 175, 200].map((preset) => {
+                    const isSelected = taskItemTextScale === preset;
+                    return (
+                      <TouchableOpacity
+                        key={preset}
+                        testID={`settings-text-scale-preset-${preset}`}
+                        style={[
+                          styles.presetChip,
+                          isSelected
+                            ? { backgroundColor: '#007AFF', borderColor: '#007AFF' }
+                            : {
+                                backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                                borderColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                              },
+                        ]}
+                        onPress={() => {
+                          setTaskItemTextScale(preset);
+                          safeHaptics.selection();
+                        }}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                      >
+                        <Text
+                          style={[
+                            styles.presetChipText,
+                            {
+                              color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
+                              fontWeight: isSelected ? '700' : '500',
+                            },
+                          ]}
+                        >
+                          {preset}%
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Test automation fallback switch — hidden from VoiceOver & TalkBack */}
+              <View
+                style={styles.hiddenAutomation}
+                accessible={false}
+                importantForAccessibility="no-hide-descendants"
+                accessibilityElementsHidden={true}
               >
-                <Text style={styles.updateNowBtnText}>
-                  Update to Build {updateInfo.availableVersionCode}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                testID="settings-check-updates-btn"
+                <Switch
+                  testID="settings-large-items-switch"
+                  accessible={false}
+                  importantForAccessibility="no"
+                  value={largeTaskItems}
+                  onValueChange={(val) => {
+                    setLargeTaskItems(val);
+                    safeHaptics.selection();
+                  }}
+                />
+              </View>
+
+              <View
                 style={[
-                  styles.checkUpdatesBtn,
-                  isCheckingUpdate && styles.resetSyncBtnDisabled,
+                  styles.settingRow,
+                  {
+                    borderTopColor: theme.colors.cardBorder,
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                  },
                 ]}
-                onPress={handleCheckForUpdates}
-                disabled={isCheckingUpdate}
-                activeOpacity={0.7}
               >
-                {isCheckingUpdate ? (
+                <View style={styles.settingTextCol}>
+                  <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                    Re-enable Staple Tasks
+                  </Text>
+                  <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
+                    Suggest previously completed grocery items when typing
+                  </Text>
+                </View>
+                <Switch
+                  testID="settings-staples-switch"
+                  value={reenableStaples}
+                  onValueChange={(val) => {
+                    setReenableStaples(val);
+                    safeHaptics.selection();
+                  }}
+                  trackColor={{ false: theme.isDark ? '#3A3A3C' : '#D1D1D6', true: '#30D158' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              {biometricAvailable && (
+                <View
+                  style={[
+                    styles.settingRow,
+                    {
+                      borderTopColor: theme.colors.cardBorder,
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                    },
+                  ]}
+                >
+                  <View style={styles.settingTextCol}>
+                    <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                      🔒 Biometric Unlock
+                    </Text>
+                    <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
+                      Require fingerprint or face ID to open app
+                    </Text>
+                  </View>
+                  <Switch
+                    testID="settings-biometric-switch"
+                    value={biometricActive}
+                    onValueChange={handleToggleBiometric}
+                    trackColor={{ false: theme.isDark ? '#3A3A3C' : '#D1D1D6', true: '#30D158' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+              )}
+            </View>
+
+            {/* Labels Management */}
+            {onOpenLabelManagement && (
+              <View
+                style={[
+                  styles.sectionCard,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                  ORGANIZATION
+                </Text>
+                <TouchableOpacity
+                  testID="settings-manage-labels-btn"
+                  style={styles.menuRowBtn}
+                  onPress={() => {
+                    safeHaptics.selection();
+                    onClose();
+                    onOpenLabelManagement();
+                  }}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.menuRowTitle, { color: theme.colors.text }]}>
+                    🏷️ Manage Labels
+                  </Text>
+                  <Text style={[styles.menuRowArrow, { color: theme.colors.textSecondary }]}>›</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* On-Device Intelligence - only shown when supported */}
+            {hasAICore && (
+              <View
+                testID="settings-aicore-section"
+                style={[
+                  styles.sectionCard,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                  ON-DEVICE INTELLIGENCE
+                </Text>
+                <View style={styles.infoRow}>
+                  <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                    Engine
+                  </Text>
+                  <Text
+                    testID="settings-aicore-engine-label"
+                    style={[
+                      styles.infoValue,
+                      { color: theme.isDark ? '#30D158' : '#15803D' },
+                    ]}
+                  >
+                    {hasLivePromptApi
+                      ? '● Gemini Nano (On-Device Prompt API)'
+                      : '● On-Device Contextual Heuristics'}
+                  </Text>
+                </View>
+                <Text style={[styles.aicoreDesc, { color: theme.colors.textSecondary }]}>
+                  {hasLivePromptApi
+                    ? 'On-device Gemini Nano Prompt API categorizes tasks locally on your device. Zero data is shared with external cloud servers.'
+                    : 'Local contextual task grouping runs 100% on-device using smart category heuristics. Zero data is shared with external cloud servers.'}
+                </Text>
+                <TouchableOpacity
+                  testID="settings-clear-ai-cache-btn"
+                  style={styles.clearAiCacheBtn}
+                  onPress={async () => {
+                    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                    await aiCoreModule.clearAICoreCache();
+                    setClearedAiCache(true);
+                    aiCacheTimerRef.current = setTimeout(() => setClearedAiCache(false), 2000);
+                  }}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                >
+                  <Text
+                    style={[
+                      styles.clearAiCacheText,
+                      { color: theme.isDark ? '#30D158' : '#15803D' },
+                    ]}
+                  >
+                    {clearedAiCache ? '✓ AI Cache Cleared' : 'Clear AI Category Cache'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Google Play App Updates Section - ONLY rendered on native Android with Play Core support */}
+            {nativeUpdatesSupported && (
+              <View
+                testID="settings-updates-section"
+                style={[
+                  styles.sectionCard,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                  APP UPDATES
+                </Text>
+                <View style={styles.infoRow}>
+                  <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                    Installed Version
+                  </Text>
+                  <Text style={[styles.infoValue, { color: theme.colors.text }]}>
+                    v{APP_VERSION} (Build {APP_BUILD_NUMBER})
+                  </Text>
+                </View>
+
+                <View style={styles.infoRow}>
+                  <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                    Google Play Status
+                  </Text>
+                  <Text
+                    style={[
+                      styles.infoValue,
+                      {
+                        color: updateInfo?.isAvailable
+                          ? theme.isDark
+                            ? '#30D158'
+                            : '#15803D'
+                          : isCheckingUpdate
+                          ? theme.colors.accent
+                          : theme.colors.textSecondary,
+                      },
+                    ]}
+                  >
+                    {isCheckingUpdate
+                      ? 'Checking Google Play...'
+                      : updateInfo?.isAvailable
+                      ? `● Build ${updateInfo.availableVersionCode} Available`
+                      : updateStatusMsg || 'Up to date'}
+                  </Text>
+                </View>
+
+                {updateInfo?.isAvailable ? (
+                  <TouchableOpacity
+                    testID="settings-install-update-btn"
+                    style={[styles.updateNowBtn, { backgroundColor: '#30D158' }]}
+                    onPress={() => {
+                      safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                      startUpdate('flexible');
+                    }}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.updateNowBtnText}>
+                      Update to Build {updateInfo.availableVersionCode}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    testID="settings-check-updates-btn"
+                    style={[
+                      styles.checkUpdatesBtn,
+                      isCheckingUpdate && styles.resetSyncBtnDisabled,
+                    ]}
+                    onPress={handleCheckForUpdates}
+                    disabled={isCheckingUpdate}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                  >
+                    {isCheckingUpdate ? (
+                      <View style={styles.centerRow}>
+                        <ActivityIndicator size="small" color="#0A84FF" />
+                        <Text style={[styles.resetSyncText, { color: theme.colors.accent }]}>
+                          Checking Play Services...
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.centerRow}>
+                        <Text style={[styles.checkUpdatesText, { color: theme.colors.accent }]}>
+                          {updateStatusMsg ? updateStatusMsg : '↻ Check for Updates'}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
+            {/* Sync & Server Actions */}
+            <View
+              style={[
+                styles.sectionCard,
+                {
+                  backgroundColor: theme.colors.cardBackground,
+                  borderColor: theme.colors.cardBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                DATA & SYNC
+              </Text>
+              <View style={styles.infoRow}>
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Status</Text>
+                <Text
+                  testID="settings-sync-status-text"
+                  style={[styles.infoValue, { color: syncStatusColor }]}
+                >
+                  {syncStatusLabel}
+                </Text>
+              </View>
+
+              {resetError ? (
+                <Text testID="settings-reset-error" style={styles.inlineErrorText}>
+                  {resetError}
+                </Text>
+              ) : null}
+
+              <TouchableOpacity
+                testID="settings-reset-sync-btn"
+                style={[
+                  styles.resetSyncBtn,
+                  isResetting && styles.resetSyncBtnDisabled,
+                  resetSuccess && styles.resetSyncBtnSuccess,
+                ]}
+                onPress={handleRequestResetAndSync}
+                disabled={isResetting}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+              >
+                {isResetting ? (
                   <View style={styles.centerRow}>
                     <ActivityIndicator size="small" color="#0A84FF" />
-                    <Text style={styles.resetSyncText}>Checking Play Services...</Text>
+                    <Text style={[styles.resetSyncText, { color: theme.colors.accent }]}>
+                      Resetting & syncing...
+                    </Text>
+                  </View>
+                ) : resetSuccess ? (
+                  <View style={styles.centerRow}>
+                    <Text
+                      style={[
+                        styles.resetSuccessText,
+                        { color: theme.isDark ? '#30D158' : '#15803D' },
+                      ]}
+                    >
+                      ✓ Overwrite Complete!
+                    </Text>
                   </View>
                 ) : (
                   <View style={styles.centerRow}>
-                    <Text style={styles.checkUpdatesText}>
-                      {updateStatusMsg ? updateStatusMsg : '↻ Check for Updates'}
+                    <Text style={[styles.resetSyncText, { color: theme.colors.accent }]}>
+                      ↻ Overwrite & Sync from Server
                     </Text>
                   </View>
                 )}
               </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Sync & Server Actions */}
-          <View
-            style={[
-              styles.sectionCard,
-              {
-                backgroundColor: theme.colors.cardBackground,
-                borderColor: theme.colors.cardBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-              DATA & SYNC
-            </Text>
-            <View style={styles.infoRow}>
-              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Status</Text>
-              <Text style={[styles.infoValue, { color: syncStatus === 'synced' ? '#30D158' : '#FF9F0A' }]}>
-                {syncStatus === 'synced' ? '● Fully Synced' : `⚡ Offline (${pendingSyncCount} pending)`}
-              </Text>
             </View>
 
-            <TouchableOpacity
-              testID="settings-reset-sync-btn"
-              style={[
-                styles.resetSyncBtn,
-                isResetting && styles.resetSyncBtnDisabled,
-                resetSuccess && styles.resetSyncBtnSuccess,
-              ]}
-              onPress={handleResetAndSync}
-              disabled={isResetting}
-              activeOpacity={0.7}
-            >
-              {isResetting ? (
-                <View style={styles.centerRow}>
-                  <ActivityIndicator size="small" color="#0A84FF" />
-                  <Text style={styles.resetSyncText}>Resetting & syncing...</Text>
-                </View>
-              ) : resetSuccess ? (
-                <View style={styles.centerRow}>
-                  <Text style={styles.resetSuccessText}>✓ Overwrite Complete!</Text>
-                </View>
-              ) : (
-                <View style={styles.centerRow}>
-                  <Text style={styles.resetSyncText}>↻ Overwrite & Sync from Server</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          </View>
+            {/* Logout Action */}
+            {onLogout && (
+              <TouchableOpacity
+                testID="settings-logout-btn"
+                style={styles.logoutBtn}
+                onPress={handleRequestLogout}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+              >
+                <Text style={styles.logoutBtnText}>Log Out</Text>
+              </TouchableOpacity>
+            )}
 
-          {/* Logout Action */}
-          {onLogout && (
-            <TouchableOpacity
-              testID="settings-logout-btn"
-              style={styles.logoutBtn}
-              onPress={() => {
-                safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
-                onClose();
-                onLogout();
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.logoutBtnText}>Log Out</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* App Version Footer */}
-          <View style={styles.footerVersionRow}>
-            <Text style={[styles.footerVersionText, { color: theme.colors.textSecondary }]}>
-              {APP_NAME} v{APP_VERSION} • Build {APP_BUILD_NUMBER}
-            </Text>
-          </View>
-        </ScrollView>
-      </SafeAreaView>
+            {/* App Version Footer */}
+            <View style={styles.footerVersionRow}>
+              <Text style={[styles.footerVersionText, { color: theme.colors.textSecondary }]}>
+                {APP_NAME} v{APP_VERSION} • Build {APP_BUILD_NUMBER}
+              </Text>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
       </View>
     </Modal>
   );
@@ -777,6 +1038,33 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  confirmBanner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 10,
+  },
+  confirmBannerText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  confirmBannerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  confirmBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  confirmBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   content: {
     flex: 1,
   },
@@ -808,6 +1096,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     maxWidth: '70%',
+  },
+  inlineErrorText: {
+    color: '#FF453A',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
   },
   settingRow: {
     flexDirection: 'row',
@@ -864,12 +1158,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(48, 209, 88, 0.4)',
   },
   resetSyncText: {
-    color: '#0A84FF',
     fontSize: 13,
     fontWeight: '600',
   },
   resetSuccessText: {
-    color: '#30D158',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -883,7 +1175,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   checkUpdatesText: {
-    color: '#0A84FF',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -927,7 +1218,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   clearAiCacheText: {
-    color: '#30D158',
     fontSize: 13,
     fontWeight: '600',
   },

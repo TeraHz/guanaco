@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render, fireEvent, cleanup } from '@testing-library/react-native';
 import { QuickLabelModal } from '../QuickLabelModal';
 import { Task } from '../../types/vikunja';
 
@@ -13,7 +13,7 @@ describe('QuickLabelModal', () => {
     labels: [{ id: 1, title: 'Costco' }],
   };
 
-  const availableLabels = ['Costco', 'Trader Joe\'s', 'Whole Foods', 'Pharmacy'];
+  const availableLabels = ['Costco', "Trader Joe's", 'Whole Foods', 'Pharmacy'];
   const mockOnSave = jest.fn();
   const mockOnClose = jest.fn();
 
@@ -21,7 +21,12 @@ describe('QuickLabelModal', () => {
     jest.clearAllMocks();
   });
 
-  it('renders modal with task title and existing labels marked active', () => {
+  afterEach(() => {
+    cleanup();
+    jest.restoreAllMocks();
+  });
+
+  it('renders modal inside KeyboardAvoidingView with task title and existing labels marked active', () => {
     const { getByText, getByTestId } = render(
       <QuickLabelModal
         visible={true}
@@ -32,10 +37,13 @@ describe('QuickLabelModal', () => {
       />
     );
 
+    expect(getByTestId('quick-label-keyboard-avoiding')).toBeTruthy();
     expect(getByText('Edit Labels')).toBeTruthy();
     expect(getByText('Almond Milk')).toBeTruthy();
-    expect(getByTestId('label-chip-Costco')).toBeTruthy();
-    expect(getByTestId('label-chip-Trader Joe\'s')).toBeTruthy();
+    expect(getByTestId('label-chip-Costco').props.accessibilityState).toEqual({ checked: true });
+    expect(getByTestId("label-chip-Trader Joe's").props.accessibilityState).toEqual({
+      checked: false,
+    });
   });
 
   it('toggles label selection on tap and saves updated labels', () => {
@@ -49,30 +57,21 @@ describe('QuickLabelModal', () => {
       />
     );
 
-    // Tap Trader Joe's to select it
-    fireEvent.press(getByTestId('label-chip-Trader Joe\'s'));
-
-    // Tap Costco to deselect it
+    fireEvent.press(getByTestId("label-chip-Trader Joe's"));
     fireEvent.press(getByTestId('label-chip-Costco'));
-
-    // Tap Save / Done
     fireEvent.press(getByTestId('label-modal-done-btn'));
 
     expect(mockOnSave).toHaveBeenCalledWith(
       10,
-      expect.arrayContaining([
-        expect.objectContaining({ title: 'Trader Joe\'s' }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ title: "Trader Joe's" })])
     );
     expect(mockOnSave).not.toHaveBeenCalledWith(
       10,
-      expect.arrayContaining([
-        expect.objectContaining({ title: 'Costco' }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ title: 'Costco' })])
     );
   });
 
-  it('allows adding and selecting a new label on the fly', () => {
+  it('allows adding a new label via + Add or auto-committing typed text when pressing Done', () => {
     const { getByPlaceholderText, getByTestId } = render(
       <QuickLabelModal
         visible={true}
@@ -84,17 +83,56 @@ describe('QuickLabelModal', () => {
     );
 
     const input = getByPlaceholderText('New label name...');
-    fireEvent.changeText(input, 'Hardware Store');
+    fireEvent.changeText(input, '#Hardware Store');
     fireEvent.press(getByTestId('label-modal-add-btn'));
 
     expect(getByTestId('label-chip-Hardware Store')).toBeTruthy();
 
+    // Also type another label and press Done directly without pressing + Add
+    fireEvent.changeText(input, 'Farmers Market');
     fireEvent.press(getByTestId('label-modal-done-btn'));
+
     expect(mockOnSave).toHaveBeenCalledWith(
       10,
       expect.arrayContaining([
         expect.objectContaining({ title: 'Hardware Store' }),
+        expect.objectContaining({ title: 'Farmers Market' }),
       ])
+    );
+  });
+
+  it('preserves in-progress edits when optimistic negative task ID resolves to positive server ID', () => {
+    const optimisticTask: Task = { ...mockTask, id: -999, labels: [] };
+    const { getByTestId, rerender } = render(
+      <QuickLabelModal
+        visible={true}
+        task={optimisticTask}
+        availableLabels={availableLabels}
+        onSave={mockOnSave}
+        onClose={mockOnClose}
+      />
+    );
+
+    // User toggles Pharmacy while task still has negative temp ID
+    fireEvent.press(getByTestId('label-chip-Pharmacy'));
+
+    // Sync resolves -999 -> 505 while modal stays open
+    const syncedTask: Task = { ...optimisticTask, id: 505 };
+    rerender(
+      <QuickLabelModal
+        visible={true}
+        task={syncedTask}
+        availableLabels={availableLabels}
+        onSave={mockOnSave}
+        onClose={mockOnClose}
+      />
+    );
+
+    // Save should use live server ID 505 AND keep user's Pharmacy selection!
+    fireEvent.press(getByTestId('label-modal-done-btn'));
+    expect(mockOnSave).toHaveBeenCalledWith(
+      505,
+      expect.arrayContaining([expect.objectContaining({ title: 'Pharmacy' })])
     );
   });
 
@@ -109,10 +147,7 @@ describe('QuickLabelModal', () => {
       />
     );
 
-    // Costco was the only selected label on mockTask, tap it to deselect
     fireEvent.press(getByTestId('label-chip-Costco'));
-
-    // Tap Done
     fireEvent.press(getByTestId('label-modal-done-btn'));
 
     expect(mockOnSave).toHaveBeenCalledWith(10, []);
@@ -134,26 +169,27 @@ describe('QuickLabelModal', () => {
       />
     );
 
-    // Costco is selected, text should be styled with normalized #ff5722
     const costcoText = getByText(/#Costco/);
     expect(costcoText.props.style).toContainEqual({ color: '#ff5722', fontWeight: '700' });
   });
 
-  it('triggers onOpenManageLabels when manage button is pressed', () => {
-    const mockOnOpenManage = jest.fn();
+  it('closes QuickLabelModal before opening Manage Labels to prevent stacked modals', () => {
+    const callOrder: string[] = [];
+    const mockOnOpenManage = jest.fn(() => callOrder.push('openManage'));
+    const trackedClose = jest.fn(() => callOrder.push('closeQuick'));
+
     const { getByTestId } = render(
       <QuickLabelModal
         visible={true}
         task={mockTask}
         availableLabels={availableLabels}
         onSave={mockOnSave}
-        onClose={mockOnClose}
+        onClose={trackedClose}
         onOpenManageLabels={mockOnOpenManage}
       />
     );
 
     fireEvent.press(getByTestId('quick-label-manage-btn'));
-    expect(mockOnClose).toHaveBeenCalled();
-    expect(mockOnOpenManage).toHaveBeenCalled();
+    expect(callOrder).toEqual(['closeQuick', 'openManage']);
   });
 });

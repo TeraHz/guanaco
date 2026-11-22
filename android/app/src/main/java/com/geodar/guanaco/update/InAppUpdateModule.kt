@@ -35,19 +35,43 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
         AppUpdateManagerFactory.create(reactContext)
     }
 
+    private val promiseLock = Any()
     private var pendingPromise: Promise? = null
 
-    private val installStateUpdatedListener = InstallStateUpdatedListener { state: InstallState ->
-        val status = when (state.installStatus()) {
-            InstallStatus.PENDING -> "PENDING"
-            InstallStatus.DOWNLOADING -> "DOWNLOADING"
-            InstallStatus.DOWNLOADED -> "DOWNLOADED"
-            InstallStatus.INSTALLING -> "INSTALLING"
-            InstallStatus.INSTALLED -> "INSTALLED"
-            InstallStatus.FAILED -> "FAILED"
-            InstallStatus.CANCELED -> "CANCELED"
-            else -> "UNKNOWN"
+    private fun takePendingPromise(): Promise? = synchronized(promiseLock) {
+        val current = pendingPromise
+        pendingPromise = null
+        current
+    }
+
+    private fun replacePendingPromise(next: Promise?): Promise? = synchronized(promiseLock) {
+        val previous = pendingPromise
+        pendingPromise = next
+        previous
+    }
+
+    private fun clearPendingPromiseIfMatches(expected: Promise): Boolean = synchronized(promiseLock) {
+        if (pendingPromise === expected) {
+            pendingPromise = null
+            true
+        } else {
+            false
         }
+    }
+
+    private fun mapInstallStatus(statusCode: Int): String = when (statusCode) {
+        InstallStatus.PENDING -> "PENDING"
+        InstallStatus.DOWNLOADING -> "DOWNLOADING"
+        InstallStatus.DOWNLOADED -> "DOWNLOADED"
+        InstallStatus.INSTALLING -> "INSTALLING"
+        InstallStatus.INSTALLED -> "INSTALLED"
+        InstallStatus.FAILED -> "FAILED"
+        InstallStatus.CANCELED -> "CANCELED"
+        else -> "UNKNOWN"
+    }
+
+    private val installStateUpdatedListener = InstallStateUpdatedListener { state: InstallState ->
+        val status = mapInstallStatus(state.installStatus())
 
         val params = Arguments.createMap().apply {
             putString("status", status)
@@ -66,9 +90,7 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
             data: Intent?
         ) {
             if (requestCode == REQUEST_CODE_UPDATE) {
-                val promise = pendingPromise
-                pendingPromise = null
-                if (promise == null) return
+                val promise = takePendingPromise() ?: return
 
                 val result = Arguments.createMap()
                 when (resultCode) {
@@ -85,7 +107,7 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                         promise.resolve(result)
                     }
                     else -> {
-                        result.putString("status", "unknown")
+                        result.putString("status", "failed")
                         result.putInt("resultCode", resultCode)
                         promise.resolve(result)
                     }
@@ -106,10 +128,19 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
     }
 
     override fun invalidate() {
-        super.invalidate()
+        try {
+            reactContext.removeActivityEventListener(activityEventListener)
+        } catch (_: Exception) {}
         try {
             appUpdateManager.unregisterListener(installStateUpdatedListener)
         } catch (_: Exception) {}
+        try {
+            takePendingPromise()?.reject(
+                "MODULE_INVALIDATED",
+                "InAppUpdateModule invalidated before update flow completed"
+            )
+        } catch (_: Exception) {}
+        super.invalidate()
     }
 
     override fun getName(): String = NAME
@@ -120,6 +151,10 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                 ?.emit(eventName, params)
         }
+    }
+
+    private fun isActivityUsable(activity: Activity?): Boolean {
+        return activity != null && !activity.isFinishing && !activity.isDestroyed
     }
 
     @ReactMethod
@@ -140,7 +175,7 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                     appUpdateInfo.isUpdateTypeAllowed(AppUpdateOptions.defaultOptions(AppUpdateType.FLEXIBLE))
                 } catch (_: Exception) { false }
 
-                val stalenessDays = appUpdateInfo.clientVersionStalenessDays() ?: -1
+                val stalenessDays = appUpdateInfo.clientVersionStalenessDays()
                 val priority = appUpdateInfo.updatePriority()
 
                 var currentVersionCode = 0
@@ -161,10 +196,27 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                     putInt("updateAvailability", availability)
                     putBoolean("isImmediateAllowed", isImmediateAllowed)
                     putBoolean("isFlexibleAllowed", isFlexibleAllowed)
-                    putInt("clientVersionStalenessDays", stalenessDays)
+                    if (stalenessDays != null) {
+                        putInt("clientVersionStalenessDays", stalenessDays)
+                    } else {
+                        putNull("clientVersionStalenessDays")
+                    }
                     putInt("updatePriority", priority)
                     putBoolean("inProgress", inProgress)
+                    putString("installStatus", mapInstallStatus(appUpdateInfo.installStatus()))
                 }
+
+                // Surface flexible updates that finished downloading while the app was backgrounded
+                if (appUpdateInfo.installStatus() == InstallStatus.DOWNLOADED) {
+                    val downloadedParams = Arguments.createMap().apply {
+                        putString("status", "DOWNLOADED")
+                        putDouble("bytesDownloaded", appUpdateInfo.bytesDownloaded().toDouble())
+                        putDouble("totalBytesToDownload", appUpdateInfo.totalBytesToDownload().toDouble())
+                        putInt("errorCode", 0)
+                    }
+                    sendEvent("onInstallStateChanged", downloadedParams)
+                }
+
                 promise.resolve(map)
             }
             .addOnFailureListener { exception ->
@@ -174,46 +226,88 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun startUpdateFlow(typeString: String, promise: Promise) {
-        val currentAct = reactContext.currentActivity
-        if (currentAct == null) {
-            promise.reject("NO_ACTIVITY", "Current activity is null")
+        val initialAct = reactContext.currentActivity
+        if (!isActivityUsable(initialAct)) {
+            promise.reject("NO_ACTIVITY", "Current activity is null, finishing, or destroyed")
             return
         }
 
-        val updateType = if (typeString.equals("immediate", ignoreCase = true)) {
+        val requestedType = if (typeString.equals("immediate", ignoreCase = true)) {
             AppUpdateType.IMMEDIATE
         } else {
             AppUpdateType.FLEXIBLE
         }
-        val options = AppUpdateOptions.defaultOptions(updateType)
 
         appUpdateManager.appUpdateInfo
             .addOnSuccessListener { appUpdateInfo ->
+                val liveActivity = reactContext.currentActivity
+                if (!isActivityUsable(liveActivity) || liveActivity == null) {
+                    promise.reject("NO_ACTIVITY", "Current activity became unavailable before update flow started")
+                    return@addOnSuccessListener
+                }
+
                 val availability = appUpdateInfo.updateAvailability()
-                if (availability == UpdateAvailability.UPDATE_AVAILABLE ||
-                    availability == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
+                if (availability != UpdateAvailability.UPDATE_AVAILABLE &&
+                    availability != UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
                 ) {
-                    pendingPromise = promise
-                    try {
-                        val started = appUpdateManager.startUpdateFlowForResult(
-                            appUpdateInfo,
-                            currentAct,
-                            options,
-                            REQUEST_CODE_UPDATE
-                        )
-                        if (!started) {
-                            pendingPromise = null
-                            promise.reject("START_FLOW_FAILED", "Could not start update flow")
-                        }
-                    } catch (e: Exception) {
-                        pendingPromise = null
-                        promise.reject("FLOW_EXCEPTION", e.message ?: "Update flow exception", e)
-                    }
-                } else {
                     promise.reject(
                         "UPDATE_NOT_ALLOWED",
-                        "Update not available or update type not allowed"
+                        "Update is not available (availability=$availability)"
                     )
+                    return@addOnSuccessListener
+                }
+
+                val immediateOptions = AppUpdateOptions.defaultOptions(AppUpdateType.IMMEDIATE)
+                val requestedOptions = AppUpdateOptions.defaultOptions(requestedType)
+
+                val isImmediateAllowed = try {
+                    appUpdateInfo.isUpdateTypeAllowed(immediateOptions)
+                } catch (_: Exception) { false }
+
+                val options = if (
+                    availability == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS &&
+                    isImmediateAllowed
+                ) {
+                    immediateOptions
+                } else {
+                    requestedOptions
+                }
+
+                val isAllowed = try {
+                    appUpdateInfo.isUpdateTypeAllowed(options)
+                } catch (_: Exception) { false }
+
+                if (!isAllowed) {
+                    promise.reject(
+                        "UPDATE_NOT_ALLOWED",
+                        "Requested update type is not allowed for current appUpdateInfo state"
+                    )
+                    return@addOnSuccessListener
+                }
+
+                // Guard and cleanly reject any stale in-flight promise before starting a new flow
+                val stalePromise = replacePendingPromise(promise)
+                try {
+                    stalePromise?.reject(
+                        "UPDATE_SUPERSEDED",
+                        "Previous in-app update request was superseded by a new update flow"
+                    )
+                } catch (_: Exception) {}
+
+                try {
+                    val started = appUpdateManager.startUpdateFlowForResult(
+                        appUpdateInfo,
+                        liveActivity,
+                        options,
+                        REQUEST_CODE_UPDATE
+                    )
+                    if (!started) {
+                        clearPendingPromiseIfMatches(promise)
+                        promise.reject("START_FLOW_FAILED", "Could not start update flow")
+                    }
+                } catch (e: Exception) {
+                    clearPendingPromiseIfMatches(promise)
+                    promise.reject("FLOW_EXCEPTION", e.message ?: "Update flow exception", e)
                 }
             }
             .addOnFailureListener { e ->

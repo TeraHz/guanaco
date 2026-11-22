@@ -10,20 +10,27 @@ import {
 
 describe('appUpdateChecker service', () => {
   const originalOS = Platform.OS;
+  const originalModule = NativeModules.InAppUpdate;
 
   beforeEach(() => {
     Platform.OS = 'android';
+    NativeModules.InAppUpdate = originalModule;
     jest.clearAllMocks();
   });
 
   afterAll(() => {
     Platform.OS = originalOS;
+    NativeModules.InAppUpdate = originalModule;
   });
 
   it('checks if native update is supported on Android with InAppUpdate module', () => {
     expect(isNativeUpdateSupported()).toBe(true);
 
     Platform.OS = 'ios';
+    expect(isNativeUpdateSupported()).toBe(false);
+
+    Platform.OS = 'android';
+    NativeModules.InAppUpdate = undefined;
     expect(isNativeUpdateSupported()).toBe(false);
   });
 
@@ -35,7 +42,7 @@ describe('appUpdateChecker service', () => {
       updateAvailability: 2,
       isImmediateAllowed: true,
       isFlexibleAllowed: true,
-      clientVersionStalenessDays: 1,
+      clientVersionStalenessDays: null,
       updatePriority: 3,
       inProgress: false,
     };
@@ -53,12 +60,14 @@ describe('appUpdateChecker service', () => {
   });
 
   it('checkForAppUpdate safely returns null when native call rejects', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     (NativeModules.InAppUpdate.checkForUpdate as jest.Mock).mockRejectedValueOnce(
       new Error('Play Store error')
     );
 
     const result = await checkForAppUpdate();
     expect(result).toBeNull();
+    warnSpy.mockRestore();
   });
 
   it('startAppUpdate invokes startUpdateFlow on native module', async () => {
@@ -71,7 +80,18 @@ describe('appUpdateChecker service', () => {
     expect(NativeModules.InAppUpdate.startUpdateFlow).toHaveBeenCalledWith('flexible');
   });
 
+  it('startAppUpdate returns canceled when user cancels native dialog', async () => {
+    (NativeModules.InAppUpdate.startUpdateFlow as jest.Mock).mockResolvedValueOnce({
+      status: 'canceled',
+    });
+
+    const status = await startAppUpdate('immediate');
+    expect(status).toBe('canceled');
+    expect(NativeModules.InAppUpdate.startUpdateFlow).toHaveBeenCalledWith('immediate');
+  });
+
   it('startAppUpdate falls back to openPlayStore when native flow fails', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     (NativeModules.InAppUpdate.startUpdateFlow as jest.Mock).mockRejectedValueOnce(
       new Error('Activity not found')
     );
@@ -80,6 +100,21 @@ describe('appUpdateChecker service', () => {
     const status = await startAppUpdate('flexible');
     expect(status).toBe('accepted');
     expect(NativeModules.InAppUpdate.openPlayStore).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('startAppUpdate returns failed when both native flow and Play Store fallback fail', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    (NativeModules.InAppUpdate.startUpdateFlow as jest.Mock).mockRejectedValueOnce(
+      new Error('Flow rejected')
+    );
+    (NativeModules.InAppUpdate.openPlayStore as jest.Mock).mockRejectedValueOnce(
+      new Error('No browser')
+    );
+
+    const status = await startAppUpdate('flexible');
+    expect(status).toBe('failed');
+    warnSpy.mockRestore();
   });
 
   it('completeAppUpdate calls completeUpdate on native module', async () => {
@@ -98,7 +133,7 @@ describe('appUpdateChecker service', () => {
     expect(NativeModules.InAppUpdate.openPlayStore).toHaveBeenCalled();
   });
 
-  it('addInstallListener subscribes to onInstallStateChanged events', () => {
+  it('addInstallListener subscribes to onInstallStateChanged events and cleans up', () => {
     const callback = jest.fn();
     const unsubscribe = addInstallListener(callback);
 

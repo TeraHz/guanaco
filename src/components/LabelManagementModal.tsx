@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -8,14 +8,15 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
-  StatusBar,
   Alert,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { useTaskStore } from '../store/taskStore';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
-import { getLabelBadgeStyles } from '../utils/colors';
+import { getLabelBadgeStyles, normalizeHexColor } from '../utils/colors';
 import { Label } from '../types/vikunja';
 
 interface LabelManagementModalProps {
@@ -45,55 +46,106 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
   const [newColor, setNewColor] = useState(PRESET_COLORS[0]);
   const [editingLabelId, setEditingLabelId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const [editColor, setEditColor] = useState('');
+  const [editColor, setEditColor] = useState(PRESET_COLORS[0]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [confirmDeleteLabel, setConfirmDeleteLabel] = useState<Label | null>(null);
 
   const safeLabels = Array.isArray(labels) ? labels : [];
 
+  useEffect(() => {
+    if (visible) {
+      setErrorMessage(null);
+      setEditingLabelId(null);
+      setConfirmDeleteLabel(null);
+    }
+  }, [visible]);
+
   const handleCreate = async () => {
-    if (!newTitle.trim()) return;
+    const cleaned = newTitle.trim().replace(/^#+/, '').trim();
+    if (!cleaned) return;
+    if (safeLabels.some((l) => l.title.toLowerCase() === cleaned.toLowerCase())) {
+      setErrorMessage(`Label "#${cleaned}" already exists.`);
+      return;
+    }
+    setErrorMessage(null);
     try {
       safeHaptics.selection();
-      await createGlobalLabel(newTitle.trim(), newColor);
+      await createGlobalLabel(cleaned, newColor);
       setNewTitle('');
-    } catch (_) {}
+    } catch (err: any) {
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setErrorMessage(err?.message || 'Failed to create label.');
+    }
   };
 
   const handleStartEdit = (label: Label) => {
     safeHaptics.selection();
+    setErrorMessage(null);
     setEditingLabelId(label.id);
     setEditTitle(label.title);
-    setEditColor(label.hex_color || label.color || PRESET_COLORS[0]);
+    const normalized = normalizeHexColor(label.hex_color || label.color, true);
+    setEditColor(normalized || PRESET_COLORS[0]);
   };
 
   const handleSaveEdit = async (labelId: number) => {
-    if (!editTitle.trim()) return;
+    const cleaned = editTitle.trim().replace(/^#+/, '').trim();
+    if (!cleaned) {
+      setErrorMessage('Label name cannot be empty.');
+      return;
+    }
+    setErrorMessage(null);
     try {
       safeHaptics.selection();
-      await updateGlobalLabel(labelId, editTitle.trim(), editColor);
+      await updateGlobalLabel(labelId, cleaned, editColor);
       setEditingLabelId(null);
-    } catch (_) {}
+    } catch (err: any) {
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setErrorMessage(err?.message || 'Failed to update label.');
+    }
   };
 
-  const handleDelete = (labelId: number, title: string) => {
-    safeHaptics.notification();
+  const performDelete = async (labelId: number) => {
+    setErrorMessage(null);
+    setConfirmDeleteLabel(null);
+    try {
+      await deleteGlobalLabel(labelId);
+      if (editingLabelId === labelId) {
+        setEditingLabelId(null);
+      }
+    } catch (err: any) {
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setErrorMessage(err?.message || 'Failed to delete label.');
+    }
+  };
+
+  const handleDelete = (label: Label) => {
+    safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
+    const promptMsg = `Are you sure you want to delete "#${label.title}"? It will be removed from all tasks.`;
+
     if (Platform.OS === 'web') {
-      deleteGlobalLabel(labelId);
+      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        if (window.confirm(`Delete Label\n\n${promptMsg}`)) {
+          performDelete(label.id);
+        }
+      } else {
+        setConfirmDeleteLabel(label);
+      }
       return;
     }
 
-    Alert.alert(
-      'Delete Label',
-      `Are you sure you want to delete "#${title}"? It will be removed from all tasks.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteGlobalLabel(labelId),
-        },
-      ]
-    );
+    Alert.alert('Delete Label', promptMsg, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => performDelete(label.id),
+      },
+    ]);
   };
+
+  const selectedRingColor = theme.isDark ? '#FFFFFF' : '#1C1C1E';
+
+  if (!visible) return null;
 
   return (
     <Modal
@@ -111,195 +163,318 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
             },
           ]}
         >
-        {/* Header */}
-        <View
-          style={[
-            styles.header,
-            {
-              backgroundColor: theme.colors.cardBackground,
-              borderBottomColor: theme.colors.cardBorder,
-            },
-          ]}
-        >
-          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Manage Labels</Text>
-          <TouchableOpacity
-            testID="close-label-management-btn"
-            style={styles.closeBtn}
-            onPress={onClose}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          <KeyboardAvoidingView
+            testID="label-management-keyboard-avoiding"
+            style={styles.keyboardView}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           >
-            <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView
-          style={styles.content}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Create New Label Card */}
-          <View
-            style={[
-              styles.sectionCard,
-              {
-                backgroundColor: theme.colors.cardBackground,
-                borderColor: theme.colors.cardBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-              CREATE NEW LABEL
-            </Text>
-            <View style={styles.createInputRow}>
-              <TextInput
-                style={[
-                  styles.textInput,
-                  {
-                    color: theme.colors.text,
-                    backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                    borderColor: theme.colors.cardBorder,
-                  },
-                ]}
-                placeholder="New label name..."
-                placeholderTextColor={theme.colors.textSecondary}
-                value={newTitle}
-                onChangeText={setNewTitle}
-              />
+            {/* Header */}
+            <View
+              style={[
+                styles.header,
+                {
+                  backgroundColor: theme.colors.cardBackground,
+                  borderBottomColor: theme.colors.cardBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Manage Labels</Text>
               <TouchableOpacity
-                testID="create-label-btn"
-                style={[styles.createBtn, { backgroundColor: '#30D158' }]}
-                onPress={handleCreate}
-                disabled={!newTitle.trim()}
+                testID="close-label-management-btn"
+                style={styles.closeBtn}
+                onPress={onClose}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel="Close label management"
               >
-                <Text style={styles.createBtnText}>Add</Text>
+                <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Color Presets for new label */}
-            <View style={styles.colorPresetRow}>
-              {PRESET_COLORS.map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[
-                    styles.colorDot,
-                    { backgroundColor: c },
-                    newColor === c && styles.colorDotSelected,
-                  ]}
-                  onPress={() => setNewColor(c)}
-                />
-              ))}
-            </View>
-          </View>
+            {errorMessage ? (
+              <View
+                testID="label-management-error"
+                style={styles.errorBanner}
+                accessibilityRole="alert"
+              >
+                <Text style={styles.errorText}>{errorMessage}</Text>
+                <TouchableOpacity onPress={() => setErrorMessage(null)}>
+                  <Text style={styles.errorDismiss}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
-          {/* Existing Labels List */}
-          <View
-            style={[
-              styles.sectionCard,
-              {
-                backgroundColor: theme.colors.cardBackground,
-                borderColor: theme.colors.cardBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-              LABELS ({safeLabels.length})
-            </Text>
-
-            {safeLabels.length === 0 ? (
-              <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
-                No labels created yet. Add one above!
-              </Text>
-            ) : (
-              safeLabels.map((l) => {
-                const badge = getLabelBadgeStyles(l.title, l.hex_color || l.color);
-                const isEditing = editingLabelId === l.id;
-
-                if (isEditing) {
-                  return (
-                    <View
-                      key={l.id}
-                      style={[
-                        styles.editRow,
-                        { borderColor: theme.colors.cardBorder },
-                      ]}
-                    >
-                      <TextInput
-                        style={[
-                          styles.editInput,
-                          {
-                            color: theme.colors.text,
-                            backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                          },
-                        ]}
-                        value={editTitle}
-                        onChangeText={setEditTitle}
-                      />
-                      <TouchableOpacity
-                        testID={`save-label-${l.id}`}
-                        style={[styles.smallBtn, { backgroundColor: '#0A84FF' }]}
-                        onPress={() => handleSaveEdit(l.id)}
-                      >
-                        <Text style={styles.smallBtnText}>Save</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.smallBtn, { backgroundColor: '#8E8E93' }]}
-                        onPress={() => setEditingLabelId(null)}
-                      >
-                        <Text style={styles.smallBtnText}>Cancel</Text>
-                      </TouchableOpacity>
-                    </View>
-                  );
-                }
-
-                return (
-                  <View
-                    key={l.id}
-                    style={[
-                      styles.labelRow,
-                      { borderBottomColor: theme.colors.cardBorder },
-                    ]}
+            {confirmDeleteLabel ? (
+              <View
+                testID="label-delete-confirm-banner"
+                style={[
+                  styles.confirmBanner,
+                  { backgroundColor: theme.colors.cardBackground, borderColor: '#FF453A' },
+                ]}
+              >
+                <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
+                  Delete #{confirmDeleteLabel.title} from all tasks?
+                </Text>
+                <View style={styles.confirmBannerActions}>
+                  <TouchableOpacity
+                    testID="label-confirm-cancel-btn"
+                    style={[styles.smallBtn, { backgroundColor: '#8E8E93' }]}
+                    onPress={() => setConfirmDeleteLabel(null)}
                   >
-                    <View
-                      style={[
-                        styles.badge,
-                        {
-                          backgroundColor: badge.backgroundColor,
-                          borderColor: badge.textColor,
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.badgeText, { color: badge.textColor }]}>
-                        #{l.title}
-                      </Text>
-                    </View>
+                    <Text style={styles.smallBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="label-confirm-delete-btn"
+                    style={[styles.smallBtn, { backgroundColor: '#FF453A' }]}
+                    onPress={() => performDelete(confirmDeleteLabel.id)}
+                  >
+                    <Text style={styles.smallBtnText}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
 
-                    <View style={styles.actionsRow}>
+            <ScrollView
+              style={styles.content}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Create New Label Card */}
+              <View
+                style={[
+                  styles.sectionCard,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                  CREATE NEW LABEL
+                </Text>
+                <View style={styles.createInputRow}>
+                  <TextInput
+                    style={[
+                      styles.textInput,
+                      {
+                        color: theme.colors.text,
+                        backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                        borderColor: theme.colors.cardBorder,
+                      },
+                    ]}
+                    placeholder="New label name..."
+                    placeholderTextColor={theme.colors.textSecondary}
+                    value={newTitle}
+                    onChangeText={(txt) => {
+                      setNewTitle(txt);
+                      if (errorMessage) setErrorMessage(null);
+                    }}
+                    onSubmitEditing={handleCreate}
+                    returnKeyType="done"
+                  />
+                  <TouchableOpacity
+                    testID="create-label-btn"
+                    style={[
+                      styles.createBtn,
+                      { backgroundColor: '#30D158' },
+                      !newTitle.trim() && styles.btnDisabled,
+                    ]}
+                    onPress={handleCreate}
+                    disabled={!newTitle.trim()}
+                    accessibilityRole="button"
+                    accessibilityLabel="Create label"
+                  >
+                    <Text style={styles.createBtnText}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Color Presets for new label */}
+                <View style={styles.colorPresetRow}>
+                  {PRESET_COLORS.map((c) => {
+                    const isSelected = newColor.toLowerCase() === c.toLowerCase();
+                    return (
                       <TouchableOpacity
-                        testID={`edit-label-${l.id}`}
-                        style={styles.actionBtn}
-                        onPress={() => handleStartEdit(l)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        key={c}
+                        testID={`new-label-color-${c}`}
+                        style={[
+                          styles.colorDot,
+                          { backgroundColor: c },
+                          isSelected && [
+                            styles.colorDotSelected,
+                            { borderColor: selectedRingColor },
+                          ],
+                        ]}
+                        onPress={() => {
+                          safeHaptics.selection();
+                          setNewColor(c);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                        accessibilityLabel={`Select color ${c}`}
+                      />
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Existing Labels List */}
+              <View
+                style={[
+                  styles.sectionCard,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                  LABELS ({safeLabels.length})
+                </Text>
+
+                {safeLabels.length === 0 ? (
+                  <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+                    No labels created yet. Add one above!
+                  </Text>
+                ) : (
+                  safeLabels.map((l) => {
+                    const badge = getLabelBadgeStyles(
+                      l.title,
+                      l.hex_color || l.color,
+                      theme.isDark
+                    );
+                    const isEditing = editingLabelId === l.id;
+
+                    if (isEditing) {
+                      return (
+                        <View
+                          key={l.id}
+                          style={[
+                            styles.editBlock,
+                            { borderColor: theme.colors.cardBorder },
+                          ]}
+                        >
+                          <View style={styles.editRow}>
+                            <TextInput
+                              testID={`edit-label-input-${l.id}`}
+                              style={[
+                                styles.editInput,
+                                {
+                                  color: theme.colors.text,
+                                  backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+                                },
+                              ]}
+                              value={editTitle}
+                              onChangeText={setEditTitle}
+                              onSubmitEditing={() => handleSaveEdit(l.id)}
+                              returnKeyType="done"
+                            />
+                            <TouchableOpacity
+                              testID={`save-label-${l.id}`}
+                              style={[styles.smallBtn, { backgroundColor: '#0A84FF' }]}
+                              onPress={() => handleSaveEdit(l.id)}
+                              accessibilityRole="button"
+                              accessibilityLabel="Save label changes"
+                            >
+                              <Text style={styles.smallBtnText}>Save</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              testID={`cancel-edit-label-${l.id}`}
+                              style={[styles.smallBtn, { backgroundColor: '#8E8E93' }]}
+                              onPress={() => setEditingLabelId(null)}
+                              accessibilityRole="button"
+                              accessibilityLabel="Cancel editing label"
+                            >
+                              <Text style={styles.smallBtnText}>Cancel</Text>
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* Color Presets while editing label */}
+                          <View style={styles.editColorRow}>
+                            {PRESET_COLORS.map((c) => {
+                              const isSelected =
+                                (normalizeHexColor(editColor, true) || '').toLowerCase() ===
+                                c.toLowerCase();
+                              return (
+                                <TouchableOpacity
+                                  key={c}
+                                  testID={`edit-label-color-${l.id}-${c}`}
+                                  style={[
+                                    styles.colorDotSmall,
+                                    { backgroundColor: c },
+                                    isSelected && [
+                                      styles.colorDotSelected,
+                                      { borderColor: selectedRingColor },
+                                    ],
+                                  ]}
+                                  onPress={() => {
+                                    safeHaptics.selection();
+                                    setEditColor(c);
+                                  }}
+                                  accessibilityRole="button"
+                                  accessibilityState={{ selected: isSelected }}
+                                  accessibilityLabel={`Set label color to ${c}`}
+                                />
+                              );
+                            })}
+                          </View>
+                        </View>
+                      );
+                    }
+
+                    return (
+                      <View
+                        key={l.id}
+                        style={[
+                          styles.labelRow,
+                          { borderBottomColor: theme.colors.cardBorder },
+                        ]}
                       >
-                        <Text style={[styles.actionBtnText, { color: theme.colors.textSecondary }]}>
-                          ✎
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        testID={`delete-label-${l.id}`}
-                        style={[styles.actionBtn, styles.deleteActionBtn]}
-                        onPress={() => handleDelete(l.id, l.title)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Text style={styles.deleteActionText}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                );
-              })
-            )}
-          </View>
-        </ScrollView>
-      </SafeAreaView>
+                        <View
+                          style={[
+                            styles.badge,
+                            {
+                              backgroundColor: badge.backgroundColor,
+                              borderColor: badge.textColor,
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.badgeText, { color: badge.textColor }]}>
+                            #{l.title}
+                          </Text>
+                        </View>
+
+                        <View style={styles.actionsRow}>
+                          <TouchableOpacity
+                            testID={`edit-label-${l.id}`}
+                            style={styles.actionBtn}
+                            onPress={() => handleStartEdit(l)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Edit label ${l.title}`}
+                          >
+                            <Text style={[styles.actionBtnText, { color: theme.colors.textSecondary }]}>
+                              ✎
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            testID={`delete-label-${l.id}`}
+                            style={[styles.actionBtn, styles.deleteActionBtn]}
+                            onPress={() => handleDelete(l)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Delete label ${l.title}`}
+                          >
+                            <Text style={styles.deleteActionText}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </View>
     </Modal>
   );
@@ -315,6 +490,9 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: 680,
+  },
+  keyboardView: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -334,6 +512,51 @@ const styles = StyleSheet.create({
   closeBtnText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 69, 58, 0.15)',
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF453A',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 8,
+  },
+  errorText: {
+    flex: 1,
+    color: '#FF453A',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  errorDismiss: {
+    color: '#FF453A',
+    fontSize: 14,
+    fontWeight: '700',
+    paddingLeft: 10,
+  },
+  confirmBanner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  confirmBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  confirmBannerActions: {
+    flexDirection: 'row',
+    gap: 6,
   },
   content: {
     flex: 1,
@@ -372,6 +595,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  btnDisabled: {
+    opacity: 0.5,
+  },
   createBtnText: {
     color: '#FFFFFF',
     fontWeight: '700',
@@ -379,6 +605,7 @@ const styles = StyleSheet.create({
   },
   colorPresetRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
     marginTop: 12,
     alignItems: 'center',
@@ -388,9 +615,13 @@ const styles = StyleSheet.create({
     height: 26,
     borderRadius: 13,
   },
+  colorDotSmall: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+  },
   colorDotSelected: {
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
+    borderWidth: 2.5,
     transform: [{ scale: 1.15 }],
   },
   emptyText: {
@@ -435,11 +666,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  editBlock: {
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+  },
   editRow: {
     flexDirection: 'row',
     gap: 8,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+  },
+  editColorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     alignItems: 'center',
   },
   editInput: {

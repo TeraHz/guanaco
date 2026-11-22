@@ -2,7 +2,27 @@
  * Date normalization, formatting, and preset utilities for Vikunja dates.
  */
 
-const VIKUNJA_ZERO_DATE_PREFIX = '0001-01-01';
+/**
+ * Checks whether a date string represents a Vikunja / Go zero-date
+ * (e.g. '0001-01-01T00:00:00Z', '0001-01-01T01:00:00+01:00', '0000-12-31T19:00:00-05:00').
+ */
+export function isZeroDate(dateStr?: string | null): boolean {
+  if (!dateStr || typeof dateStr !== 'string') return false;
+  const trimmed = dateStr.trim();
+  if (!trimmed) return false;
+
+  // Match literal 0001-01-01* or 0000-* strings (including non-UTC offsets or space separators)
+  if (/^000[01]-\d{2}-\d{2}/.test(trimmed)) {
+    return true;
+  }
+
+  const parsed = new Date(trimmed);
+  if (!isNaN(parsed.getTime()) && parsed.getUTCFullYear() <= 1) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Normalizes a Vikunja date. Converts zero-dates ('0001-01-01...'), invalid dates, or empty strings to null.
@@ -10,7 +30,7 @@ const VIKUNJA_ZERO_DATE_PREFIX = '0001-01-01';
 export function normalizeVikunjaDate(dateStr?: string | null): string | null {
   if (!dateStr || typeof dateStr !== 'string') return null;
   const trimmed = dateStr.trim();
-  if (!trimmed || trimmed.startsWith(VIKUNJA_ZERO_DATE_PREFIX)) return null;
+  if (!trimmed || isZeroDate(trimmed)) return null;
 
   const parsed = new Date(trimmed);
   if (isNaN(parsed.getTime())) return null;
@@ -19,33 +39,37 @@ export function normalizeVikunjaDate(dateStr?: string | null): string | null {
 }
 
 /**
- * Formats a Date object or ISO string to ISO string for sending to Vikunja, or null if empty.
+ * Formats a Date object or ISO string to ISO string for sending to Vikunja, or null if empty/zero.
  */
 export function formatIsoForVikunja(date: Date | string | null | undefined): string | null {
   if (!date) return null;
   if (typeof date === 'string') return normalizeVikunjaDate(date);
-  if (isNaN(date.getTime())) return null;
+  if (!(date instanceof Date) || isNaN(date.getTime())) return null;
+  if (date.getUTCFullYear() <= 1) return null;
   return date.toISOString();
 }
 
 /**
  * Checks if a date is in the past.
  */
-export function isOverdue(dateStr?: string | null): boolean {
+export function isOverdue(dateStr?: string | null, nowMs: number = Date.now()): boolean {
   const norm = normalizeVikunjaDate(dateStr);
   if (!norm) return false;
-  return new Date(norm).getTime() < Date.now();
+  return new Date(norm).getTime() < nowMs;
 }
 
 /**
  * Checks if a date is within the next `hoursAhead` hours and not overdue.
  */
-export function isDueSoon(dateStr?: string | null, hoursAhead = 24): boolean {
+export function isDueSoon(
+  dateStr?: string | null,
+  hoursAhead = 24,
+  nowMs: number = Date.now()
+): boolean {
   const norm = normalizeVikunjaDate(dateStr);
   if (!norm) return false;
-  const now = Date.now();
   const time = new Date(norm).getTime();
-  const diffMs = time - now;
+  const diffMs = time - nowMs;
   return diffMs > 0 && diffMs <= hoursAhead * 60 * 60 * 1000;
 }
 
@@ -54,25 +78,22 @@ export function isDueSoon(dateStr?: string | null, hoursAhead = 24): boolean {
  */
 export function formatDateDisplay(
   dateStr?: string | null,
-  options?: { includeTime?: boolean }
+  options?: { includeTime?: boolean; now?: Date }
 ): string {
   const norm = normalizeVikunjaDate(dateStr);
   if (!norm) return '';
 
   const d = new Date(norm);
-  const now = new Date();
+  const now = options?.now ? new Date(options.now.getTime()) : new Date();
 
-  // Normalize to local calendar day comparison
+  // Normalize to local calendar day comparison (immune to DST hour shifts)
   const isSameDay = (d1: Date, d2: Date) =>
     d1.getFullYear() === d2.getFullYear() &&
     d1.getMonth() === d2.getMonth() &&
     d1.getDate() === d2.getDate();
 
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 
   let dayLabel = '';
   if (isSameDay(d, now)) {
@@ -90,7 +111,6 @@ export function formatDateDisplay(
   }
 
   const includeTime = options?.includeTime ?? true;
-  // Check if date has non-zero time (or includeTime is explicitly requested)
   const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0;
 
   if (includeTime && hasTime) {
@@ -105,40 +125,58 @@ export type DatePresetKey = 'today' | 'tomorrow' | 'this_weekend' | 'next_week';
 
 /**
  * Calculates pre-defined date targets for quick date picking.
+ * Guarantees 'today' never returns a timestamp in the past even late at night.
  */
-export function getDatePreset(preset: DatePresetKey): Date | null {
-  const now = new Date();
-
+export function getDatePreset(preset: DatePresetKey, now: Date = new Date()): Date | null {
   switch (preset) {
     case 'today': {
-      const d = new Date(now);
+      const d = new Date(now.getTime());
       d.setHours(18, 0, 0, 0); // 6:00 PM
       if (d.getTime() <= now.getTime()) {
         d.setHours(21, 0, 0, 0); // 9:00 PM if already past 6 PM
       }
+      if (d.getTime() <= now.getTime()) {
+        // After 9:00 PM: now + 1 hour capped at 23:59:00 today (or 23:59:59.999 if >= 23:59)
+        const plusOneHour = new Date(now.getTime() + 60 * 60 * 1000);
+        const cap = new Date(now.getTime());
+        cap.setHours(23, 59, 0, 0);
+        if (cap.getTime() <= now.getTime()) {
+          cap.setHours(23, 59, 59, 999);
+        }
+        return plusOneHour.getTime() <= cap.getTime() ? plusOneHour : cap;
+      }
       return d;
     }
     case 'tomorrow': {
-      const d = new Date(now);
-      d.setDate(d.getDate() + 1);
-      d.setHours(9, 0, 0, 0); // 9:00 AM
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 9, 0, 0, 0);
       return d;
     }
     case 'this_weekend': {
-      const d = new Date(now);
-      const day = d.getDay(); // 0 is Sunday, 6 is Saturday
-      const daysUntilSaturday = day === 6 ? 7 : (6 - day);
-      d.setDate(d.getDate() + daysUntilSaturday);
-      d.setHours(10, 0, 0, 0); // 10:00 AM
+      const day = now.getDay(); // 0 is Sunday, 6 is Saturday
+      const daysUntilSaturday = day === 6 ? 7 : 6 - day;
+      const d = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + daysUntilSaturday,
+        10,
+        0,
+        0,
+        0
+      );
       return d;
     }
     case 'next_week': {
-      const d = new Date(now);
-      const day = d.getDay();
-      // Next Monday
-      const daysUntilMonday = day === 0 ? 1 : (8 - day);
-      d.setDate(d.getDate() + daysUntilMonday);
-      d.setHours(9, 0, 0, 0);
+      const day = now.getDay();
+      const daysUntilMonday = day === 0 ? 1 : 8 - day;
+      const d = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + daysUntilMonday,
+        9,
+        0,
+        0,
+        0
+      );
       return d;
     }
     default:

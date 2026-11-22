@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
   Text,
-  FlatList,
   TouchableOpacity,
   StyleSheet,
   StatusBar,
@@ -15,7 +14,7 @@ import {
   LayoutAnimation,
   UIManager,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTaskStore } from '../store/taskStore';
 import { SwipeableTaskItem } from '../components/SwipeableTaskItem';
 import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
@@ -26,16 +25,14 @@ import { TaskDetailModal } from '../components/TaskDetailModal';
 import { LabelManagementModal } from '../components/LabelManagementModal';
 import { ProjectEditorModal } from '../components/ProjectEditorModal';
 import { ProjectSharingModal } from '../components/ProjectSharingModal';
-import { sortTasks, SortOption } from '../utils/sorting';
-import { isShoppingList } from '../utils/smartClassifier';
+import { SortOption } from '../utils/sorting';
 import { isAICoreSupported, classifyTaskWithAI } from '../utils/aiCore';
-import { MY_TASKS_PROJECT_ID, MY_TASKS_PROJECT, isTaskAssignedToUser } from '../utils/taskFilters';
 import { useFilteredSortedTasks, FilterType } from '../hooks/useFilteredSortedTasks';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
-import { getLabelBadgeStyles } from '../utils/colors';
+import { getLabelBadgeStyles, normalizeHexColor } from '../utils/colors';
 import { useAppTheme } from '../utils/theme';
-import { Task, Project } from '../types/vikunja';
+import { CreateTaskInput, Task, Project } from '../types/vikunja';
 
 interface ProjectTasksScreenProps {
   onOpenDrawer?: () => void;
@@ -54,6 +51,73 @@ const SORT_LABELS: Record<SortOption, string> = {
   priority: 'Priority',
 };
 
+function getSortLabel(option: SortOption): string {
+  return Object.prototype.hasOwnProperty.call(SORT_LABELS, option)
+    ? SORT_LABELS[option]
+    : 'Sort';
+}
+
+interface TrackedTaskRef {
+  id: number;
+  title: string;
+  project_id: number;
+  done?: boolean;
+}
+
+/**
+ * Resolves a tracked task against the live `tasks` array in `useTaskStore`.
+ * If an optimistic negative `tempId` was replaced with a positive server ID while a modal or Undo window was open,
+ * seamlessly resolves to the newest matching live server task!
+ */
+function resolveLiveTask(tasks: Task[], ref: TrackedTaskRef | null): Task | null {
+  if (!ref) return null;
+  const safe = Array.isArray(tasks) ? tasks : [];
+  const exact = safe.find((t) => t.id === ref.id);
+  if (exact) return exact;
+
+  if (ref.id < 0) {
+    const candidates = safe.filter(
+      (t) => t.id > 0 && t.title === ref.title && t.project_id === ref.project_id
+    );
+    if (candidates.length > 0) {
+      const sameDone =
+        ref.done !== undefined
+          ? candidates.filter((t) => Boolean(t.done) === Boolean(ref.done))
+          : [];
+      const pool = sameDone.length > 0 ? sameDone : candidates;
+      return pool.reduce((best, cur) => (cur.id > best.id ? cur : best), pool[0]);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Splices a reordered subset (`newSubsetIds`) into the full project task list (`allProjectTasks`)
+ * at the exact positions originally occupied by that subset, preventing position collisions/corruption
+ * on filtered-out tasks (e.g. completed tasks or other labels)!
+ */
+function buildCollisionFreeProjectOrder(
+  allProjectTasks: Task[],
+  newSubsetIds: number[]
+): number[] {
+  const subsetSet = new Set(newSubsetIds);
+  const sortedFull = [...allProjectTasks].sort((a, b) => {
+    const posA = a.position ?? Number.MAX_SAFE_INTEGER;
+    const posB = b.position ?? Number.MAX_SAFE_INTEGER;
+    if (posA !== posB) return posA - posB;
+    return a.id - b.id;
+  });
+
+  let subsetCursor = 0;
+  return sortedFull.map((task) => {
+    if (subsetSet.has(task.id) && subsetCursor < newSubsetIds.length) {
+      return newSubsetIds[subsetCursor++];
+    }
+    return task.id;
+  });
+}
+
 export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   onOpenDrawer,
   onSelectTask,
@@ -61,6 +125,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
 }) => {
   const theme = useAppTheme();
   const {
+    client,
     projects,
     tasks,
     labels: storeLabels,
@@ -82,14 +147,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     reorderTasks,
     deleteTask,
     fetchTasks,
-    fetchProjects,
     retrySync,
     syncAll,
     fetchAllTasks,
     toggleProjectFavorite,
   } = useTaskStore();
 
-  const insets = useSafeAreaInsets();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
@@ -127,23 +190,200 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const [filter, setFilter] = useState<FilterType>('active');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('default');
-  const [showSortModal, setShowSortModal] = useState(false);
   const [isReordering, setIsReordering] = useState(false);
+  const [reorderNotice, setReorderNotice] = useState<string | null>(null);
+  const reorderNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Modal states — strictly mutually exclusive so two <Modal>s are NEVER visible simultaneously!
+  const [showSortModal, setShowSortModal] = useState(false);
   const [showLabelManagementModal, setShowLabelManagementModal] = useState(false);
-  const [movingTaskId, setMovingTaskId] = useState<number | null>(null);
-  const [editingLabelsTask, setEditingLabelsTask] = useState<Task | null>(null);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [movingTaskRef, setMovingTaskRef] = useState<TrackedTaskRef | null>(null);
+  const [editingLabelsRef, setEditingLabelsRef] = useState<TrackedTaskRef | null>(null);
+  const [selectedTaskRef, setSelectedTaskRef] = useState<TrackedTaskRef | null>(null);
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
-  const [actionSheetProject, setActionSheetProject] = useState<Project | null>(null);
-  const [editorProject, setEditorProject] = useState<Project | null>(null);
+  const [actionSheetProjectId, setActionSheetProjectId] = useState<number | null>(null);
+  const [editorProjectId, setEditorProjectId] = useState<number | null>(null);
   const [showEditor, setShowEditor] = useState(false);
-  const [sharingProject, setSharingProject] = useState<Project | null>(null);
+  const [sharingProjectId, setSharingProjectId] = useState<number | null>(null);
+  const [noProjectWarning, setNoProjectWarning] = useState<string | null>(null);
+
   const [refreshing, setRefreshing] = useState(false);
 
-  const safeProjects = Array.isArray(projects) ? projects.filter((p) => p.id > 0) : [];
+  // Undo Delete safety state (tracks tempId -> serverId remap and cancels cleanly on logout/reset)
+  const [pendingDeleteTaskRef, setPendingDeleteTaskRef] = useState<TrackedTaskRef | null>(null);
+  const pendingDeleteRef = useRef<{
+    ref: TrackedTaskRef;
+    timer: ReturnType<typeof setTimeout>;
+    hadClient: boolean;
+  } | null>(null);
+
+  const flushPendingDelete = useCallback(() => {
+    if (!pendingDeleteRef.current) return;
+    const { ref, timer, hadClient } = pendingDeleteRef.current;
+    clearTimeout(timer);
+    pendingDeleteRef.current = null;
+    setPendingDeleteTaskRef(null);
+
+    const storeState = useTaskStore.getState();
+    if (hadClient && !storeState.client) {
+      return;
+    }
+    const live = resolveLiveTask(storeState.tasks, ref);
+    if (!live) {
+      return;
+    }
+    deleteTask(live.id);
+  }, [deleteTask]);
+
+  useEffect(() => {
+    return () => {
+      if (reorderNoticeTimerRef.current) {
+        clearTimeout(reorderNoticeTimerRef.current);
+      }
+      if (pendingDeleteRef.current) {
+        const { ref, timer } = pendingDeleteRef.current;
+        clearTimeout(timer);
+        pendingDeleteRef.current = null;
+        const storeState = useTaskStore.getState();
+        if (storeState.client !== null) {
+          const live = resolveLiveTask(storeState.tasks, ref);
+          if (live) {
+            deleteTask(live.id);
+          }
+        }
+      }
+    };
+  }, [deleteTask]);
+
+  const closeAllModals = () => {
+    setShowSortModal(false);
+    setShowLabelManagementModal(false);
+    setMovingTaskRef(null);
+    setEditingLabelsRef(null);
+    setSelectedTaskRef(null);
+    setShowCreateTaskModal(false);
+    setActionSheetProjectId(null);
+    setEditorProjectId(null);
+    setShowEditor(false);
+    setSharingProjectId(null);
+  };
+
+  const safeProjects = useMemo(
+    () => (Array.isArray(projects) ? projects.filter((p) => p.id > 0 && !p.is_archived) : []),
+    [projects]
+  );
+
+  const allPositiveProjects = useMemo(
+    () => (Array.isArray(projects) ? projects.filter((p) => p.id > 0) : []),
+    [projects]
+  );
+
+  // Live resolved entities from store (prevents stale task/project snapshots & dead negative tempIds)
+  const liveSelectedTask = useMemo(
+    () => resolveLiveTask(tasks, selectedTaskRef),
+    [tasks, selectedTaskRef]
+  );
+  const liveEditingLabelsTask = useMemo(
+    () => resolveLiveTask(tasks, editingLabelsRef),
+    [tasks, editingLabelsRef]
+  );
+  const liveMovingTask = useMemo(
+    () => resolveLiveTask(tasks, movingTaskRef),
+    [tasks, movingTaskRef]
+  );
+  const livePendingDeleteTask = useMemo(
+    () => resolveLiveTask(tasks, pendingDeleteTaskRef),
+    [tasks, pendingDeleteTaskRef]
+  );
+
+  useEffect(() => {
+    if (!pendingDeleteTaskRef) return;
+
+    // Cancel staged delete without mutating if session cleared (`!client` when staged with client)
+    // or if the task was removed from store (e.g. `resetAndSyncFromServer`, `clearSession`, `deleteProject`).
+    if ((pendingDeleteRef.current?.hadClient && !client) || !livePendingDeleteTask) {
+      if (pendingDeleteRef.current) {
+        clearTimeout(pendingDeleteRef.current.timer);
+        pendingDeleteRef.current = null;
+      }
+      setPendingDeleteTaskRef(null);
+      return;
+    }
+
+    if (livePendingDeleteTask.id !== pendingDeleteTaskRef.id) {
+      const updatedRef: TrackedTaskRef = {
+        id: livePendingDeleteTask.id,
+        title: livePendingDeleteTask.title,
+        project_id: livePendingDeleteTask.project_id,
+        done: Boolean(livePendingDeleteTask.done),
+      };
+      if (pendingDeleteRef.current) {
+        pendingDeleteRef.current.ref = updatedRef;
+      }
+      setPendingDeleteTaskRef(updatedRef);
+    }
+  }, [pendingDeleteTaskRef, livePendingDeleteTask, client]);
+
+  useEffect(() => {
+    if (selectedTaskRef && liveSelectedTask && liveSelectedTask.id !== selectedTaskRef.id) {
+      setSelectedTaskRef({
+        id: liveSelectedTask.id,
+        title: liveSelectedTask.title,
+        project_id: liveSelectedTask.project_id,
+        done: Boolean(liveSelectedTask.done),
+      });
+    }
+  }, [selectedTaskRef, liveSelectedTask]);
+
+  useEffect(() => {
+    if (editingLabelsRef && liveEditingLabelsTask && liveEditingLabelsTask.id !== editingLabelsRef.id) {
+      setEditingLabelsRef({
+        id: liveEditingLabelsTask.id,
+        title: liveEditingLabelsTask.title,
+        project_id: liveEditingLabelsTask.project_id,
+        done: Boolean(liveEditingLabelsTask.done),
+      });
+    }
+  }, [editingLabelsRef, liveEditingLabelsTask]);
+
+  useEffect(() => {
+    if (movingTaskRef && liveMovingTask && liveMovingTask.id !== movingTaskRef.id) {
+      setMovingTaskRef({
+        id: liveMovingTask.id,
+        title: liveMovingTask.title,
+        project_id: liveMovingTask.project_id,
+        done: Boolean(liveMovingTask.done),
+      });
+    }
+  }, [movingTaskRef, liveMovingTask]);
+
+  const actionSheetProject: Project | null = useMemo(
+    () =>
+      actionSheetProjectId !== null
+        ? allPositiveProjects.find((p) => p.id === actionSheetProjectId) || null
+        : null,
+    [allPositiveProjects, actionSheetProjectId]
+  );
+
+  const editorProject: Project | null = useMemo(
+    () =>
+      editorProjectId !== null
+        ? allPositiveProjects.find((p) => p.id === editorProjectId) || null
+        : null,
+    [allPositiveProjects, editorProjectId]
+  );
+
+  const sharingProject: Project | null = useMemo(
+    () =>
+      sharingProjectId !== null
+        ? allPositiveProjects.find((p) => p.id === sharingProjectId) || null
+        : null,
+    [allPositiveProjects, sharingProjectId]
+  );
 
   // Fetch tasks on mount & when active project changes (Regression Issue #1)
   useEffect(() => {
+    setIsReordering(false);
     if (selectedProjectId && selectedProjectId > 0) {
       fetchTasks(selectedProjectId);
     } else {
@@ -165,7 +405,6 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     availableLabels,
     projectTasks,
     doneTasks,
-    filteredTasks,
     sortedTasks,
     activeCount,
   } = useFilteredSortedTasks({
@@ -179,49 +418,177 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     sortBy,
   });
 
+  const visibleTasks = useMemo(
+    () =>
+      livePendingDeleteTask
+        ? sortedTasks.filter((t) => t.id !== livePendingDeleteTask.id)
+        : sortedTasks,
+    [sortedTasks, livePendingDeleteTask]
+  );
+
   const hasAICore = isAICoreSupported();
+  const isVirtualView = isAllTasksView || isMyTasksView || !activeProject || activeProject.id <= 0;
 
-  const handleMoveTaskPosition = (taskId: number, direction: 'up' | 'down') => {
-    safeHaptics.selection();
-    const currentList = [...sortedTasks];
-    const currentIndex = currentList.findIndex((t) => t.id === taskId);
-    if (currentIndex === -1) return;
-
-    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (targetIndex < 0 || targetIndex >= currentList.length) return;
-
-    // Swap tasks
-    const [moved] = currentList.splice(currentIndex, 1);
-    currentList.splice(targetIndex, 0, moved);
-
-    const projectId = moved.project_id || activeProject.id;
-    reorderTasks(projectId, currentList.map((t) => t.id));
-    if (sortBy !== 'manual') {
-      setSortBy('manual');
+  const showTemporaryNotice = (msg: string) => {
+    setReorderNotice(msg);
+    if (reorderNoticeTimerRef.current) {
+      clearTimeout(reorderNoticeTimerRef.current);
     }
+    reorderNoticeTimerRef.current = setTimeout(() => {
+      setReorderNotice(null);
+    }, 3500);
   };
 
-  const handleLongPressTask = (_task: Task) => {
-    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-    const hasPositions = sortedTasks.some((t) => t.position !== undefined && t.position > 0);
-    if (!hasPositions && sortedTasks.length > 0) {
-      reorderTasks(activeProject.id, sortedTasks.map((t) => t.id));
+  const applySafeProjectReorder = useCallback(
+    (projectId: number, orderedVisibleIds: number[]) => {
+      if (projectId <= 0) return;
+      const safeTasks = Array.isArray(tasks) ? tasks : [];
+      const fullProjectTasks = safeTasks.filter((t) => t.project_id === projectId);
+      const collisionFreeIds = buildCollisionFreeProjectOrder(fullProjectTasks, orderedVisibleIds);
+      reorderTasks(projectId, collisionFreeIds);
+    },
+    [tasks, reorderTasks]
+  );
+
+  const handleMoveTaskPosition = useCallback(
+    (taskId: number, direction: 'up' | 'down') => {
+      if (isVirtualView) {
+        showTemporaryNotice('Open a specific list to reorder tasks manually.');
+        return;
+      }
+      safeHaptics.selection();
+      const currentList = [...visibleTasks];
+      const currentIndex = currentList.findIndex((t) => t.id === taskId);
+      if (currentIndex === -1) return;
+
+      const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      if (targetIndex < 0 || targetIndex >= currentList.length) return;
+
+      const [moved] = currentList.splice(currentIndex, 1);
+      currentList.splice(targetIndex, 0, moved);
+
+      const projectId = moved.project_id || activeProject.id;
+      applySafeProjectReorder(
+        projectId,
+        currentList.map((t) => t.id)
+      );
+      if (sortBy !== 'manual') {
+        setSortBy('manual');
+      }
+    },
+    [isVirtualView, visibleTasks, activeProject.id, applySafeProjectReorder, sortBy]
+  );
+
+  const handleStageDeleteTask = useCallback(
+    (taskId: number) => {
+      const safeTasks = Array.isArray(tasks) ? tasks : [];
+      const target = safeTasks.find((t) => t.id === taskId);
+      if (!target) {
+        deleteTask(taskId);
+        return;
+      }
+
+      // Flush any previous staged delete first
+      if (pendingDeleteRef.current) {
+        flushPendingDelete();
+      }
+
+      const nextRef: TrackedTaskRef = {
+        id: target.id,
+        title: target.title,
+        project_id: target.project_id,
+        done: Boolean(target.done),
+      };
+      const hadClient = Boolean(useTaskStore.getState().client);
+
+      const timer = setTimeout(() => {
+        flushPendingDelete();
+      }, 5000);
+
+      pendingDeleteRef.current = { ref: nextRef, timer, hadClient };
+      setPendingDeleteTaskRef(nextRef);
+    },
+    [tasks, deleteTask, flushPendingDelete]
+  );
+
+  const handleUndoDelete = () => {
+    if (pendingDeleteRef.current) {
+      clearTimeout(pendingDeleteRef.current.timer);
+      pendingDeleteRef.current = null;
     }
-    setIsReordering(true);
-    if (sortBy !== 'manual') {
-      setSortBy('manual');
-    }
+    setPendingDeleteTaskRef(null);
+    safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
   };
+
+  const defaultTargetProjectId =
+    activeProject && activeProject.id > 0
+      ? activeProject.id
+      : safeProjects[0]?.id || 0;
+
+  const handleOpenMoveModal = useCallback(
+    (taskId: number) => {
+      const safeTasks = Array.isArray(tasks) ? tasks : [];
+      const found = safeTasks.find((t) => t.id === taskId);
+      closeAllModals();
+      setMovingTaskRef(
+        found
+          ? {
+              id: found.id,
+              title: found.title,
+              project_id: found.project_id,
+              done: Boolean(found.done),
+            }
+          : { id: taskId, title: '', project_id: defaultTargetProjectId }
+      );
+    },
+    [tasks, defaultTargetProjectId]
+  );
+
+  const handleOpenEditLabels = useCallback((task: Task) => {
+    closeAllModals();
+    setEditingLabelsRef({
+      id: task.id,
+      title: task.title,
+      project_id: task.project_id,
+      done: Boolean(task.done),
+    });
+  }, []);
+
+  const handleOpenTaskDetails = useCallback(
+    (task: Task) => {
+      if (isReordering) return;
+      closeAllModals();
+      setSelectedTaskRef({
+        id: task.id,
+        title: task.title,
+        project_id: task.project_id,
+        done: Boolean(task.done),
+      });
+      onSelectTask?.(task);
+    },
+    [isReordering, onSelectTask]
+  );
+
+  const handleSelectLabelFilter = useCallback((label: string) => {
+    setSelectedLabel(label);
+  }, []);
 
   const isKeyboardVisible = keyboardHeight > 0;
+  const activeProjectDotColor = activeProject?.hex_color
+    ? normalizeHexColor(activeProject.hex_color, true) ?? null
+    : null;
 
   return (
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
       edges={
         hideDrawerButton
-          ? (isKeyboardVisible ? ['top', 'right'] : ['top', 'bottom', 'right'])
-          : (isKeyboardVisible ? ['top', 'left', 'right'] : ['top', 'bottom', 'left', 'right'])
+          ? isKeyboardVisible
+            ? ['top', 'right']
+            : ['top', 'bottom', 'right']
+          : isKeyboardVisible
+          ? ['top', 'left', 'right']
+          : ['top', 'bottom', 'left', 'right']
       }
     >
       <StatusBar
@@ -250,434 +617,614 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               style={styles.drawerBtn}
               onPress={onOpenDrawer}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Open lists menu"
             >
               <Text style={[styles.drawerIcon, { color: theme.colors.text }]}>☰</Text>
             </TouchableOpacity>
           )}
 
-        <TouchableOpacity
-          testID="project-header-title-btn"
-          style={styles.projectInfo}
-          disabled={!activeProject || activeProject.id <= 0}
-          onPress={() => {
-            if (activeProject && activeProject.id > 0) {
-              safeHaptics.selection();
-              setActionSheetProject(activeProject);
-            }
-          }}
-          activeOpacity={activeProject && activeProject.id > 0 ? 0.7 : 1}
-        >
-          <View style={styles.projectTitleRow}>
-            {activeProject?.hex_color ? (
-              <View
-                style={[
-                  styles.colorDot,
-                  { backgroundColor: activeProject.hex_color },
-                ]}
-              />
-            ) : null}
-            <Text style={[styles.projectTitle, { color: theme.colors.text }]} numberOfLines={1}>
-              {activeProject?.is_favorite ? '⭐ ' : ''}
-              {activeProject?.title || 'Tasks'}
-            </Text>
-            {activeProject && activeProject.id > 0 && (
-              <Text style={[styles.projectTitleChevron, { color: theme.colors.textSecondary }]}> ▾</Text>
-            )}
-          </View>
-          <Text style={[styles.taskCountSubtitle, { color: theme.colors.textSecondary }]}>
-            {activeCount} active {activeCount === 1 ? 'task' : 'tasks'}
-            {activeProject && activeProject.id > 0 ? ' • Tap to edit list' : ''}
-          </Text>
-        </TouchableOpacity>
-
-        {activeProject && activeProject.id > 0 && (
           <TouchableOpacity
-            testID="project-header-options-btn"
-            style={styles.headerOptionsBtn}
+            testID="project-header-title-btn"
+            style={styles.projectInfo}
+            disabled={!activeProject || activeProject.id <= 0}
             onPress={() => {
-              safeHaptics.selection();
-              setActionSheetProject(activeProject);
+              if (activeProject && activeProject.id > 0) {
+                safeHaptics.selection();
+                closeAllModals();
+                setActionSheetProjectId(activeProject.id);
+              }
             }}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityLabel={`Options for ${activeProject.title}`}
+            activeOpacity={activeProject && activeProject.id > 0 ? 0.7 : 1}
+            accessibilityRole={activeProject && activeProject.id > 0 ? 'button' : 'header'}
           >
-            <Text style={[styles.headerOptionsIcon, { color: theme.colors.text }]}>⋯</Text>
+            <View style={styles.projectTitleRow}>
+              {activeProjectDotColor ? (
+                <View
+                  testID="active-project-color-dot"
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: activeProjectDotColor },
+                  ]}
+                />
+              ) : null}
+              <Text style={[styles.projectTitle, { color: theme.colors.text }]} numberOfLines={1}>
+                {activeProject?.is_favorite ? '⭐ ' : ''}
+                {activeProject?.title || 'Tasks'}
+              </Text>
+              {activeProject && activeProject.id > 0 && (
+                <Text style={[styles.projectTitleChevron, { color: theme.colors.textSecondary }]}>
+                  {' '}
+                  ▾
+                </Text>
+              )}
+            </View>
+            <Text style={[styles.taskCountSubtitle, { color: theme.colors.textSecondary }]}>
+              {activeCount} active {activeCount === 1 ? 'task' : 'tasks'}
+              {activeProject && activeProject.id > 0 ? ' • Tap to edit list' : ''}
+            </Text>
           </TouchableOpacity>
-        )}
 
-        {/* Live Sync Status Indicator */}
-        <TouchableOpacity
-          testID="sync-indicator-btn"
-          style={[
-            styles.syncIndicatorPill,
-            syncStatus === 'syncing' && styles.syncIndicatorSyncing,
-            syncStatus === 'offline' && styles.syncIndicatorOffline,
-          ]}
-          onPress={() => {
-            if (syncStatus === 'offline') {
-              retrySync();
-            }
-          }}
-          activeOpacity={syncStatus === 'offline' ? 0.7 : 1}
-        >
-          <Text
-            style={[
-              styles.syncIndicatorText,
-              syncStatus === 'syncing' && styles.syncIndicatorSyncingText,
-              syncStatus === 'offline' && styles.syncIndicatorOfflineText,
-            ]}
-          >
-            {syncStatus === 'synced'
-              ? '● Synced'
-              : syncStatus === 'syncing'
-              ? '◌ Syncing...'
-              : `⚡ Offline (${pendingSyncCount})`}
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Filter Selector Pills, Label Filter & Sort Button */}
-      <View style={styles.filterBar}>
-        <View style={styles.filterPillsGroup}>
-          {(['active', 'done', 'all'] as FilterType[]).map((f) => (
+          {activeProject && activeProject.id > 0 && (
             <TouchableOpacity
-              key={f}
-              testID={`filter-${f}`}
-              style={[
-                styles.filterPill,
-                {
-                  backgroundColor:
-                    filter === f
-                      ? theme.colors.accent
-                      : theme.isDark
-                      ? '#1C1C1E'
-                      : '#E5E5EA',
-                },
-              ]}
+              testID="project-header-options-btn"
+              style={styles.headerOptionsBtn}
               onPress={() => {
                 safeHaptics.selection();
-                setFilter(filter === f && (f === 'done' || f === 'all') ? 'active' : f);
+                closeAllModals();
+                setActionSheetProjectId(activeProject.id);
               }}
-              activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel={`Options for ${activeProject.title}`}
             >
-              <Text
-                style={[
-                  styles.filterPillText,
-                  {
-                    color: filter === f ? '#FFFFFF' : theme.colors.textSecondary,
-                  },
-                ]}
-              >
-                {f.charAt(0).toUpperCase() + f.slice(1)}
-              </Text>
+              <Text style={[styles.headerOptionsIcon, { color: theme.colors.text }]}>⋯</Text>
             </TouchableOpacity>
-          ))}
+          )}
+
+          {/* Live Sync Status Indicator */}
+          <TouchableOpacity
+            testID="sync-indicator-btn"
+            style={[
+              styles.syncIndicatorPill,
+              syncStatus === 'syncing' && styles.syncIndicatorSyncing,
+              (syncStatus === 'offline' || (syncStatus as string) === 'auth_required') &&
+                styles.syncIndicatorOffline,
+            ]}
+            onPress={() => {
+              if (syncStatus === 'offline') {
+                retrySync();
+              }
+            }}
+            activeOpacity={syncStatus === 'offline' ? 0.7 : 1}
+            accessibilityRole="button"
+            accessibilityLabel={
+              syncStatus === 'synced'
+                ? 'Synced'
+                : syncStatus === 'syncing'
+                ? 'Syncing'
+                : (syncStatus as string) === 'auth_required'
+                ? 'Re-authentication required'
+                : `Offline with ${pendingSyncCount} pending changes. Tap to retry sync`
+            }
+          >
+            <Text
+              style={[
+                styles.syncIndicatorText,
+                { color: theme.isDark ? '#30D158' : '#15803D' },
+                syncStatus === 'syncing' && {
+                  color: theme.isDark ? '#0A84FF' : '#0055D4',
+                },
+                (syncStatus === 'offline' || (syncStatus as string) === 'auth_required') && {
+                  color: theme.isDark ? '#FF9500' : '#B45309',
+                },
+              ]}
+            >
+              {syncStatus === 'synced'
+                ? '● Synced'
+                : syncStatus === 'syncing'
+                ? '◌ Syncing...'
+                : (syncStatus as string) === 'auth_required'
+                ? `🔒 Sign In (${pendingSyncCount})`
+                : `⚡ Offline (${pendingSyncCount})`}
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Sort Trigger Button */}
-        <TouchableOpacity
-          testID="sort-trigger-btn"
-          style={[
-            styles.sortBtn,
-            {
-              backgroundColor:
-                sortBy !== 'default'
-                  ? theme.isDark
-                    ? 'rgba(10, 132, 255, 0.2)'
-                    : 'rgba(0, 122, 255, 0.12)'
-                  : theme.isDark
-                  ? '#1C1C1E'
-                  : '#E5E5EA',
-              borderColor:
-                sortBy !== 'default' ? theme.colors.accent : theme.colors.border,
-            },
-          ]}
-          onPress={() => setShowSortModal(true)}
-          activeOpacity={0.7}
-        >
-          <Text
+        {/* Filter Selector Pills & Sort Button */}
+        <View style={styles.filterBar}>
+          <View style={styles.filterPillsGroup}>
+            {(['active', 'done', 'all'] as FilterType[]).map((f) => (
+              <TouchableOpacity
+                key={f}
+                testID={`filter-${f}`}
+                style={[
+                  styles.filterPill,
+                  {
+                    backgroundColor:
+                      filter === f
+                        ? theme.colors.accent
+                        : theme.isDark
+                        ? '#1C1C1E'
+                        : '#E5E5EA',
+                  },
+                ]}
+                onPress={() => {
+                  safeHaptics.selection();
+                  setFilter(filter === f && (f === 'done' || f === 'all') ? 'active' : f);
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityState={{ selected: filter === f }}
+              >
+                <Text
+                  style={[
+                    styles.filterPillText,
+                    {
+                      color: filter === f ? '#FFFFFF' : theme.colors.textSecondary,
+                    },
+                  ]}
+                >
+                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Sort Trigger Button */}
+          <TouchableOpacity
+            testID="sort-trigger-btn"
             style={[
-              styles.sortBtnText,
+              styles.sortBtn,
               {
-                color:
-                  sortBy !== 'default' ? theme.colors.accent : theme.colors.text,
+                backgroundColor:
+                  sortBy !== 'default'
+                    ? theme.isDark
+                      ? 'rgba(10, 132, 255, 0.2)'
+                      : 'rgba(0, 122, 255, 0.12)'
+                    : theme.isDark
+                    ? '#1C1C1E'
+                    : '#E5E5EA',
+                borderColor:
+                  sortBy !== 'default' ? theme.colors.accent : theme.colors.border,
+              },
+            ]}
+            onPress={() => {
+              closeAllModals();
+              setShowSortModal(true);
+            }}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Sort tasks"
+          >
+            <Text
+              style={[
+                styles.sortBtnText,
+                {
+                  color:
+                    sortBy !== 'default' ? theme.colors.accent : theme.colors.text,
+                },
+              ]}
+            >
+              ⇅ {sortBy === 'default' ? 'Sort' : getSortLabel(sortBy)}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Active Filter Label Chip */}
+        {selectedLabel &&
+          (() => {
+            const matchingDef = (storeLabels || []).find(
+              (l) => l.title.toLowerCase() === selectedLabel.toLowerCase()
+            );
+            const badgeStyle = getLabelBadgeStyles(
+              selectedLabel,
+              matchingDef?.hex_color,
+              theme.isDark
+            );
+            return (
+              <View style={styles.activeLabelRow}>
+                <View
+                  style={[
+                    styles.activeLabelChip,
+                    {
+                      backgroundColor: badgeStyle.backgroundColor,
+                      borderColor: badgeStyle.textColor,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.activeLabelText, { color: badgeStyle.textColor }]}>
+                    #{selectedLabel}
+                  </Text>
+                  <TouchableOpacity
+                    testID="clear-label-filter"
+                    style={styles.clearLabelBtn}
+                    onPress={() => setSelectedLabel(null)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Clear label filter ${selectedLabel}`}
+                  >
+                    <Text style={[styles.clearLabelText, { color: badgeStyle.textColor }]}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })()}
+
+        {/* No-List Warning Banner */}
+        {noProjectWarning && (
+          <View
+            testID="no-project-warning-banner"
+            style={[
+              styles.warningBanner,
+              {
+                backgroundColor: theme.isDark ? '#2C1B1B' : '#FEF2F2',
+                borderColor: '#FF453A',
+              },
+            ]}
+            accessibilityRole="alert"
+          >
+            <Text style={[styles.warningBannerText, { color: theme.isDark ? '#FF6961' : '#B91C1C' }]}>
+              {noProjectWarning}
+            </Text>
+            <TouchableOpacity
+              testID="create-first-list-btn"
+              style={styles.warningActionBtn}
+              onPress={() => {
+                setNoProjectWarning(null);
+                closeAllModals();
+                setEditorProjectId(null);
+                setShowEditor(true);
+              }}
+            >
+              <Text style={styles.warningActionBtnText}>+ Create List</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Reorder Notice (for virtual views) */}
+        {reorderNotice && (
+          <View
+            testID="reorder-notice-banner"
+            style={[
+              styles.reorderBanner,
+              {
+                backgroundColor: theme.isDark ? '#1C1C1E' : '#F2F2F7',
+                borderColor: theme.colors.border,
               },
             ]}
           >
-            ⇅ {sortBy === 'default' ? 'Sort' : SORT_LABELS[sortBy]}
-          </Text>
-        </TouchableOpacity>
-      </View>
+            <Text style={[styles.reorderBannerText, { color: theme.colors.textSecondary }]}>
+              {reorderNotice}
+            </Text>
+          </View>
+        )}
 
-      {/* Active Filter Label Chip */}
-      {selectedLabel && (() => {
-        const matchingDef = (storeLabels || []).find(
-          (l) => l.title.toLowerCase() === selectedLabel.toLowerCase()
-        );
-        const badgeStyle = getLabelBadgeStyles(selectedLabel, matchingDef?.hex_color);
-        return (
-          <View style={styles.activeLabelRow}>
-            <View
-              style={[
-                styles.activeLabelChip,
-                {
-                  backgroundColor: badgeStyle.backgroundColor,
-                  borderColor: badgeStyle.textColor,
-                },
-              ]}
-            >
-              <Text style={[styles.activeLabelText, { color: badgeStyle.textColor }]}>
-                #{selectedLabel}
-              </Text>
+        {/* Reorder Mode Banner */}
+        {isReordering && !isVirtualView && (
+          <View
+            style={[
+              styles.reorderBanner,
+              {
+                backgroundColor: theme.isDark ? '#1C1C1E' : '#F2F2F7',
+                borderColor: '#007AFF',
+              },
+            ]}
+          >
+            <Text style={[styles.reorderBannerText, { color: theme.colors.text }]}>
+              {selectedLabel
+                ? `↕ Drag items by ☰ to reorder (#${selectedLabel} filter active)`
+                : '↕ Drag items by ☰ to reorder'}
+            </Text>
+            <View style={styles.reorderBannerActions}>
+              {selectedLabel && (
+                <TouchableOpacity
+                  testID="reorder-clear-filter-btn"
+                  style={[styles.reorderSecondaryBtn, { borderColor: theme.colors.border }]}
+                  onPress={() => setSelectedLabel(null)}
+                >
+                  <Text style={[styles.reorderSecondaryBtnText, { color: theme.colors.accent }]}>
+                    Show All
+                  </Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
-                testID="clear-label-filter"
-                style={styles.clearLabelBtn}
-                onPress={() => setSelectedLabel(null)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                testID="reorder-done-btn"
+                style={styles.reorderDoneBtn}
+                onPress={() => {
+                  safeHaptics.selection();
+                  setIsReordering(false);
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
               >
-                <Text style={[styles.clearLabelText, { color: badgeStyle.textColor }]}>✕</Text>
+                <Text style={styles.reorderDoneBtnText}>Done</Text>
               </TouchableOpacity>
             </View>
           </View>
-        );
-      })()}
+        )}
 
-      {/* Reorder Mode Banner */}
-      {/* Reorder Mode Banner */}
-      {isReordering && (
+        {/* Tasks List */}
+        <View style={styles.listContainer}>
+          <DraggableFlatList
+            data={visibleTasks}
+            keyExtractor={(item) => item.id.toString()}
+            containerStyle={styles.draggableContainer}
+            style={styles.taskList}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            onDragBegin={() => {
+              safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+            }}
+            onDragEnd={({ data }) => {
+              if (isVirtualView) return;
+              safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+              applySafeProjectReorder(
+                activeProject.id,
+                data.map((t) => t.id)
+              );
+              if (sortBy !== 'manual') {
+                setSortBy('manual');
+              }
+            }}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor="#007AFF"
+              />
+            }
+            renderItem={({ item, getIndex, drag, isActive }: RenderItemParams<Task>) => {
+              const index = getIndex ? getIndex() : 0;
+              const isAiGrouped = sortBy === 'aiSmart' || sortBy === 'department';
+              const currentCategory = isAiGrouped
+                ? classifyTaskWithAI(item, activeProject?.title)
+                : null;
+              const prevCategory =
+                index !== undefined && index > 0 && isAiGrouped && visibleTasks[index - 1]
+                  ? classifyTaskWithAI(visibleTasks[index - 1], activeProject?.title)
+                  : null;
+              const showCategoryHeader = currentCategory && currentCategory !== prevCategory;
+
+              const headerScale = (taskItemScale || 100) / 100;
+
+              return (
+                <View>
+                  {showCategoryHeader ? (
+                    <View
+                      style={[
+                        styles.categorySectionHeader,
+                        largeTaskItems && styles.categorySectionHeaderLarge,
+                        headerScale > 1 && {
+                          paddingHorizontal: Math.round(12 * (1 + (headerScale - 1) * 0.7)),
+                          paddingTop: Math.round(14 * headerScale),
+                          paddingBottom: Math.round(4 * headerScale),
+                        },
+                      ]}
+                      testID={`category-header-${currentCategory}`}
+                    >
+                      <Text
+                        style={[
+                          styles.categorySectionText,
+                          largeTaskItems && styles.categorySectionTextLarge,
+                          headerScale > 1 && {
+                            fontSize: Math.round(11 * headerScale),
+                            letterSpacing: headerScale > 1.2 ? 1 : 0.8,
+                          },
+                          { color: theme.colors.textSecondary },
+                        ]}
+                      >
+                        {currentCategory.toUpperCase()}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <ScaleDecorator activeScale={1.03}>
+                    <SwipeableTaskItem
+                      task={item}
+                      scale={taskItemScale}
+                      textScale={taskItemTextScale}
+                      isLarge={largeTaskItems}
+                      labelDefinitions={storeLabels}
+                      onToggle={toggleTask}
+                      onMove={handleOpenMoveModal}
+                      onDelete={handleStageDeleteTask}
+                      onPress={handleOpenTaskDetails}
+                      onLongPress={() => {
+                        safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                        if (isVirtualView) {
+                          showTemporaryNotice('Open a specific list to reorder tasks manually.');
+                          return;
+                        }
+                        const hasPositions = visibleTasks.some(
+                          (t) => t.position !== undefined && t.position > 0
+                        );
+                        if (!hasPositions && visibleTasks.length > 0) {
+                          applySafeProjectReorder(
+                            activeProject.id,
+                            visibleTasks.map((t) => t.id)
+                          );
+                        }
+                        setIsReordering(true);
+                        if (sortBy !== 'manual') {
+                          setSortBy('manual');
+                        }
+                        drag();
+                      }}
+                      drag={isVirtualView ? undefined : drag}
+                      isDragging={isActive}
+                      isReordering={isReordering && !isVirtualView}
+                      onMoveUp={() => handleMoveTaskPosition(item.id, 'up')}
+                      onMoveDown={() => handleMoveTaskPosition(item.id, 'down')}
+                      canMoveUp={index !== undefined && index > 0}
+                      canMoveDown={index !== undefined && index < visibleTasks.length - 1}
+                      onSelectLabel={handleSelectLabelFilter}
+                      onEditLabels={handleOpenEditLabels}
+                    />
+                  </ScaleDecorator>
+                </View>
+              );
+            }}
+            contentContainerStyle={
+              visibleTasks.length === 0 ? styles.emptyContainer : styles.listContent
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyView}>
+                <Text style={styles.emptyEmoji}>✨</Text>
+                <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
+                  {filter === 'done' ? 'No completed tasks yet' : 'All clear!'}
+                </Text>
+                <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
+                  {filter === 'active'
+                    ? 'Enjoy your free time or add a new task below.'
+                    : 'Tap above to quickly capture what is on your mind.'}
+                </Text>
+              </View>
+            }
+          />
+        </View>
+
+        {/* Undo Task Delete Toast Banner */}
+        {livePendingDeleteTask && (
+          <View
+            testID="undo-delete-banner"
+            style={[
+              styles.undoBanner,
+              {
+                backgroundColor: theme.isDark ? '#2C2C2E' : '#1C1C1E',
+                borderColor: theme.isDark ? '#3A3A3C' : '#2C2C2E',
+              },
+            ]}
+            accessibilityRole="alert"
+          >
+            <Text style={styles.undoBannerText} numberOfLines={1}>
+              Deleted "{livePendingDeleteTask.title}"
+            </Text>
+            <View style={styles.undoBannerActions}>
+              <TouchableOpacity
+                testID="undo-delete-btn"
+                style={styles.undoBtn}
+                onPress={handleUndoDelete}
+                accessibilityRole="button"
+                accessibilityLabel="Undo delete task"
+              >
+                <Text style={styles.undoBtnText}>Undo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="undo-commit-btn"
+                style={styles.undoDismissBtn}
+                onPress={flushPendingDelete}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss undo notification"
+              >
+                <Text style={styles.undoDismissText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Permanent Bottom Dock: Quick Add Bar + Detailed Add (+) Button */}
         <View
+          testID="bottom-dock-container"
           style={[
-            styles.reorderBanner,
+            styles.bottomDock,
             {
-              backgroundColor: theme.isDark ? '#1C1C1E' : '#F2F2F7',
-              borderColor: '#007AFF',
+              backgroundColor: theme.colors.cardBackground,
+              borderTopColor: theme.colors.cardBorder,
             },
           ]}
         >
-          <Text style={[styles.reorderBannerText, { color: theme.colors.text }]}>
-            ↕ Drag items by ☰ to reorder
-          </Text>
-          <TouchableOpacity
-            testID="reorder-done-btn"
-            style={styles.reorderDoneBtn}
-            onPress={() => {
-              safeHaptics.selection();
-              setIsReordering(false);
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.reorderDoneBtnText}>Done</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Tasks List */}
-      <View style={styles.listContainer}>
-        <DraggableFlatList
-          data={sortedTasks}
-          keyExtractor={(item) => item.id.toString()}
-          containerStyle={styles.draggableContainer}
-          style={styles.taskList}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          onDragBegin={() => {
-          safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-        }}
-        onDragEnd={({ data }) => {
-          safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
-          const projectId = activeProject.id;
-          reorderTasks(projectId, data.map((t) => t.id));
-          if (sortBy !== 'manual') {
-            setSortBy('manual');
-          }
-        }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor="#007AFF"
-          />
-        }
-        renderItem={({ item, getIndex, drag, isActive }: RenderItemParams<Task>) => {
-          const index = getIndex ? getIndex() : 0;
-          const isAiGrouped = sortBy === 'aiSmart' || sortBy === 'department';
-          const currentCategory = isAiGrouped ? classifyTaskWithAI(item, activeProject?.title) : null;
-          const prevCategory =
-            index !== undefined && index > 0 && isAiGrouped
-              ? classifyTaskWithAI(sortedTasks[index - 1], activeProject?.title)
-              : null;
-          const showCategoryHeader = currentCategory && currentCategory !== prevCategory;
-
-          const headerScale = (taskItemScale || 100) / 100;
-
-          return (
-            <View>
-              {showCategoryHeader ? (
-                <View
-                  style={[
-                    styles.categorySectionHeader,
-                    largeTaskItems && styles.categorySectionHeaderLarge,
-                    headerScale > 1 && {
-                      paddingHorizontal: Math.round(12 * (1 + (headerScale - 1) * 0.7)),
-                      paddingTop: Math.round(14 * headerScale),
-                      paddingBottom: Math.round(4 * headerScale),
-                    },
-                  ]}
-                  testID={`category-header-${currentCategory}`}
-                >
-                  <Text
-                    style={[
-                      styles.categorySectionText,
-                      largeTaskItems && styles.categorySectionTextLarge,
-                      headerScale > 1 && {
-                        fontSize: Math.round(11 * headerScale),
-                        letterSpacing: headerScale > 1.2 ? 1 : 0.8,
-                      },
-                      { color: theme.colors.textSecondary },
-                    ]}
-                  >
-                    {currentCategory.toUpperCase()}
-                  </Text>
-                </View>
-              ) : null}
-              <ScaleDecorator activeScale={1.03}>
-                <SwipeableTaskItem
-                  task={item}
-                  scale={taskItemScale}
-                  textScale={taskItemTextScale}
-                  isLarge={largeTaskItems}
-                  labelDefinitions={storeLabels}
-                  onToggle={toggleTask}
-                  onMove={(taskId) => setMovingTaskId(taskId)}
-                  onDelete={deleteTask}
-                  onPress={(task) => {
-                    if (isReordering) return;
-                    setSelectedTask(task);
-                    onSelectTask?.(task);
-                  }}
-                  onLongPress={() => {
-                    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-                    const hasPositions = sortedTasks.some((t) => t.position !== undefined && t.position > 0);
-                    if (!hasPositions && sortedTasks.length > 0) {
-                      reorderTasks(activeProject.id, sortedTasks.map((t) => t.id));
-                    }
-                    setIsReordering(true);
-                    if (sortBy !== 'manual') {
-                      setSortBy('manual');
-                    }
-                    drag();
-                  }}
-                  drag={drag}
-                  isDragging={isActive}
-                  isReordering={isReordering}
-                  onMoveUp={() => handleMoveTaskPosition(item.id, 'up')}
-                  onMoveDown={() => handleMoveTaskPosition(item.id, 'down')}
-                  canMoveUp={index !== undefined && index > 0}
-                  canMoveDown={index !== undefined && index < sortedTasks.length - 1}
-                  onSelectLabel={(label) => setSelectedLabel(label)}
-                  onEditLabels={(task) => setEditingLabelsTask(task)}
-                />
-              </ScaleDecorator>
-            </View>
-          );
-        }}
-        contentContainerStyle={
-          sortedTasks.length === 0 ? styles.emptyContainer : styles.listContent
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyView}>
-            <Text style={styles.emptyEmoji}>✨</Text>
-            <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
-              {filter === 'done' ? 'No completed tasks yet' : 'All clear!'}
-            </Text>
-            <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
-              {filter === 'active'
-                ? 'Enjoy your free time or add a new task below.'
-                : 'Tap above to quickly capture what is on your mind.'}
-            </Text>
-          </View>
-        }
-      />
-      </View>
-
-      {/* Permanent Bottom Dock: Quick Add Bar + Detailed Add (+) Button */}
-      <View
-        testID="bottom-dock-container"
-        style={[
-          styles.bottomDock,
-          {
-            backgroundColor: theme.colors.cardBackground,
-            borderTopColor: theme.colors.cardBorder,
-          },
-        ]}
-      >
-        <QuickAddBar
-          activeProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
-          availableProjects={safeProjects}
-          availableUsers={cachedUsers}
-          doneTasks={doneTasks}
-          historyTasks={projectTasks}
-          availableLabels={availableLabels}
-          reenableStaples={reenableStaples}
-          onAddTask={(taskInput) => {
-            if (isMyTasksView && currentUser) {
-              const hasAssignees = taskInput.assignees && taskInput.assignees.length > 0;
+          <QuickAddBar
+            activeProjectId={defaultTargetProjectId}
+            availableProjects={safeProjects}
+            availableUsers={cachedUsers}
+            doneTasks={doneTasks}
+            historyTasks={projectTasks}
+            availableLabels={availableLabels}
+            reenableStaples={reenableStaples}
+            onAddTask={(taskInput) => {
+              const targetPid =
+                taskInput.project_id && taskInput.project_id > 0
+                  ? taskInput.project_id
+                  : defaultTargetProjectId;
+              if (!targetPid || targetPid <= 0) {
+                safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
+                setNoProjectWarning('Create a list first before adding tasks.');
+                return;
+              }
+              setNoProjectWarning(null);
+              const assignees =
+                isMyTasksView &&
+                currentUser &&
+                (!taskInput.assignees || taskInput.assignees.length === 0)
+                  ? [currentUser]
+                  : taskInput.assignees;
               return addTask({
                 ...taskInput,
-                assignees: hasAssignees ? taskInput.assignees : [currentUser],
+                project_id: targetPid,
+                assignees,
               });
-            }
-            return addTask(taskInput);
-          }}
-          onReenableTask={(taskId) => reenableTask(taskId)}
-          placeholder={`Add a task to ${activeProject.title}...`}
-          onDetailedAdd={() => {
-            safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-            setShowCreateTaskModal(true);
-          }}
-        />
-      </View>
+            }}
+            onReenableTask={(taskId) => reenableTask(taskId)}
+            placeholder={`Add a task to ${activeProject.title}...`}
+            onDetailedAdd={() => {
+              safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+              if (defaultTargetProjectId <= 0 && safeProjects.length === 0) {
+                setNoProjectWarning('Create a list first before adding tasks.');
+                closeAllModals();
+                setEditorProjectId(null);
+                setShowEditor(true);
+                return;
+              }
+              setNoProjectWarning(null);
+              closeAllModals();
+              setShowCreateTaskModal(true);
+            }}
+          />
+        </View>
       </KeyboardAvoidingView>
 
       {/* Move Task Modal */}
       <MoveListModal
-        visible={movingTaskId !== null}
-        currentProjectId={activeProject?.id}
+        visible={liveMovingTask !== null}
+        currentProjectId={liveMovingTask?.project_id ?? activeProject?.id}
         projects={safeProjects}
         onSelectProject={(targetProjectId) => {
-          if (movingTaskId !== null) {
-            moveTask(movingTaskId, targetProjectId);
-            setMovingTaskId(null);
+          if (liveMovingTask !== null) {
+            moveTask(liveMovingTask.id, targetProjectId);
+            setMovingTaskRef(null);
           }
         }}
-        onClose={() => setMovingTaskId(null)}
+        onClose={() => setMovingTaskRef(null)}
       />
 
       {/* Quick Label / Store Editor Modal */}
       <QuickLabelModal
-        visible={editingLabelsTask !== null}
-        task={editingLabelsTask}
+        visible={liveEditingLabelsTask !== null}
+        task={liveEditingLabelsTask}
         availableLabels={availableLabels}
         labelDefinitions={storeLabels}
         onSave={(taskId, labels) => {
           updateTaskLabels(taskId, labels);
-          setEditingLabelsTask(null);
+          setEditingLabelsRef(null);
         }}
-        onClose={() => setEditingLabelsTask(null)}
-        onOpenManageLabels={() => setShowLabelManagementModal(true)}
+        onClose={() => setEditingLabelsRef(null)}
+        onOpenManageLabels={() => {
+          closeAllModals();
+          setShowLabelManagementModal(true);
+        }}
       />
 
       {/* Rich Task Detail / Editor Modal */}
       <TaskDetailModal
-        visible={selectedTask !== null || showCreateTaskModal}
-        task={selectedTask}
+        visible={liveSelectedTask !== null || showCreateTaskModal}
+        task={liveSelectedTask}
         availableLabels={availableLabels}
         labelDefinitions={storeLabels}
         availableUsers={cachedUsers}
         availableProjects={safeProjects}
-        defaultProjectId={activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)}
+        defaultProjectId={defaultTargetProjectId}
         onClose={() => {
-          setSelectedTask(null);
+          setSelectedTaskRef(null);
           setShowCreateTaskModal(false);
         }}
         onSave={(taskId, updates) => {
@@ -687,23 +1234,47 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           deleteTask(taskId);
         }}
         onCreateTask={(newTaskData) => {
+          const resolvedProjectId =
+            newTaskData.project_id && newTaskData.project_id > 0
+              ? newTaskData.project_id
+              : defaultTargetProjectId;
+
+          if (!resolvedProjectId || resolvedProjectId <= 0) {
+            setNoProjectWarning('Create a list first before adding tasks.');
+            return;
+          }
+
+          setNoProjectWarning(null);
           const assignees =
-            isMyTasksView && currentUser && (!newTaskData.assignees || newTaskData.assignees.length === 0)
+            isMyTasksView &&
+            currentUser &&
+            (!newTaskData.assignees || newTaskData.assignees.length === 0)
               ? [currentUser]
               : newTaskData.assignees;
-          addTask({
+
+          // Forward ALL fields (including hex_color & done_at) directly to addTask (which schedules notifications once)
+          const resolvedHexColor = newTaskData.hex_color ?? newTaskData.color;
+          const fullCreateInput: CreateTaskInput = {
             title: newTaskData.title || '',
             description: newTaskData.description,
-            due_date: newTaskData.due_date,
+            done: newTaskData.done,
+            done_at: newTaskData.done_at,
             priority: newTaskData.priority,
-            project_id:
-              newTaskData.project_id ||
-              (activeProject.id > 0 ? activeProject.id : (safeProjects[0]?.id || 1)),
+            percent_done: newTaskData.percent_done,
+            color: newTaskData.color ?? resolvedHexColor,
+            hex_color: resolvedHexColor,
+            repeat_after: newTaskData.repeat_after,
+            repeat_mode: newTaskData.repeat_mode,
+            due_date: newTaskData.due_date,
+            start_date: newTaskData.start_date,
+            end_date: newTaskData.end_date,
+            reminders: newTaskData.reminders,
+            labels: newTaskData.labels,
             assignees,
-          });
-        }}
-        onMoveTask={(taskId, newProjectId) => {
-          moveTask(taskId, newProjectId);
+            project_id: resolvedProjectId,
+          };
+
+          addTask(fullCreateInput);
         }}
       />
 
@@ -739,21 +1310,25 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               <TouchableOpacity
                 onPress={() => setShowSortModal(false)}
                 style={styles.sortCloseBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Close sort menu"
               >
                 <Text style={[styles.sortCloseText, { color: theme.colors.textSecondary }]}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            {([
-              'default',
-              'manual',
-              ...(hasAICore ? (['aiSmart'] as SortOption[]) : []),
-              ...(isShopping && !hasAICore ? (['department'] as SortOption[]) : []),
-              'name',
-              'label',
-              'dueDate',
-              'priority',
-            ] as SortOption[]).map((option) => {
+            {(
+              [
+                'default',
+                'manual',
+                ...(hasAICore ? (['aiSmart'] as SortOption[]) : []),
+                ...(isShopping && !hasAICore ? (['department'] as SortOption[]) : []),
+                'name',
+                'label',
+                'dueDate',
+                'priority',
+              ] as SortOption[]
+            ).map((option) => {
               const isSelected = sortBy === option;
               return (
                 <TouchableOpacity
@@ -767,16 +1342,23 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   ]}
                   onPress={() => {
                     safeHaptics.selection();
-                    if (option === 'manual') {
-                      const hasPositions = sortedTasks.some((t) => t.position !== undefined && t.position > 0);
-                      if (!hasPositions && sortedTasks.length > 0) {
-                        reorderTasks(activeProject.id, sortedTasks.map((t) => t.id));
+                    if (option === 'manual' && !isVirtualView) {
+                      const hasPositions = visibleTasks.some(
+                        (t) => t.position !== undefined && t.position > 0
+                      );
+                      if (!hasPositions && visibleTasks.length > 0) {
+                        applySafeProjectReorder(
+                          activeProject.id,
+                          visibleTasks.map((t) => t.id)
+                        );
                       }
                     }
                     setSortBy(option);
                     setShowSortModal(false);
                   }}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
                 >
                   <Text
                     style={[
@@ -789,35 +1371,48 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                       },
                     ]}
                   >
-                    {SORT_LABELS[option]}
+                    {getSortLabel(option)}
                   </Text>
                   {isSelected ? <Text style={styles.sortOptionCheckmark}>✓</Text> : null}
                 </TouchableOpacity>
               );
             })}
 
-            <TouchableOpacity
-              testID="sort-option-reorder"
-              style={[
-                styles.sortOptionItem,
-                { borderTopWidth: 1, borderTopColor: theme.colors.border, marginTop: 8 },
-              ]}
-              onPress={() => {
-                safeHaptics.selection();
-                const hasPositions = sortedTasks.some((t) => t.position !== undefined && t.position > 0);
-                if (!hasPositions && sortedTasks.length > 0) {
-                  reorderTasks(activeProject.id, sortedTasks.map((t) => t.id));
-                }
-                setSortBy('manual');
-                setIsReordering(true);
-                setShowSortModal(false);
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.sortOptionText, { color: theme.colors.accent, fontWeight: '700' }]}>
-                ↕ Reorder Tasks Manually
-              </Text>
-            </TouchableOpacity>
+            {!isVirtualView && (
+              <TouchableOpacity
+                testID="sort-option-reorder"
+                style={[
+                  styles.sortOptionItem,
+                  { borderTopWidth: 1, borderTopColor: theme.colors.border, marginTop: 8 },
+                ]}
+                onPress={() => {
+                  safeHaptics.selection();
+                  const hasPositions = visibleTasks.some(
+                    (t) => t.position !== undefined && t.position > 0
+                  );
+                  if (!hasPositions && visibleTasks.length > 0) {
+                    applySafeProjectReorder(
+                      activeProject.id,
+                      visibleTasks.map((t) => t.id)
+                    );
+                  }
+                  setSortBy('manual');
+                  setIsReordering(true);
+                  setShowSortModal(false);
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+              >
+                <Text
+                  style={[
+                    styles.sortOptionText,
+                    { color: theme.colors.accent, fontWeight: '700' },
+                  ]}
+                >
+                  ↕ Reorder Tasks Manually
+                </Text>
+              </TouchableOpacity>
+            )}
           </SafeAreaView>
         </View>
       </Modal>
@@ -826,10 +1421,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       <ProjectEditorModal
         visible={showEditor}
         project={editorProject}
-        allProjects={projects}
+        allProjects={allPositiveProjects}
         onClose={() => {
           setShowEditor(false);
-          setEditorProject(null);
+          setEditorProjectId(null);
         }}
       />
 
@@ -837,7 +1432,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       <ProjectSharingModal
         visible={Boolean(sharingProject)}
         project={sharingProject}
-        onClose={() => setSharingProject(null)}
+        onClose={() => setSharingProjectId(null)}
       />
 
       {/* Project Options Action Sheet */}
@@ -846,9 +1441,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           visible={Boolean(actionSheetProject)}
           transparent
           animationType="fade"
-          onRequestClose={() => setActionSheetProject(null)}
+          onRequestClose={() => setActionSheetProjectId(null)}
         >
-          <TouchableWithoutFeedback onPress={() => setActionSheetProject(null)}>
+          <TouchableWithoutFeedback onPress={() => setActionSheetProjectId(null)}>
             <View style={styles.actionSheetBackdrop}>
               <TouchableWithoutFeedback>
                 <View
@@ -868,9 +1463,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     testID="project-option-edit"
                     style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
                     onPress={() => {
-                      const p = actionSheetProject;
-                      setActionSheetProject(null);
-                      setEditorProject(p);
+                      const pid = actionSheetProject.id;
+                      closeAllModals();
+                      setEditorProjectId(pid);
                       setShowEditor(true);
                     }}
                   >
@@ -883,9 +1478,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     testID="project-option-share"
                     style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
                     onPress={() => {
-                      const p = actionSheetProject;
-                      setActionSheetProject(null);
-                      setSharingProject(p);
+                      const pid = actionSheetProject.id;
+                      closeAllModals();
+                      setSharingProjectId(pid);
                     }}
                   >
                     <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
@@ -897,8 +1492,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     testID="project-option-favorite"
                     style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
                     onPress={() => {
-                      toggleProjectFavorite(actionSheetProject.id);
-                      setActionSheetProject(null);
+                      toggleProjectFavorite(actionSheetProject.id).catch(() => {});
+                      setActionSheetProjectId(null);
                     }}
                   >
                     <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
@@ -908,7 +1503,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
 
                   <TouchableOpacity
                     style={styles.actionSheetCancel}
-                    onPress={() => setActionSheetProject(null)}
+                    onPress={() => setActionSheetProjectId(null)}
                   >
                     <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
                       Cancel
@@ -927,7 +1522,6 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0D0D0E',
   },
   keyboardContainer: {
     flex: 1,
@@ -938,7 +1532,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#1C1C1E',
   },
   drawerBtn: {
     padding: 6,
@@ -946,7 +1539,6 @@ const styles = StyleSheet.create({
   },
   drawerIcon: {
     fontSize: 20,
-    color: '#FFFFFF',
   },
   projectInfo: {
     flex: 1,
@@ -964,11 +1556,9 @@ const styles = StyleSheet.create({
   projectTitle: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
   taskCountSubtitle: {
     fontSize: 11,
-    color: '#8E8E93',
     marginTop: 1,
   },
   syncIndicatorPill: {
@@ -977,26 +1567,19 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: 'rgba(48, 209, 88, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(48, 209, 88, 0.3)',
+    borderColor: 'rgba(48, 209, 88, 0.35)',
   },
   syncIndicatorSyncing: {
     backgroundColor: 'rgba(10, 132, 255, 0.15)',
-    borderColor: 'rgba(10, 132, 255, 0.3)',
+    borderColor: 'rgba(10, 132, 255, 0.35)',
   },
   syncIndicatorOffline: {
-    backgroundColor: 'rgba(255, 149, 0, 0.2)',
-    borderColor: '#FF9500',
+    backgroundColor: 'rgba(255, 149, 0, 0.18)',
+    borderColor: 'rgba(255, 149, 0, 0.6)',
   },
   syncIndicatorText: {
     fontSize: 10.5,
-    color: '#30D158',
     fontWeight: '700',
-  },
-  syncIndicatorSyncingText: {
-    color: '#0A84FF',
-  },
-  syncIndicatorOfflineText: {
-    color: '#FF9500',
   },
   filterBar: {
     flexDirection: 'row',
@@ -1013,34 +1596,19 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 12,
-    backgroundColor: '#1C1C1E',
-  },
-  filterPillActive: {
-    backgroundColor: '#007AFF',
   },
   filterPillText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#8E8E93',
-  },
-  filterPillTextActive: {
-    color: '#FFFFFF',
   },
   sortBtn: {
     paddingVertical: 4,
     paddingHorizontal: 9,
     borderRadius: 12,
-    backgroundColor: '#1C1C1E',
     borderWidth: 1,
-    borderColor: '#2C2C2E',
-  },
-  sortBtnActive: {
-    backgroundColor: 'rgba(10, 132, 255, 0.2)',
-    borderColor: '#0A84FF',
   },
   sortBtnText: {
     fontSize: 11,
-    color: '#E5E5EA',
     fontWeight: '600',
   },
   activeLabelRow: {
@@ -1051,16 +1619,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#0A84FF20',
     borderWidth: 1,
-    borderColor: '#0A84FF',
     paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 12,
     gap: 4,
   },
   activeLabelText: {
-    color: '#0A84FF',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1068,9 +1633,36 @@ const styles = StyleSheet.create({
     padding: 2,
   },
   clearLabelText: {
-    color: '#0A84FF',
     fontSize: 11,
     fontWeight: '800',
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginHorizontal: 12,
+    marginBottom: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 8,
+  },
+  warningBannerText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
+  warningActionBtn: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  warningActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   listContainer: {
     flex: 1,
@@ -1102,14 +1694,54 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#FFFFFF',
     marginBottom: 6,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: '#8E8E93',
     textAlign: 'center',
     lineHeight: 20,
+  },
+  undoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 12,
+    marginBottom: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 10,
+  },
+  undoBannerText: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  undoBannerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  undoBtn: {
+    backgroundColor: '#0A84FF',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  undoBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  undoDismissBtn: {
+    padding: 4,
+  },
+  undoDismissText: {
+    color: '#8E8E93',
+    fontSize: 14,
+    fontWeight: '700',
   },
   modalOverlay: {
     flex: 1,
@@ -1120,14 +1752,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sortModalCard: {
-    backgroundColor: '#1C1C1E',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,
     paddingTop: 18,
     paddingBottom: 28,
     borderWidth: 1,
-    borderColor: '#2C2C2E',
   },
   sortModalHeader: {
     flexDirection: 'row',
@@ -1138,14 +1768,12 @@ const styles = StyleSheet.create({
   sortModalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
   sortCloseBtn: {
     padding: 6,
   },
   sortCloseText: {
     fontSize: 16,
-    color: '#8E8E93',
     fontWeight: '600',
   },
   sortOptionItem: {
@@ -1157,17 +1785,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 4,
   },
-  sortOptionItemSelected: {
-    backgroundColor: '#2C2C2E',
-  },
   sortOptionText: {
     fontSize: 15,
-    color: '#8E8E93',
     fontWeight: '500',
-  },
-  sortOptionTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
   sortOptionCheckmark: {
     color: '#0A84FF',
@@ -1196,9 +1816,26 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     borderRadius: 12,
     borderWidth: 1.5,
+    gap: 8,
   },
   reorderBannerText: {
+    flex: 1,
     fontSize: 13,
+    fontWeight: '700',
+  },
+  reorderBannerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  reorderSecondaryBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  reorderSecondaryBtnText: {
+    fontSize: 12,
     fontWeight: '700',
   },
   reorderDoneBtn: {

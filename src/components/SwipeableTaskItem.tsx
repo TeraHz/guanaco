@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,12 @@ import {
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
-import { getLabelBadgeStyles } from '../utils/colors';
+import { getLabelBadgeStyles, normalizeHexColor } from '../utils/colors';
+import {
+  normalizeVikunjaDate,
+  isOverdue as checkIsOverdue,
+  formatDateDisplay,
+} from '../utils/dates';
 import { useAppTheme } from '../utils/theme';
 import { useTaskStore } from '../store/taskStore';
 import { Label, Task } from '../types/vikunja';
@@ -46,7 +51,15 @@ const PRIORITY_COLORS: Record<number, string> = {
   5: '#FF2D55', // Critical
 };
 
-export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
+function normalizePercentDoneDisplay(raw?: number | null): number {
+  if (raw === undefined || raw === null || !Number.isFinite(raw) || raw <= 0) return 0;
+  if (raw <= 1) {
+    return Math.round(raw * 100);
+  }
+  return Math.min(100, Math.round(raw));
+}
+
+const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
   task,
   onToggle,
   onMove,
@@ -166,10 +179,12 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
       addLabelLinkText: {
         fontSize: Math.round(10 * textScale),
       },
-      leftSwipeAction: {
-        borderRadius: Math.round(7 * (1 + (boxScale - 1) * 0.7)),
+      leftSwipeTray: {
         marginVertical: Math.round(1.5 * boxScale),
-        paddingLeft: Math.round(18 * boxScale),
+      },
+      leftSwipeBtn: {
+        borderRadius: Math.round(7 * (1 + (boxScale - 1) * 0.7)),
+        paddingHorizontal: Math.round(14 * boxScale),
       },
       rightSwipeAction: {
         borderRadius: Math.round(7 * (1 + (boxScale - 1) * 0.7)),
@@ -202,10 +217,23 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
 
   const swipeableRef = React.useRef<Swipeable>(null);
   const isSwipingActionRef = React.useRef(false);
-  const priorityColor =
-    task.color && task.color !== ''
-      ? `#${task.color.replace(/^#/, '')}`
-      : PRIORITY_COLORS[task.priority] || PRIORITY_COLORS[0];
+  const swipeResetTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (swipeResetTimerRef.current) {
+        clearTimeout(swipeResetTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Read inbound Vikunja `hex_color` (as well as `color`) while ignoring unset "000000" black defaults
+  const customTaskColor = normalizeHexColor(task.hex_color || task.color, true) ?? null;
+  const mappedPriorityColor = Object.prototype.hasOwnProperty.call(PRIORITY_COLORS, task.priority)
+    ? PRIORITY_COLORS[task.priority]
+    : PRIORITY_COLORS[0];
+  const priorityColor = customTaskColor || mappedPriorityColor;
+  const showPriorityStrip = task.priority > 0 || Boolean(customTaskColor);
 
   const handleToggle = () => {
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
@@ -225,84 +253,129 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     onDelete(task.id);
   };
 
-  const triggerSwipeAction = (direction: 'left' | 'right') => {
+  const handleSwipeableOpen = (direction: 'left' | 'right') => {
+    if (direction === 'left') {
+      // Swiped right -> reveals Move & Delete buttons safely without instant accidental deletion!
+      safeHaptics.selection();
+      return;
+    }
+
+    // direction === 'right': Swiped left -> Toggle Done & close cleanly
     if (isSwipingActionRef.current) return;
     isSwipingActionRef.current = true;
-    swipeableRef.current?.close?.();
+    handleToggle();
 
-    if (direction === 'left') {
-      // Swiped right -> Delete
-      handleDelete();
-    } else if (direction === 'right') {
-      // Swiped left -> Done
-      handleToggle();
+    if (swipeResetTimerRef.current) {
+      clearTimeout(swipeResetTimerRef.current);
     }
-
-    setTimeout(() => {
+    swipeResetTimerRef.current = setTimeout(() => {
       isSwipingActionRef.current = false;
-      swipeableRef.current?.close?.();
-    }, 150);
+      swipeResetTimerRef.current = null;
+    }, 350);
   };
 
-  // Date formatting & Overdue detection
-  const isDueDateValid =
-    task.due_date &&
-    task.due_date !== '0001-01-01T00:00:00Z' &&
-    !isNaN(new Date(task.due_date).getTime());
+  // Consistent Vikunja zero-date normalization & overdue calculation
+  const normalizedDueDate = normalizeVikunjaDate(task.due_date);
+  const formattedDueDate = normalizedDueDate
+    ? formatDateDisplay(normalizedDueDate, { includeTime: false })
+    : null;
+  const isOverdue = Boolean(normalizedDueDate && !task.done && checkIsOverdue(normalizedDueDate));
 
-  let formattedDueDate: string | null = null;
-  let isOverdue = false;
+  const pctDisplay = normalizePercentDoneDisplay(task.percent_done);
 
-  if (isDueDateValid) {
-    const d = new Date(task.due_date!);
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const targetDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-
-    const diffDays = Math.round(
-      (targetDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
-    if (diffDays === 0) {
-      formattedDueDate = 'Today';
-    } else if (diffDays === 1) {
-      formattedDueDate = 'Tomorrow';
-    } else if (diffDays === -1) {
-      formattedDueDate = 'Yesterday';
-    } else {
-      formattedDueDate = d.toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-      });
-    }
-
-    if (targetDay.getTime() < today.getTime() && !task.done) {
-      isOverdue = true;
-    }
-  }
-
-  // Slide RIGHT reveals LEFT action: Delete (Red with Trash) - snappy response
+  // Slide RIGHT reveals LEFT actions: Move & Delete (prevents accidental instant swipe deletion & exposes Move on mobile!)
   const renderLeftActions = (
     _progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>
   ) => {
     const actionScale = dragX.interpolate({
-      inputRange: [0, 36],
-      outputRange: [0.6, 1],
+      inputRange: [0, 60],
+      outputRange: [0.8, 1],
       extrapolate: 'clamp',
     });
 
     return (
-      <View style={[styles.leftSwipeAction, isLarge && styles.leftSwipeActionLarge, dynamicStyles?.leftSwipeAction]}>
-        <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
-          <Text style={[styles.swipeActionIcon, isLarge && styles.swipeActionIconLarge, dynamicStyles?.swipeActionIcon]}>🗑️</Text>
-          <Text style={[styles.swipeActionText, isLarge && styles.swipeActionTextLarge, dynamicStyles?.swipeActionText]}>Delete</Text>
-        </Animated.View>
+      <View
+        style={[
+          styles.leftSwipeTray,
+          isLarge && styles.leftSwipeTrayLarge,
+          dynamicStyles?.leftSwipeTray,
+        ]}
+      >
+        <TouchableOpacity
+          testID={`swipe-move-btn-${task.id}`}
+          style={[
+            styles.leftSwipeBtn,
+            styles.leftSwipeMoveBtn,
+            isLarge && styles.leftSwipeBtnLarge,
+            dynamicStyles?.leftSwipeBtn,
+          ]}
+          onPress={handleMove}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={`Move ${task.title} to another list`}
+        >
+          <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
+            <Text
+              style={[
+                styles.swipeActionIcon,
+                isLarge && styles.swipeActionIconLarge,
+                dynamicStyles?.swipeActionIcon,
+              ]}
+            >
+              📁
+            </Text>
+            <Text
+              style={[
+                styles.swipeActionText,
+                isLarge && styles.swipeActionTextLarge,
+                dynamicStyles?.swipeActionText,
+              ]}
+            >
+              Move
+            </Text>
+          </Animated.View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          testID={`swipe-delete-btn-${task.id}`}
+          style={[
+            styles.leftSwipeBtn,
+            styles.leftSwipeDeleteBtn,
+            isLarge && styles.leftSwipeBtnLarge,
+            dynamicStyles?.leftSwipeBtn,
+          ]}
+          onPress={handleDelete}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${task.title}`}
+        >
+          <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
+            <Text
+              style={[
+                styles.swipeActionIcon,
+                isLarge && styles.swipeActionIconLarge,
+                dynamicStyles?.swipeActionIcon,
+              ]}
+            >
+              🗑️
+            </Text>
+            <Text
+              style={[
+                styles.swipeActionText,
+                isLarge && styles.swipeActionTextLarge,
+                dynamicStyles?.swipeActionText,
+              ]}
+            >
+              Delete
+            </Text>
+          </Animated.View>
+        </TouchableOpacity>
       </View>
     );
   };
 
-  // Slide LEFT reveals RIGHT action: Done (Green with Check) - snappy response
+  // Slide LEFT reveals RIGHT action: Done (Green with Check)
   const renderRightActions = (
     _progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>
@@ -314,14 +387,38 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
     });
 
     return (
-      <View style={[styles.rightSwipeAction, isLarge && styles.rightSwipeActionLarge, dynamicStyles?.rightSwipeAction]}>
+      <View
+        style={[
+          styles.rightSwipeAction,
+          isLarge && styles.rightSwipeActionLarge,
+          dynamicStyles?.rightSwipeAction,
+        ]}
+      >
         <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
-          <Text style={[styles.swipeActionIcon, isLarge && styles.swipeActionIconLarge, dynamicStyles?.swipeActionIcon]}>✓</Text>
-          <Text style={[styles.swipeActionText, isLarge && styles.swipeActionTextLarge, dynamicStyles?.swipeActionText]}>{task.done ? 'Undo' : 'Done'}</Text>
+          <Text
+            style={[
+              styles.swipeActionIcon,
+              isLarge && styles.swipeActionIconLarge,
+              dynamicStyles?.swipeActionIcon,
+            ]}
+          >
+            ✓
+          </Text>
+          <Text
+            style={[
+              styles.swipeActionText,
+              isLarge && styles.swipeActionTextLarge,
+              dynamicStyles?.swipeActionText,
+            ]}
+          >
+            {task.done ? 'Undo' : 'Done'}
+          </Text>
         </Animated.View>
       </View>
     );
   };
+
+  const isWeb = Platform.OS === 'web';
 
   const cardContent = (
     <TouchableOpacity
@@ -332,32 +429,41 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         dynamicStyles?.card,
         {
           backgroundColor: task.done
-            ? (theme.isDark ? '#161618' : '#FFFFFF')
+            ? theme.isDark
+              ? '#161618'
+              : '#FFFFFF'
             : theme.colors.cardBackground,
           borderColor: isDragging
             ? '#007AFF'
             : task.done
-            ? (theme.isDark ? '#2C2C2E' : '#E5E5EA')
+            ? theme.isDark
+              ? '#2C2C2E'
+              : '#E5E5EA'
             : theme.colors.cardBorder,
           borderWidth: isDragging ? 1.5 : 1,
           opacity: task.done ? (theme.isDark ? 0.7 : 0.88) : 1,
         },
         isDragging && styles.cardDragging,
       ]}
-      onPress={() => onPress(task)}
+      onPress={() => {
+        swipeableRef.current?.close?.();
+        onPress(task);
+      }}
       onLongPress={() => {
-        safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-        if (drag) {
+        if (onLongPress) {
+          onLongPress(task);
+        } else if (drag) {
+          safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
           drag();
         }
-        onLongPress?.(task);
       }}
       delayLongPress={240}
       activeOpacity={0.7}
     >
-      {/* Priority indicator bar */}
-      {task.priority > 0 && (
+      {/* Priority / Task Accent Color indicator bar */}
+      {showPriorityStrip && (
         <View
+          testID={`task-priority-strip-${task.id}`}
           style={[
             styles.priorityStrip,
             isLarge && styles.priorityStripLarge,
@@ -367,7 +473,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         />
       )}
 
-      {/* Tactile Checkbox */}
+      {/* Tactile Accessible Checkbox */}
       <TouchableOpacity
         testID={`task-checkbox-${task.id}`}
         style={[
@@ -375,22 +481,34 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           isLarge && styles.checkboxLarge,
           dynamicStyles?.checkbox,
           task.done && styles.checkboxDone,
-          { borderColor: task.done ? '#30D158' : theme.colors.cardBorder },
+          {
+            borderColor: task.done ? '#30D158' : theme.isDark ? '#636366' : '#8E8E93',
+          },
         ]}
         onPress={handleToggle}
         activeOpacity={0.7}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: Boolean(task.done) }}
+        accessibilityLabel={
+          task.done ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`
+        }
       >
         {task.done && (
-          <Text style={[styles.checkmark, isLarge && styles.checkmarkLarge, dynamicStyles?.checkmark]}>✓</Text>
+          <Text style={[styles.checkmark, isLarge && styles.checkmarkLarge, dynamicStyles?.checkmark]}>
+            ✓
+          </Text>
         )}
       </TouchableOpacity>
 
       {/* Title & Metadata */}
       {(() => {
+        const isRepeating = Boolean(
+          (task.repeat_after && task.repeat_after > 0) || task.repeat_mode === 1
+        );
         const hasMetadata = Boolean(
-          (task.percent_done !== undefined && task.percent_done > 0) ||
+          pctDisplay > 0 ||
             formattedDueDate ||
-            (task.repeat_after && task.repeat_after > 0) ||
+            isRepeating ||
             (task.reminders && task.reminders.length > 0) ||
             (task.assignees && task.assignees.length > 0) ||
             (task.labels && task.labels.length > 0)
@@ -400,10 +518,14 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         const metadataBadges = (
           <>
             {/* Progress % */}
-            {task.percent_done !== undefined && task.percent_done > 0 && (
+            {pctDisplay > 0 && (
               <View
                 testID={`task-progress-${task.id}`}
-                style={[styles.progressBadge, isLarge && styles.progressBadgeLarge, dynamicStyles?.progressBadge]}
+                style={[
+                  styles.progressBadge,
+                  isLarge && styles.progressBadgeLarge,
+                  dynamicStyles?.progressBadge,
+                ]}
               >
                 <Text
                   style={[
@@ -412,16 +534,15 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                     dynamicStyles?.progressText,
                     {
                       color:
-                        task.percent_done === 1 || task.percent_done === 100
-                          ? '#30D158'
+                        pctDisplay >= 100
+                          ? theme.isDark
+                            ? '#30D158'
+                            : '#15803D'
                           : '#007AFF',
                     },
                   ]}
                 >
-                  {task.percent_done <= 1 && task.percent_done > 0
-                    ? Math.round(task.percent_done * 100)
-                    : Math.round(task.percent_done)}
-                  %
+                  {pctDisplay}%
                 </Text>
               </View>
             )}
@@ -429,6 +550,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
             {/* Due Date */}
             {formattedDueDate && (
               <View
+                testID={`task-due-badge-${task.id}`}
                 style={[
                   styles.dateBadge,
                   isLarge && styles.dateBadgeLarge,
@@ -450,7 +572,11 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                     dynamicStyles?.dueDateText,
                     isOverdue && styles.dueDateTextOverdue,
                     {
-                      color: isOverdue ? '#FF453A' : theme.colors.textSecondary,
+                      color: isOverdue
+                        ? theme.isDark
+                          ? '#FF453A'
+                          : '#DC2626'
+                        : theme.colors.textSecondary,
                     },
                   ]}
                 >
@@ -461,7 +587,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
             )}
 
             {/* Repeat Icon */}
-            {Boolean(task.repeat_after && task.repeat_after > 0) && (
+            {isRepeating && (
               <View testID={`task-repeat-icon-${task.id}`} style={styles.iconBadge}>
                 <Text style={{ fontSize: Math.round(10.5 * textScale) }}>🔁</Text>
               </View>
@@ -506,7 +632,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
             {/* Label Pills (Clean without tag icon) */}
             {task.labels &&
               task.labels.map((label) => {
-                const badgeStyle = getLabelBadgeStyles(label, labelDefinitions);
+                const badgeStyle = getLabelBadgeStyles(label, labelDefinitions, theme.isDark);
                 return (
                   <TouchableOpacity
                     key={label.id || label.title}
@@ -522,6 +648,8 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                     ]}
                     onPress={() => onSelectLabel && onSelectLabel(label.title)}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Filter by label ${label.title}`}
                   >
                     <Text
                       style={[
@@ -557,7 +685,13 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
               >
                 {task.title}
               </Text>
-              <View style={[styles.metaRowStacked, isLarge && styles.metaRowLarge, dynamicStyles?.metaRow]}>
+              <View
+                style={[
+                  styles.metaRowStacked,
+                  isLarge && styles.metaRowLarge,
+                  dynamicStyles?.metaRow,
+                ]}
+              >
                 {metadataBadges}
               </View>
             </View>
@@ -582,7 +716,13 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
               >
                 {task.title}
               </Text>
-              <View style={[styles.metaRow, isLarge && styles.metaRowLarge, dynamicStyles?.metaRow]}>
+              <View
+                style={[
+                  styles.metaRow,
+                  isLarge && styles.metaRowLarge,
+                  dynamicStyles?.metaRow,
+                ]}
+              >
                 {metadataBadges}
               </View>
             </View>
@@ -616,11 +756,17 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
           {drag ? (
             <TouchableOpacity
               testID={`drag-handle-${task.id}`}
-              style={[styles.dragHandle, isLarge && styles.dragHandleLarge, dynamicStyles?.dragHandle]}
+              style={[
+                styles.dragHandle,
+                isLarge && styles.dragHandleLarge,
+                dynamicStyles?.dragHandle,
+              ]}
               onPressIn={drag}
               onLongPress={drag}
               activeOpacity={0.6}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel={`Drag to reorder ${task.title}`}
             >
               <Text
                 style={[
@@ -648,6 +794,8 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 disabled={!canMoveUp}
                 activeOpacity={0.6}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Move ${task.title} up`}
               >
                 <Text
                   style={[
@@ -672,6 +820,8 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 disabled={!canMoveDown}
                 activeOpacity={0.6}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Move ${task.title} down`}
               >
                 <Text
                   style={[
@@ -691,10 +841,16 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         onEditLabels && (
           <TouchableOpacity
             testID={`task-edit-labels-${task.id}`}
-            style={[styles.addLabelLink, isLarge && styles.addLabelLinkLarge, dynamicStyles?.addLabelLink]}
+            style={[
+              styles.addLabelLink,
+              isLarge && styles.addLabelLinkLarge,
+              dynamicStyles?.addLabelLink,
+            ]}
             onPress={() => onEditLabels(task)}
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit labels for ${task.title}`}
           >
             <Text
               style={[
@@ -709,34 +865,73 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
         )
       )}
 
-      {/* Web & accessibility actions */}
-      <View style={Platform.OS === 'web' ? styles.webActions : styles.embeddedActions}>
+      {/* Web visible actions / Native hidden test hooks (strictly hidden from screen readers on native) */}
+      <View
+        style={isWeb ? styles.webActions : styles.embeddedActions}
+        accessible={false}
+        importantForAccessibility={isWeb ? 'auto' : 'no-hide-descendants'}
+        accessibilityElementsHidden={!isWeb}
+      >
         <TouchableOpacity
           testID={`task-move-action-${task.id}`}
-          style={Platform.OS === 'web' ? styles.webActionBtn : styles.hiddenAction}
+          accessible={isWeb}
+          importantForAccessibility={isWeb ? 'yes' : 'no'}
+          accessibilityRole={isWeb ? 'button' : undefined}
+          accessibilityLabel={isWeb ? `Move ${task.title}` : undefined}
+          style={
+            isWeb
+              ? [
+                  styles.webActionBtn,
+                  { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
+                ]
+              : styles.hiddenAction
+          }
           onPress={handleMove}
         >
-          {Platform.OS === 'web' ? <Text style={styles.webActionText}>Move</Text> : null}
+          {isWeb ? (
+            <Text style={[styles.webActionText, { color: theme.colors.textSecondary }]}>
+              Move
+            </Text>
+          ) : null}
         </TouchableOpacity>
         <TouchableOpacity
           testID={`task-delete-action-${task.id}`}
-          style={Platform.OS === 'web' ? [styles.webActionBtn, styles.webDeleteBtn] : styles.hiddenAction}
+          accessible={isWeb}
+          importantForAccessibility={isWeb ? 'yes' : 'no'}
+          accessibilityRole={isWeb ? 'button' : undefined}
+          accessibilityLabel={isWeb ? `Delete ${task.title}` : undefined}
+          style={
+            isWeb
+              ? [styles.webActionBtn, styles.webDeleteBtn]
+              : styles.hiddenAction
+          }
           onPress={handleDelete}
         >
-          {Platform.OS === 'web' ? <Text style={styles.webActionText}>✕</Text> : null}
+          {isWeb ? (
+            <Text
+              style={[
+                styles.webActionText,
+                { color: theme.isDark ? '#FF453A' : '#DC2626' },
+              ]}
+            >
+              ✕
+            </Text>
+          ) : null}
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
 
-  // On Web or in Reorder Mode: avoid react-native-gesture-handler's Swipeable
-  if (Platform.OS === 'web' || isReordering) {
+  // On Web only: avoid react-native-gesture-handler's Swipeable.
+  // On Native: keep Swipeable mounted (toggling `enabled`) so entering reorder/drag NEVER unmounts mid-gesture!
+  if (isWeb) {
     return cardContent;
   }
 
   return (
     <Swipeable
       ref={swipeableRef}
+      enabled={!isReordering && !isDragging}
       friction={2.5}
       leftThreshold={Math.round(115 * boxScale)}
       rightThreshold={Math.round(65 * boxScale)}
@@ -748,13 +943,15 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
       }}
       renderLeftActions={renderLeftActions}
       renderRightActions={renderRightActions}
-      onSwipeableWillOpen={triggerSwipeAction}
-      onSwipeableOpen={triggerSwipeAction}
+      onSwipeableOpen={handleSwipeableOpen}
     >
       {cardContent}
     </Swipeable>
   );
 };
+
+export const SwipeableTaskItem = React.memo(SwipeableTaskItemComponent);
+SwipeableTaskItem.displayName = 'SwipeableTaskItem';
 
 const styles = StyleSheet.create({
   card: {
@@ -775,10 +972,6 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: 12,
     minHeight: 52,
-  },
-  cardDone: {
-    opacity: 0.65,
-    backgroundColor: '#161618',
   },
   priorityStrip: {
     position: 'absolute',
@@ -904,7 +1097,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   dueDateTextOverdue: {
-    color: '#FF453A',
     fontWeight: '700',
   },
   iconBadge: {
@@ -958,20 +1150,32 @@ const styles = StyleSheet.create({
   addLabelLinkTextLarge: {
     fontSize: 14,
   },
-  leftSwipeAction: {
-    backgroundColor: '#FF453A',
-    justifyContent: 'center',
-    alignItems: 'flex-start',
-    borderRadius: 7,
-    marginHorizontal: 8,
+  leftSwipeTray: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    marginLeft: 8,
     marginVertical: 1.5,
-    paddingLeft: 18,
-    flex: 1,
+    gap: 4,
   },
-  leftSwipeActionLarge: {
-    borderRadius: 10,
+  leftSwipeTrayLarge: {
     marginVertical: 3,
-    paddingLeft: 24,
+    gap: 6,
+  },
+  leftSwipeBtn: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 7,
+    paddingHorizontal: 14,
+  },
+  leftSwipeBtnLarge: {
+    borderRadius: 10,
+    paddingHorizontal: 18,
+  },
+  leftSwipeMoveBtn: {
+    backgroundColor: '#0A84FF',
+  },
+  leftSwipeDeleteBtn: {
+    backgroundColor: '#FF453A',
   },
   rightSwipeAction: {
     backgroundColor: '#30D158',
@@ -991,7 +1195,7 @@ const styles = StyleSheet.create({
   swipeInnerContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   swipeActionIcon: {
     fontSize: 14,
@@ -1013,6 +1217,7 @@ const styles = StyleSheet.create({
     width: 0,
     height: 0,
     opacity: 0,
+    overflow: 'hidden',
   },
   hiddenAction: {
     width: 0,
@@ -1027,14 +1232,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-    backgroundColor: '#2C2C2E',
   },
   webDeleteBtn: {
-    backgroundColor: 'rgba(255,69,58,0.2)',
+    backgroundColor: 'rgba(255,69,58,0.16)',
   },
   webActionText: {
     fontSize: 11,
-    color: '#8E8E93',
     fontWeight: '600',
   },
   assigneeBadge: {

@@ -1,4 +1,4 @@
-import { sortTasks, SortOption } from '../sorting';
+import { sortTasks, cleanCategoryForSort } from '../sorting';
 import { Task } from '../../types/vikunja';
 
 describe('Task Sorting Utility', () => {
@@ -16,7 +16,7 @@ describe('Task Sorting Utility', () => {
       id: 2,
       title: 'Apples',
       done: false,
-      priority: 4, // Higher priority!
+      priority: 4,
       project_id: 1,
       labels: [{ id: 10, title: 'Produce' }],
       due_date: '2026-09-22T12:00:00Z',
@@ -42,7 +42,6 @@ describe('Task Sorting Utility', () => {
   ];
 
   it('sorts by name and honors priority within category', () => {
-    // Both 'Almonds' and 'Apples' start with A, but when grouped or compared:
     const sorted = sortTasks(mockTasks, 'name');
     expect(sorted.map((t) => t.title)).toEqual([
       'Almonds',
@@ -53,20 +52,67 @@ describe('Task Sorting Utility', () => {
   });
 
   it('sorts by label and honors priority within same label', () => {
-    // Both 'Zucchini' (P1) and 'Apples' (P4) have label 'Produce'.
-    // 'Hardware' label comes before 'Produce' alphabetically.
-    // Within 'Produce', Apples (P4) MUST come before Zucchini (P1)!
     const sorted = sortTasks(mockTasks, 'label');
-
-    expect(sorted[0].title).toBe('Batteries'); // Hardware label
-    expect(sorted[1].title).toBe('Apples'); // Produce, P4
-    expect(sorted[2].title).toBe('Zucchini'); // Produce, P1
-    expect(sorted[3].title).toBe('Almonds'); // No label (bottom)
+    expect(sorted[0].title).toBe('Batteries');
+    expect(sorted[1].title).toBe('Apples');
+    expect(sorted[2].title).toBe('Zucchini');
+    expect(sorted[3].title).toBe('Almonds');
   });
 
   it('sorts by dueDate and honors priority within same due date', () => {
-    const sorted = sortTasks(mockTasks, 'dueDate');
-    expect(sorted.map((t) => t.id)).toEqual([3, 2, 1, 4]);
+    const sameDateTasks: Task[] = [
+      ...mockTasks,
+      {
+        id: 5,
+        title: 'Urgent Same-Day',
+        done: false,
+        priority: 5,
+        project_id: 1,
+        due_date: '2026-09-21T12:00:00Z',
+      },
+    ];
+    const sorted = sortTasks(sameDateTasks, 'dueDate');
+    expect(sorted.map((t) => t.id)).toEqual([5, 3, 2, 1, 4]);
+  });
+
+  it('sorts by dueDate and places ALL Vikunja zero-date variants (UTC & non-UTC) at the bottom as unscheduled', () => {
+    const tasksWithZeroDates: Task[] = [
+      {
+        id: 10,
+        title: 'Non-UTC Zero Date (+01:00)',
+        done: false,
+        priority: 5,
+        project_id: 1,
+        due_date: '0001-01-01T01:00:00+01:00',
+      },
+      {
+        id: 11,
+        title: 'UTC Zero Date',
+        done: false,
+        priority: 1,
+        project_id: 1,
+        due_date: '0001-01-01T00:00:00Z',
+      },
+      {
+        id: 12,
+        title: 'Scheduled Tomorrow',
+        done: false,
+        priority: 1,
+        project_id: 1,
+        due_date: '2026-09-22T12:00:00Z',
+      },
+      {
+        id: 13,
+        title: 'Scheduled Today',
+        done: false,
+        priority: 1,
+        project_id: 1,
+        due_date: '2026-09-21T12:00:00Z',
+      },
+    ];
+
+    const sorted = sortTasks(tasksWithZeroDates, 'dueDate');
+    expect(sorted.map((t) => t.id)).toEqual([13, 12, 10, 11]);
   });
 
   it('sorts by priority descending (highest priority first)', () => {
@@ -75,7 +121,7 @@ describe('Task Sorting Utility', () => {
   });
 
   describe('Default Sort (recently updated/modified first within priority)', () => {
-    it('places newly added/recently updated tasks at top within same priority', () => {
+    it('places newly added/recently updated tasks at top within same priority and ignores zero-dates', () => {
       const tasks: Task[] = [
         {
           id: 1,
@@ -83,7 +129,8 @@ describe('Task Sorting Utility', () => {
           done: false,
           priority: 2,
           project_id: 1,
-          updated: '2026-09-20T10:00:00Z',
+          done_at: '0001-01-01T01:00:00+01:00',
+          created: '2026-09-20T10:00:00Z',
         },
         {
           id: 2,
@@ -104,11 +151,7 @@ describe('Task Sorting Utility', () => {
       ];
 
       const sorted = sortTasks(tasks, 'default');
-      expect(sorted.map((t) => t.title)).toEqual([
-        'Newest task',
-        'Mid task',
-        'Older task',
-      ]);
+      expect(sorted.map((t) => t.title)).toEqual(['Newest task', 'Mid task', 'Older task']);
     });
 
     it('honors higher priority over newer update time', () => {
@@ -204,7 +247,7 @@ describe('Task Sorting Utility', () => {
     });
   });
 
-  describe('Department / Contextual Sort', () => {
+  describe('Department / Contextual & AI Sort', () => {
     it('sorts tasks by contextual category', () => {
       const tasks: Task[] = [
         { id: 1, title: 'Milk', done: false, priority: 1, project_id: 1, labels: [{ id: 1, title: 'Dairy' }] },
@@ -213,12 +256,36 @@ describe('Task Sorting Utility', () => {
       ];
 
       const sorted = sortTasks(tasks, 'department', 'Weekly Groceries');
+      expect(sorted.map((t) => t.title)).toEqual(['[Bakery] Bagels', 'Milk', 'Apples']);
+    });
+
+    it('strips leading emojis in cleanCategoryForSort and prevents alternating split headers', () => {
+      expect(cleanCategoryForSort('🥦 Produce')).toBe('Produce');
+      expect(cleanCategoryForSort('✈️ Пътуване')).toBe('Пътуване');
+
+      const tasks: Task[] = [
+        { id: 1, title: '[Produce] Apples', done: false, priority: 3, project_id: 1 },
+        { id: 2, title: 'Bananas', done: false, priority: 2, project_id: 1 },
+        { id: 3, title: '[Produce] Carrots', done: false, priority: 1, project_id: 1 },
+        { id: 4, title: '[Bakery] Bagels', done: false, priority: 1, project_id: 1 },
+      ];
+
+      const sorted = sortTasks(tasks, 'department', 'Weekly Groceries');
       expect(sorted.map((t) => t.title)).toEqual([
         '[Bakery] Bagels',
-        'Milk',
-        'Apples',
+        '[Produce] Apples',
+        'Bananas',
+        '[Produce] Carrots',
       ]);
+    });
+
+    it('resists Object.prototype prefixes like [Constructor] without throwing', () => {
+      const protoTasks: Task[] = [
+        { id: 10, title: '[Constructor] Call general contractor', done: false, priority: 1, project_id: 1 },
+        { id: 11, title: '[ToString] Check serialization', done: false, priority: 1, project_id: 1 },
+      ];
+      expect(() => sortTasks(protoTasks, 'aiSmart', 'Home')).not.toThrow();
+      expect(sortTasks(protoTasks, 'aiSmart', 'Home').map((t) => t.id)).toEqual([10, 11]);
     });
   });
 });
-

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -7,8 +7,6 @@ import {
   ScrollView,
   StyleSheet,
   TouchableWithoutFeedback,
-  Platform,
-  StatusBar,
   Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,13 +14,13 @@ import { useTaskStore } from '../store/taskStore';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { useAppTheme } from '../utils/theme';
+import { normalizeHexColor } from '../utils/colors';
 import { SettingsModal } from '../components/SettingsModal';
 import { LabelManagementModal } from '../components/LabelManagementModal';
 import { ProjectEditorModal } from '../components/ProjectEditorModal';
 import { ProjectSharingModal } from '../components/ProjectSharingModal';
 import { Project } from '../types/vikunja';
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree';
-
 import { MY_TASKS_PROJECT_ID, isTaskAssignedToUser } from '../utils/taskFilters';
 
 interface ProjectDrawerProps {
@@ -48,14 +46,116 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     selectedProjectId,
     setSelectedProjectId,
     toggleProjectFavorite,
+    archiveProject,
   } = useTaskStore();
 
   const [showSettings, setShowSettings] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
-  const [editorProject, setEditorProject] = useState<Project | null>(null);
-  const [sharingProject, setSharingProject] = useState<Project | null>(null);
-  const [actionSheetProject, setActionSheetProject] = useState<Project | null>(null);
+  const [editorProjectId, setEditorProjectId] = useState<number | null>(null);
+  const [sharingProjectId, setSharingProjectId] = useState<number | null>(null);
+  const [actionSheetProjectId, setActionSheetProjectId] = useState<number | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+
+  // Strict modal mutual exclusion so NEVER are two <Modal>s visible simultaneously on iOS!
+  const openExclusiveSubModal = (
+    target: 'settings' | 'labels' | 'editor' | 'sharing' | 'actionSheet' | 'none',
+    projectId: number | null = null
+  ) => {
+    setShowSettings(target === 'settings');
+    setShowLabels(target === 'labels');
+    setShowEditor(target === 'editor');
+    setEditorProjectId(target === 'editor' ? projectId : null);
+    setSharingProjectId(target === 'sharing' ? projectId : null);
+    setActionSheetProjectId(target === 'actionSheet' ? projectId : null);
+  };
+
+  const hasActiveSubModal =
+    showSettings ||
+    showLabels ||
+    showEditor ||
+    sharingProjectId !== null ||
+    actionSheetProjectId !== null;
+
+  const shouldComputeDrawer = visible || inline;
+
+  const safeProjects = useMemo(
+    () => (Array.isArray(projects) ? projects : []),
+    [projects]
+  );
+
+  // Live entity lookup by ID (never stale project snapshots!)
+  const editorProject: Project | null = useMemo(
+    () =>
+      editorProjectId !== null
+        ? safeProjects.find((p) => p.id === editorProjectId) || null
+        : null,
+    [safeProjects, editorProjectId]
+  );
+
+  const sharingProject: Project | null = useMemo(
+    () =>
+      sharingProjectId !== null
+        ? safeProjects.find((p) => p.id === sharingProjectId) || null
+        : null,
+    [safeProjects, sharingProjectId]
+  );
+
+  const actionSheetProject: Project | null = useMemo(
+    () =>
+      actionSheetProjectId !== null
+        ? safeProjects.find((p) => p.id === actionSheetProjectId) || null
+        : null,
+    [safeProjects, actionSheetProjectId]
+  );
+
+  // Skip O(Tasks) & O(Projects) calculations completely when drawer is closed on phone!
+  const { allActiveCount, myActiveCount, projectActiveCounts } = useMemo(() => {
+    if (!shouldComputeDrawer) {
+      return {
+        allActiveCount: 0,
+        myActiveCount: 0,
+        projectActiveCounts: new Map<number, number>(),
+      };
+    }
+    const safeTasks = Array.isArray(tasks) ? tasks : [];
+    let allCount = 0;
+    let myCount = 0;
+    const byProject = new Map<number, number>();
+
+    for (let i = 0; i < safeTasks.length; i++) {
+      const t = safeTasks[i];
+      if (!t.done) {
+        allCount++;
+        if (isTaskAssignedToUser(t, currentUser)) {
+          myCount++;
+        }
+        byProject.set(t.project_id, (byProject.get(t.project_id) || 0) + 1);
+      }
+    }
+
+    return {
+      allActiveCount: allCount,
+      myActiveCount: myCount,
+      projectActiveCounts: byProject,
+    };
+  }, [shouldComputeDrawer, tasks, currentUser]);
+
+  const { flattenedActiveTree, archivedProjects } = useMemo(() => {
+    if (!shouldComputeDrawer) {
+      return { flattenedActiveTree: [], archivedProjects: [] as Project[] };
+    }
+    const active = safeProjects.filter((p) => p.id > 0 && !p.is_archived);
+    const archived = safeProjects
+      .filter((p) => p.id > 0 && Boolean(p.is_archived))
+      .sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
+
+    const treeNodes = buildProjectTree(active);
+    return {
+      flattenedActiveTree: flattenProjectTree(treeNodes),
+      archivedProjects: archived,
+    };
+  }, [shouldComputeDrawer, safeProjects]);
 
   const handleSelect = (id: number | null) => {
     safeHaptics.selection();
@@ -63,10 +163,11 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     onClose();
   };
 
-  const safeProjects = Array.isArray(projects) ? projects : [];
-  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  if (!visible && !inline && !hasActiveSubModal) {
+    return null;
+  }
 
-  const drawerContent = (
+  const drawerContent = shouldComputeDrawer ? (
     <SafeAreaView
       style={[
         inline ? styles.inlineContainer : styles.drawerContainer,
@@ -92,104 +193,202 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             testID="drawer-close-btn"
             style={styles.closeBtn}
             onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close lists drawer"
           >
             <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
           </TouchableOpacity>
         )}
       </View>
 
-          {/* Project List */}
-          <ScrollView style={styles.projectList}>
-            {/* All Tasks Master View (TickTick style) */}
-            <TouchableOpacity
-              testID="drawer-project-all"
+      {/* Project List */}
+      <ScrollView style={styles.projectList}>
+        {/* All Tasks Master View */}
+        <TouchableOpacity
+          testID="drawer-project-all"
+          style={[
+            styles.projectItem,
+            selectedProjectId === null && {
+              backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+            },
+          ]}
+          onPress={() => handleSelect(null)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityState={{ selected: selectedProjectId === null }}
+        >
+          <View style={[styles.colorDot, { backgroundColor: '#007AFF' }]} />
+          <Text
+            style={[
+              styles.projectTitle,
+              { color: theme.colors.text },
+              selectedProjectId === null && styles.projectTitleSelected,
+            ]}
+            numberOfLines={1}
+          >
+            All Tasks
+          </Text>
+          <Text
+            testID="drawer-count-all"
+            style={[styles.badgeCount, { color: theme.colors.textSecondary }]}
+          >
+            {allActiveCount}
+          </Text>
+        </TouchableOpacity>
+
+        {/* My Open Tasks View */}
+        <TouchableOpacity
+          testID="drawer-project-my-tasks"
+          style={[
+            styles.projectItem,
+            selectedProjectId === MY_TASKS_PROJECT_ID && {
+              backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
+            },
+          ]}
+          onPress={() => handleSelect(MY_TASKS_PROJECT_ID)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityState={{ selected: selectedProjectId === MY_TASKS_PROJECT_ID }}
+        >
+          <View style={[styles.colorDot, { backgroundColor: '#AF52DE' }]} />
+          <Text
+            style={[
+              styles.projectTitle,
+              { color: theme.colors.text },
+              selectedProjectId === MY_TASKS_PROJECT_ID && styles.projectTitleSelected,
+            ]}
+            numberOfLines={1}
+          >
+            My Open Tasks
+          </Text>
+          <Text
+            testID="drawer-count-my-tasks"
+            style={[styles.badgeCount, { color: theme.colors.textSecondary }]}
+          >
+            {myActiveCount}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Individual Lists with Tree Hierarchy */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
+            MY LISTS
+          </Text>
+          <Text style={[styles.sectionHeaderHint, { color: theme.colors.textSecondary }]}>
+            (Tap ⋯ or long-press to edit)
+          </Text>
+        </View>
+
+        {flattenedActiveTree.map((node) => {
+          const proj = node.project;
+          const isSelected = proj.id === selectedProjectId;
+          const activeTasks = projectActiveCounts.get(proj.id) || 0;
+          const indentPadding = Math.min(node.depth * 14, 42);
+          const dotColor = normalizeHexColor(proj.hex_color ?? undefined, true) || '#007AFF';
+
+          return (
+            <View
+              key={proj.id}
               style={[
-                styles.projectItem,
-                selectedProjectId === null && {
+                styles.projectItemWrapper,
+                isSelected && {
                   backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
                 },
               ]}
-              onPress={() => handleSelect(null)}
-              activeOpacity={0.7}
             >
-              <View style={[styles.colorDot, { backgroundColor: '#007AFF' }]} />
-              <Text
+              <TouchableOpacity
+                testID={`drawer-project-${proj.id}`}
                 style={[
-                  styles.projectTitle,
-                  { color: theme.colors.text },
-                  selectedProjectId === null && styles.projectTitleSelected,
+                  styles.projectItem,
+                  { paddingLeft: 12 + indentPadding },
                 ]}
-                numberOfLines={1}
+                onPress={() => handleSelect(proj.id)}
+                onLongPress={() => {
+                  safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                  openExclusiveSubModal('actionSheet', proj.id);
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected }}
               >
-                All Tasks
-              </Text>
-              <Text
-                testID="drawer-count-all"
-                style={styles.badgeCount}
-              >
-                {safeTasks.filter((t) => !t.done).length}
-              </Text>
-            </TouchableOpacity>
+                <View
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: dotColor },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.projectTitle,
+                    { color: theme.colors.text },
+                    isSelected && styles.projectTitleSelected,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {proj.is_favorite ? '⭐ ' : ''}
+                  {proj.title}
+                </Text>
+                {activeTasks > 0 && (
+                  <Text
+                    testID={`drawer-count-${proj.id}`}
+                    style={[styles.badgeCount, { color: theme.colors.textSecondary }]}
+                  >
+                    {activeTasks}
+                  </Text>
+                )}
+              </TouchableOpacity>
 
-            {/* My Open Tasks View */}
-            <TouchableOpacity
-              testID="drawer-project-my-tasks"
-              style={[
-                styles.projectItem,
-                selectedProjectId === MY_TASKS_PROJECT_ID && {
-                  backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
-                },
-              ]}
-              onPress={() => handleSelect(MY_TASKS_PROJECT_ID)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.colorDot, { backgroundColor: '#AF52DE' }]} />
-              <Text
-                style={[
-                  styles.projectTitle,
-                  { color: theme.colors.text },
-                  selectedProjectId === MY_TASKS_PROJECT_ID && styles.projectTitleSelected,
-                ]}
-                numberOfLines={1}
+              {/* List Options Menu Trigger */}
+              <TouchableOpacity
+                testID={`drawer-project-options-${proj.id}`}
+                style={styles.optionsBtn}
+                onPress={() => {
+                  safeHaptics.selection();
+                  openExclusiveSubModal('actionSheet', proj.id);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Options for ${proj.title}`}
               >
-                My Open Tasks
-              </Text>
-              <Text
-                testID="drawer-count-my-tasks"
-                style={styles.badgeCount}
-              >
-                {safeTasks.filter((t) => !t.done && isTaskAssignedToUser(t, currentUser)).length}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Individual Lists with Tree Hierarchy */}
-            <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
-                MY LISTS
-              </Text>
-              <Text style={[styles.sectionHeaderHint, { color: theme.colors.textSecondary }]}>
-                (Tap ⋯ or long-press to edit)
-              </Text>
+                <Text style={[styles.optionsBtnText, { color: theme.colors.textSecondary }]}>⋯</Text>
+              </TouchableOpacity>
             </View>
+          );
+        })}
 
-            {(() => {
-              const visibleProjects = safeProjects.filter((p) => p.id > 0 && !p.is_archived);
-              const treeNodes = buildProjectTree(visibleProjects);
-              const flattened = flattenProjectTree(treeNodes);
+        {/* Collapsible Archived Lists Section */}
+        {archivedProjects.length > 0 && (
+          <View style={styles.archivedSection}>
+            <TouchableOpacity
+              testID="drawer-archived-toggle"
+              style={styles.archivedHeaderRow}
+              onPress={() => {
+                safeHaptics.selection();
+                setShowArchived((prev) => !prev);
+              }}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showArchived }}
+              accessibilityLabel={`Archived lists (${archivedProjects.length})`}
+            >
+              <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
+                ARCHIVED LISTS ({archivedProjects.length})
+              </Text>
+              <Text style={[styles.archivedChevron, { color: theme.colors.textSecondary }]}>
+                {showArchived ? '▾' : '▸'}
+              </Text>
+            </TouchableOpacity>
 
-              return flattened.map((node) => {
-                const proj = node.project;
+            {showArchived &&
+              archivedProjects.map((proj) => {
                 const isSelected = proj.id === selectedProjectId;
-                const activeTasks = safeTasks.filter(
-                  (t) => t.project_id === proj.id && !t.done
-                ).length;
-                const indentPadding = Math.min(node.depth * 14, 42);
-
+                const dotColor = normalizeHexColor(proj.hex_color ?? undefined, true) || '#8E8E93';
                 return (
                   <View
                     key={proj.id}
                     style={[
                       styles.projectItemWrapper,
+                      styles.archivedItemWrapper,
                       isSelected && {
                         backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA',
                       },
@@ -197,110 +396,117 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                   >
                     <TouchableOpacity
                       testID={`drawer-project-${proj.id}`}
-                      style={[
-                        styles.projectItem,
-                        { paddingLeft: 12 + indentPadding },
-                      ]}
+                      style={styles.projectItem}
                       onPress={() => handleSelect(proj.id)}
                       onLongPress={() => {
                         safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-                        setActionSheetProject(proj);
+                        openExclusiveSubModal('actionSheet', proj.id);
                       }}
                       activeOpacity={0.7}
+                      accessibilityRole="button"
                     >
-                      <View
-                        style={[
-                          styles.colorDot,
-                          { backgroundColor: proj.hex_color ? `#${proj.hex_color.replace(/^#/, '')}` : '#007AFF' },
-                        ]}
-                      />
+                      <View style={[styles.colorDot, { backgroundColor: dotColor }]} />
                       <Text
                         style={[
                           styles.projectTitle,
-                          { color: theme.colors.text },
+                          { color: theme.colors.textSecondary },
                           isSelected && styles.projectTitleSelected,
                         ]}
                         numberOfLines={1}
                       >
-                        {proj.is_favorite ? '⭐ ' : ''}
-                        {proj.title}
+                        📦 {proj.title}
                       </Text>
-                      {activeTasks > 0 && (
-                        <Text
-                          testID={`drawer-count-${proj.id}`}
-                          style={styles.badgeCount}
-                        >
-                          {activeTasks}
-                        </Text>
-                      )}
                     </TouchableOpacity>
 
-                    {/* List Options Menu Trigger */}
+                    <TouchableOpacity
+                      testID={`drawer-unarchive-${proj.id}`}
+                      style={[
+                        styles.unarchivePill,
+                        { borderColor: theme.colors.border },
+                      ]}
+                      onPress={() => {
+                        safeHaptics.selection();
+                        archiveProject(proj.id, false).catch(() => {});
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Unarchive ${proj.title}`}
+                    >
+                      <Text style={[styles.unarchivePillText, { color: theme.colors.accent }]}>
+                        Unarchive
+                      </Text>
+                    </TouchableOpacity>
+
                     <TouchableOpacity
                       testID={`drawer-project-options-${proj.id}`}
                       style={styles.optionsBtn}
                       onPress={() => {
                         safeHaptics.selection();
-                        setActionSheetProject(proj);
+                        openExclusiveSubModal('actionSheet', proj.id);
                       }}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      accessibilityRole="button"
                       accessibilityLabel={`Options for ${proj.title}`}
                     >
-                      <Text style={[styles.optionsBtnText, { color: theme.colors.textSecondary }]}>⋯</Text>
+                      <Text style={[styles.optionsBtnText, { color: theme.colors.textSecondary }]}>
+                        ⋯
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 );
-              });
-            })()}
-          </ScrollView>
-
-          {/* Quick Add List button */}
-          <TouchableOpacity
-            testID="drawer-add-list-btn"
-            style={[styles.addListBtn, { borderTopColor: theme.colors.cardBorder }]}
-            onPress={() => {
-              safeHaptics.selection();
-              if (onAddNewList) {
-                onAddNewList();
-              } else {
-                setEditorProject(null);
-                setShowEditor(true);
-              }
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.addListIcon}>＋</Text>
-            <Text style={styles.addListText}>New List</Text>
-          </TouchableOpacity>
-
-          {/* Settings Section at bottom */}
-          <View style={[styles.footerSection, { borderTopColor: theme.colors.cardBorder }]}>
-            <TouchableOpacity
-              testID="drawer-settings-btn"
-              style={[
-                styles.settingsBtn,
-                { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
-              ]}
-              onPress={() => {
-                safeHaptics.selection();
-                setShowSettings(true);
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.settingsIcon}>⚙️</Text>
-              <Text style={[styles.settingsText, { color: theme.colors.text }]}>Settings</Text>
-            </TouchableOpacity>
+              })}
           </View>
-        </SafeAreaView>
-  );
+        )}
+      </ScrollView>
 
+      {/* Quick Add List button */}
+      <TouchableOpacity
+        testID="drawer-add-list-btn"
+        style={[styles.addListBtn, { borderTopColor: theme.colors.cardBorder }]}
+        onPress={() => {
+          safeHaptics.selection();
+          if (onAddNewList) {
+            onAddNewList();
+          } else {
+            openExclusiveSubModal('editor', null);
+          }
+        }}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+      >
+        <Text style={styles.addListIcon}>＋</Text>
+        <Text style={styles.addListText}>New List</Text>
+      </TouchableOpacity>
+
+      {/* Settings Section at bottom */}
+      <View style={[styles.footerSection, { borderTopColor: theme.colors.cardBorder }]}>
+        <TouchableOpacity
+          testID="drawer-settings-btn"
+          style={[
+            styles.settingsBtn,
+            { backgroundColor: theme.isDark ? '#2C2C2E' : '#E5E5EA' },
+          ]}
+          onPress={() => {
+            safeHaptics.selection();
+            openExclusiveSubModal('settings');
+          }}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+        >
+          <Text style={styles.settingsIcon}>⚙️</Text>
+          <Text style={[styles.settingsText, { color: theme.colors.text }]}>Settings</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  ) : null;
+
+  // Root-level sibling modals — NEVER nested inside ProjectDrawer's <Modal>!
   const sharedModals = (
     <>
       <SettingsModal
         visible={showSettings}
         onClose={() => setShowSettings(false)}
         onLogout={onLogout}
-        onOpenLabelManagement={() => setShowLabels(true)}
+        onOpenLabelManagement={() => openExclusiveSubModal('labels')}
       />
 
       <LabelManagementModal
@@ -314,14 +520,14 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         allProjects={safeProjects}
         onClose={() => {
           setShowEditor(false);
-          setEditorProject(null);
+          setEditorProjectId(null);
         }}
       />
 
       <ProjectSharingModal
         visible={Boolean(sharingProject)}
         project={sharingProject}
-        onClose={() => setSharingProject(null)}
+        onClose={() => setSharingProjectId(null)}
       />
 
       {/* Project Options Action Sheet */}
@@ -330,9 +536,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           visible={Boolean(actionSheetProject)}
           transparent
           animationType="fade"
-          onRequestClose={() => setActionSheetProject(null)}
+          onRequestClose={() => setActionSheetProjectId(null)}
         >
-          <TouchableWithoutFeedback onPress={() => setActionSheetProject(null)}>
+          <TouchableWithoutFeedback onPress={() => setActionSheetProjectId(null)}>
             <View style={styles.actionSheetBackdrop}>
               <TouchableWithoutFeedback>
                 <View
@@ -352,10 +558,8 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                     testID="drawer-option-edit"
                     style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
                     onPress={() => {
-                      const p = actionSheetProject;
-                      setActionSheetProject(null);
-                      setEditorProject(p);
-                      setShowEditor(true);
+                      const pid = actionSheetProject.id;
+                      openExclusiveSubModal('editor', pid);
                     }}
                   >
                     <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
@@ -367,9 +571,8 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                     testID="drawer-option-share"
                     style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
                     onPress={() => {
-                      const p = actionSheetProject;
-                      setActionSheetProject(null);
-                      setSharingProject(p);
+                      const pid = actionSheetProject.id;
+                      openExclusiveSubModal('sharing', pid);
                     }}
                   >
                     <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
@@ -381,8 +584,8 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                     testID="drawer-option-favorite"
                     style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
                     onPress={() => {
-                      toggleProjectFavorite(actionSheetProject.id);
-                      setActionSheetProject(null);
+                      toggleProjectFavorite(actionSheetProject.id).catch(() => {});
+                      setActionSheetProjectId(null);
                     }}
                   >
                     <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
@@ -391,8 +594,24 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                   </TouchableOpacity>
 
                   <TouchableOpacity
+                    testID="drawer-option-archive"
+                    style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                    onPress={() => {
+                      archiveProject(
+                        actionSheetProject.id,
+                        !actionSheetProject.is_archived
+                      ).catch(() => {});
+                      setActionSheetProjectId(null);
+                    }}
+                  >
+                    <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                      {actionSheetProject.is_archived ? '📂 Unarchive List' : '📦 Archive List'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
                     style={styles.actionSheetCancel}
-                    onPress={() => setActionSheetProject(null)}
+                    onPress={() => setActionSheetProjectId(null)}
                   >
                     <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
                       Cancel
@@ -417,20 +636,22 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   }
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <View style={styles.overlay}>
-        {drawerContent}
-        <TouchableWithoutFeedback testID="drawer-backdrop" onPress={onClose}>
-          <View style={styles.backdrop} />
-        </TouchableWithoutFeedback>
-      </View>
+    <>
+      <Modal
+        visible={visible && !hasActiveSubModal}
+        transparent
+        animationType="fade"
+        onRequestClose={onClose}
+      >
+        <View style={styles.overlay}>
+          {drawerContent}
+          <TouchableWithoutFeedback testID="drawer-backdrop" onPress={onClose}>
+            <View style={styles.backdrop} />
+          </TouchableWithoutFeedback>
+        </View>
+      </Modal>
       {sharedModals}
-    </Modal>
+    </>
   );
 };
 
@@ -455,9 +676,7 @@ const styles = StyleSheet.create({
   },
   drawerContainer: {
     width: '80%',
-    backgroundColor: '#161618',
     borderRightWidth: 1,
-    borderRightColor: '#2C2C2E',
     display: 'flex',
   },
   header: {
@@ -467,7 +686,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#2C2C2E',
   },
   brandRow: {
     flexDirection: 'row',
@@ -482,13 +700,11 @@ const styles = StyleSheet.create({
   brandTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
   closeBtn: {
     padding: 6,
   },
   closeBtnText: {
-    color: '#8E8E93',
     fontSize: 18,
     fontWeight: '600',
   },
@@ -505,9 +721,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 12,
   },
-  projectItemSelected: {
-    backgroundColor: '#2C2C2E',
-  },
   colorDot: {
     width: 12,
     height: 12,
@@ -517,7 +730,6 @@ const styles = StyleSheet.create({
   projectTitle: {
     flex: 1,
     fontSize: 16,
-    color: '#E5E5EA',
     fontWeight: '500',
   },
   projectTitleSelected: {
@@ -525,7 +737,6 @@ const styles = StyleSheet.create({
   },
   badgeCount: {
     fontSize: 13,
-    color: '#8E8E93',
     fontWeight: '600',
     paddingHorizontal: 6,
   },
@@ -535,7 +746,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 14,
     borderTopWidth: 1,
-    borderTopColor: '#2C2C2E',
     gap: 10,
   },
   addListIcon: {
@@ -550,69 +760,9 @@ const styles = StyleSheet.create({
   },
   footerSection: {
     borderTopWidth: 1,
-    borderTopColor: '#2C2C2E',
     paddingHorizontal: 16,
     paddingVertical: 14,
     gap: 10,
-  },
-  settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 6,
-  },
-  settingLabel: {
-    color: '#E5E5EA',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  resetSyncBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: '#2C2C2E',
-    borderWidth: 1,
-    borderColor: '#3A3A3C',
-    marginVertical: 4,
-  },
-  resetSyncBtnDisabled: {
-    opacity: 0.6,
-  },
-  resetSyncBtnSuccess: {
-    backgroundColor: 'rgba(48, 209, 88, 0.15)',
-    borderColor: '#30D158',
-  },
-  resetSyncContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  resetSyncIcon: {
-    fontSize: 18,
-  },
-  resetSyncTextContainer: {
-    flex: 1,
-  },
-  resetSyncTitle: {
-    color: '#F2F2F7',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  resetSyncSubtitle: {
-    color: '#8E8E93',
-    fontSize: 11,
-    marginTop: 1,
-  },
-  resetSyncText: {
-    color: '#0A84FF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  resetSyncSuccessText: {
-    color: '#30D158',
-    fontSize: 13,
-    fontWeight: '700',
   },
   settingsBtn: {
     flexDirection: 'row',
@@ -652,6 +802,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 12,
     marginBottom: 4,
+  },
+  archivedSection: {
+    marginTop: 12,
+    paddingBottom: 12,
+  },
+  archivedHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  archivedChevron: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  archivedItemWrapper: {
+    opacity: 0.85,
+  },
+  unarchivePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginRight: 2,
+  },
+  unarchivePillText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   optionsBtn: {
     paddingHorizontal: 12,

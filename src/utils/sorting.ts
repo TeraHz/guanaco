@@ -1,14 +1,23 @@
 import { Task } from '../types/vikunja';
-import { classifyTaskContextually } from './smartClassifier';
 import { classifyTaskWithAI } from './aiCore';
+import { normalizeVikunjaDate } from './dates';
 
-export type SortOption = 'default' | 'manual' | 'aiSmart' | 'department' | 'name' | 'label' | 'dueDate' | 'priority';
+export type SortOption =
+  | 'default'
+  | 'manual'
+  | 'aiSmart'
+  | 'department'
+  | 'name'
+  | 'label'
+  | 'dueDate'
+  | 'priority';
 
-function cleanCategoryForSort(cat: string): string {
-  return cat.replace(/^[^\w\s\u0400-\u04FF]+/i, '').trim();
+export function cleanCategoryForSort(cat: string): string {
+  return (cat || '').replace(/^[^\p{L}\p{N}]+/u, '').trim();
 }
 
 export function sortTasks(tasks: Task[], sortBy: SortOption, contextTitle?: string): Task[] {
+  if (!Array.isArray(tasks)) return [];
   const list = [...tasks];
 
   return list.sort((a, b) => {
@@ -29,7 +38,7 @@ export function sortTasks(tasks: Task[], sortBy: SortOption, contextTitle?: stri
         } else if (!hasPosA && hasPosB) {
           return 1;
         }
-        return a.title.localeCompare(b.title);
+        return (a.title || '').localeCompare(b.title || '');
       }
 
       case 'aiSmart':
@@ -40,15 +49,21 @@ export function sortTasks(tasks: Task[], sortBy: SortOption, contextTitle?: stri
         const cleanB = cleanCategoryForSort(catB);
         const catCompare = cleanA.localeCompare(cleanB, undefined, { sensitivity: 'base' });
         if (catCompare !== 0) return catCompare;
+        // Ensure identical raw category strings stay contiguous so section headers never split/alternate
+        if (catA !== catB) {
+          const rawCompare = catA.localeCompare(catB);
+          if (rawCompare !== 0) return rawCompare;
+        }
         const prioDiff = (b.priority || 0) - (a.priority || 0);
         if (prioDiff !== 0) return prioDiff;
-        return a.title.localeCompare(b.title);
+        return (a.title || '').localeCompare(b.title || '');
       }
 
       case 'name': {
-        const titleCompare = a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+        const titleCompare = (a.title || '').localeCompare(b.title || '', undefined, {
+          sensitivity: 'base',
+        });
         if (titleCompare !== 0) return titleCompare;
-        // Honor priority within identical name
         return (b.priority || 0) - (a.priority || 0);
       }
 
@@ -64,59 +79,54 @@ export function sortTasks(tasks: Task[], sortBy: SortOption, contextTitle?: stri
           if (labelCompare !== 0) return labelCompare;
         }
 
-        // Within same label (or both no label): honor priority!
         const prioDiff = (b.priority || 0) - (a.priority || 0);
         if (prioDiff !== 0) return prioDiff;
-        return a.title.localeCompare(b.title);
+        return (a.title || '').localeCompare(b.title || '');
       }
 
       case 'dueDate': {
-        const aDate = a.due_date && a.due_date !== '0001-01-01T00:00:00Z' ? new Date(a.due_date).getTime() : null;
-        const bDate = b.due_date && b.due_date !== '0001-01-01T00:00:00Z' ? new Date(b.due_date).getTime() : null;
+        const normA = normalizeVikunjaDate(a.due_date);
+        const normB = normalizeVikunjaDate(b.due_date);
+        const aDate = normA ? new Date(normA).getTime() : null;
+        const bDate = normB ? new Date(normB).getTime() : null;
 
-        if (aDate && !bDate) return -1;
-        if (!aDate && bDate) return 1;
+        if (aDate !== null && bDate === null) return -1;
+        if (aDate === null && bDate !== null) return 1;
 
-        if (aDate && bDate && aDate !== bDate) {
+        if (aDate !== null && bDate !== null && aDate !== bDate) {
           return aDate - bDate;
         }
 
-        // Within same due date: honor priority!
         const prioDiff = (b.priority || 0) - (a.priority || 0);
         if (prioDiff !== 0) return prioDiff;
-        return a.title.localeCompare(b.title);
+        return (a.title || '').localeCompare(b.title || '');
       }
 
       case 'priority': {
         const prioDiff = (b.priority || 0) - (a.priority || 0);
         if (prioDiff !== 0) return prioDiff;
-        return a.title.localeCompare(b.title);
+        return (a.title || '').localeCompare(b.title || '');
       }
 
       case 'default':
       default: {
-        // 1. Priority first (highest priority first: 5, 4, 3, 2, 1, 0)
         const prioDiff = (b.priority || 0) - (a.priority || 0);
         if (prioDiff !== 0) return prioDiff;
 
-        // 2. Recently updated / modified first (within priority)
         const getModifiedTime = (t: Task): number => {
-          if (t.updated && !isNaN(new Date(t.updated).getTime())) {
-            return new Date(t.updated).getTime();
-          }
-          if (t.done_at && !isNaN(new Date(t.done_at).getTime())) {
-            return new Date(t.done_at).getTime();
-          }
-          if (t.created && !isNaN(new Date(t.created).getTime())) {
-            return new Date(t.created).getTime();
-          }
+          const upd = normalizeVikunjaDate(t.updated);
+          if (upd) return new Date(upd).getTime();
+          const doneAt = normalizeVikunjaDate(t.done_at);
+          if (doneAt) return new Date(doneAt).getTime();
+          const created = normalizeVikunjaDate(t.created);
+          if (created) return new Date(created).getTime();
           return 0;
         };
 
         const timeA = getModifiedTime(a);
         const timeB = getModifiedTime(b);
         if (timeA !== timeB) {
-          return timeB - timeA; // Descending: newer / recently modified at top
+          return timeB - timeA;
         }
 
         return (a.position || 0) - (b.position || 0);

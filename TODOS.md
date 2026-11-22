@@ -1,9 +1,31 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.2.9` (Build 18)
+- **Current Version:** `1.3.0` (Build 19)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🛡️ Phase 10: Public Release Security, Offline Sync & UX Hardening (v1.3.0)
+
+### 1. Security, Authentication & Privacy Hardening
+- [x] **Zero-Password Auth, TOTP 2FA & Personal API Tokens (`biometrics.ts`, `LoginScreen.tsx`, `client.ts`, `App.tsx`)**:
+  - Eliminated plaintext password persistence in storage; added Personal API Token (`tk_...`) and TOTP 2FA login support alongside hardware-backed `expo-secure-store` JWT sessions.
+  - Enforced strict server URL validation, explicit user confirmation before cleartext `http://` connections, and manual redirect verification preventing cross-origin or HTTP-downgrade `Authorization` header leakage.
+  - Added resume-aware, offline-capable Biometric App Lock (cold start + 15s background grace period) and epoch-isolated `AbortController` session teardown on logout.
+- [x] **Reproducible Native Build, Manifest & Store Privacy (`android/`, `.github/workflows/ci.yml`, `PRIVACY_POLICY.md`)**:
+  - Tracked native Android project in Git with externalized release signing credentials, `android:allowBackup="false"`, stripped unused permissions (`SCHEDULE_EXACT_ALARM`) and transitive components, disabled dev network inspector, and added multi-timezone GitHub Actions CI.
+
+### 2. Zero-Data-Loss Offline Sync, Pagination & Local Notifications
+- [x] **Crash-Safe `SyncQueue` & Multi-Page API Pagination (`syncQueue.ts`, `taskStore.ts`, `client.ts`, `localNotifications.ts`)**:
+  - Persisted `tempId -> serverId` task/label/assignee resolution across app restarts, guarded in-flight queue items against concurrent overwrites, and paused sync (`auth_required` / `offline`) instead of dropping queued user work on `401`/transient errors.
+  - Added automatic multi-page pagination across tasks, projects, labels, teams, and project users, and wired local reminder scheduling/cancellation across task lifecycle actions.
+
+### 3. Scheduling, Quick-Add, Gestures & Accessibility Polish
+- [x] **Full Vikunja Field Parity & Mobile UX (`TaskDetailModal.tsx`, `TaskScheduleSection.tsx`, `SwipeableTaskItem.tsx`, `ProjectDrawer.tsx`, `quickAddParser.ts`)**:
+  - Aligned `percent_done` (`[0..1]` <-> `0..100%`), `hex_color` clearing, Go zero-date sorting, `RepeatMode.Monthly`, and hourly-to-yearly recurrence parsing (`#/*` labels, `!1..5` priorities, `@today` shorthands).
+  - Eliminated nested modal deadlocks, added Swipe Right **Move** + **Delete** with a 5-second **Undo** banner, collapsible **Archived Lists**, In-App Update `DOWNLOADED` snooze dismissal, and WCAG Light/Dark contrast fixes (verified by 520 tests across 39 suites in `UTC`, `America/Los_Angeles`, and `Asia/Tokyo`).
 
 ---
 

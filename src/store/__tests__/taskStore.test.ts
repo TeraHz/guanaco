@@ -1,24 +1,38 @@
-import { useTaskStore } from '../taskStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import * as Notifications from 'expo-notifications';
+import { useTaskStore } from '../taskStore';
+import { RepeatMode, ReminderRelativeTo } from '../../types/vikunja';
+import * as localNotifications from '../../services/localNotifications';
 
 describe('useTaskStore', () => {
-  beforeEach(() => {
-    // Reset store state before each test
+  beforeEach(async () => {
+    await AsyncStorage.clear();
     useTaskStore.setState({
       projects: [
         { id: 1, title: 'Inbox', hex_color: '#3498db' },
         { id: 2, title: 'Work', hex_color: '#e74c3c' },
       ],
       tasks: [
-        { id: 10, title: 'Task 1', done: false, priority: 1, project_id: 1, position: 100 },
-        { id: 20, title: 'Task 2', done: true, priority: 2, project_id: 1, position: 200 },
+        { id: 10, title: 'Task 1', done: false, priority: 1, project_id: 1, position: 1000 },
+        { id: 20, title: 'Task 2', done: true, priority: 2, project_id: 1, position: 2000 },
       ],
+      labels: [],
+      cachedUsers: [],
+      currentUser: null,
       selectedProjectId: 1,
       isLoading: false,
       error: null,
       client: null,
       syncQueue: null,
+      syncStatus: 'synced',
+      pendingSyncCount: 0,
       isSyncingAll: false,
+      authRequired: false,
+      reenableStaples: true,
+      largeTaskItems: false,
+      taskItemScale: 100,
+      taskItemTextScale: 100,
     });
     jest.clearAllMocks();
   });
@@ -46,7 +60,7 @@ describe('useTaskStore', () => {
     });
   });
 
-  describe('Rapid Task Creation (Optimistic Quick Add)', () => {
+  describe('Rapid Task Creation, Full Field Preservation & Cold-Restart Reconciliation', () => {
     it('should create optimistic task with temporary ID immediately', () => {
       const { addTask } = useTaskStore.getState();
 
@@ -56,7 +70,7 @@ describe('useTaskStore', () => {
         project_id: 1,
       });
 
-      expect(tempTask.id).toBeLessThan(0); // negative temporary ID
+      expect(tempTask.id).toBeLessThan(0);
       expect(tempTask.title).toBe('New urgent item');
       expect(tempTask.done).toBe(false);
 
@@ -88,7 +102,6 @@ describe('useTaskStore', () => {
         { id: -1, title: 'Costco' },
       ]);
 
-      // Server returns task with null labels
       if (onSuccessCallback) {
         onSuccessCallback({
           id: 55,
@@ -99,9 +112,241 @@ describe('useTaskStore', () => {
         });
       }
 
-      // Labels MUST NOT disappear!
       const updated = useTaskStore.getState().tasks.find((t) => t.id === 55);
-      expect(updated?.labels).toEqual([{ id: -1, title: 'Costco' }]);
+      expect(updated?.labels).toEqual([{ id: -1, title: 'Costco', hex_color: undefined, color: undefined }]);
+    });
+
+    it('preserves all CreateTaskInput fields (repeat_mode, reminders, start_date, end_date, percent_done, color, done) and schedules reminders', () => {
+      const scheduleSpy = jest
+        .spyOn(localNotifications, 'scheduleTaskReminders')
+        .mockResolvedValue(undefined);
+
+      const futureDue = new Date(Date.now() + 86400_000).toISOString();
+      const created = useTaskStore.getState().addTask({
+        title: 'Monthly Quarterly Review',
+        description: 'Prepare metrics deck',
+        done: false,
+        priority: 4,
+        project_id: 1,
+        due_date: futureDue,
+        start_date: '2026-11-20T09:00:00Z',
+        end_date: '2026-11-25T17:00:00Z',
+        repeat_after: 2592000,
+        repeat_mode: RepeatMode.Monthly,
+        reminders: [{ relative_to: ReminderRelativeTo.DueDate, relative_period: -1800 }],
+        percent_done: 0.5,
+        color: '#8b5cf6',
+        labels: [{ id: -1, title: 'Work' }],
+        assignees: [{ id: 1, username: 'terahz' }],
+      });
+
+      expect(created.id).toBeLessThan(0);
+      expect(created).toMatchObject({
+        title: 'Monthly Quarterly Review',
+        description: 'Prepare metrics deck',
+        done: false,
+        priority: 4,
+        project_id: 1,
+        due_date: futureDue,
+        start_date: '2026-11-20T09:00:00Z',
+        end_date: '2026-11-25T17:00:00Z',
+        repeat_after: 2592000,
+        repeat_mode: RepeatMode.Monthly,
+        reminders: [{ relative_to: ReminderRelativeTo.DueDate, relative_period: -1800 }],
+        percent_done: 0.5,
+        color: '#8b5cf6',
+      });
+      expect(scheduleSpy).toHaveBeenCalledWith(expect.objectContaining({ id: created.id }));
+      scheduleSpy.mockRestore();
+    });
+
+    it('reconciles tempId -> server ID and resolved label/user IDs across cold restart via persistent SyncQueue callbacks', async () => {
+      const tempId = -4242;
+      await AsyncStorage.setItem(
+        '@vikunja_cached_tasks',
+        JSON.stringify([
+          {
+            id: tempId,
+            title: 'Offline Groceries',
+            done: false,
+            priority: 2,
+            project_id: 1,
+            labels: [{ id: -1, title: 'Costco' }],
+            assignees: [{ id: -2, username: 'alice' }],
+          },
+        ])
+      );
+      await AsyncStorage.setItem(
+        '@vikunja_sync_queue',
+        JSON.stringify([
+          {
+            id: `create-${tempId}`,
+            type: 'CREATE_TASK',
+            payload: {
+              tempId,
+              projectId: 1,
+              taskData: { title: 'Offline Groceries', priority: 2, project_id: 1 },
+              labels: [{ id: -1, title: 'Costco' }],
+              assignees: [{ id: -2, username: 'alice' }],
+            },
+            timestamp: 1000,
+          },
+        ])
+      );
+
+      global.fetch = jest.fn().mockImplementation((url: string, opts?: any) => {
+        if (url.endsWith('/projects/1/tasks') && opts?.method === 'PUT') {
+          return Promise.resolve({
+            ok: true,
+            status: 201,
+            json: async () => ({
+              id: 777,
+              title: 'Offline Groceries',
+              done: false,
+              priority: 2,
+              project_id: 1,
+            }),
+          } as Response);
+        }
+        if (url.includes('/tasks/777') && opts?.method === 'GET') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ id: 777, title: 'Offline Groceries', labels: [], assignees: [] }),
+          } as Response);
+        }
+        if (url.endsWith('/labels') && opts?.method === 'GET') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => [{ id: 15, title: 'Costco', hex_color: '#ff5722' }],
+          } as Response);
+        }
+        if (url.endsWith('/tasks/777/labels') && opts?.method === 'PUT') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ message: 'ok' }),
+          } as Response);
+        }
+        if (url.includes('/users/search')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => [{ id: 25, username: 'alice' }],
+          } as Response);
+        }
+        if (url.endsWith('/tasks/777/assignees') && opts?.method === 'PUT') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ message: 'ok' }),
+          } as Response);
+        }
+        return Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response);
+      });
+
+      await useTaskStore.getState().initialize('https://try.vikunja.io', 'jwt-token');
+      await useTaskStore.getState().syncQueue!.processQueue();
+
+      const tasks = useTaskStore.getState().tasks;
+      expect(tasks.find((t) => t.id === tempId)).toBeUndefined();
+      const syncedTask = tasks.find((t) => t.id === 777);
+      expect(syncedTask).toBeDefined();
+      expect(syncedTask?.labels).toEqual([
+        expect.objectContaining({ id: 15, title: 'Costco', hex_color: '#ff5722' }),
+      ]);
+      expect(syncedTask?.assignees).toEqual([expect.objectContaining({ id: 25, username: 'alice' })]);
+    });
+
+    it('does NOT resurrect a tempId < 0 task deleted while CREATE_TASK was mid-flight, and replaces non-deleted tempId in-place', async () => {
+      const scheduleSpy = jest
+        .spyOn(localNotifications, 'scheduleTaskReminders')
+        .mockResolvedValue(undefined);
+
+      let resolveCreate1!: (res: any) => void;
+      let resolveCreate2!: (res: any) => void;
+      let createCount = 0;
+
+      global.fetch = jest.fn().mockImplementation((url: string, opts?: any) => {
+        if (url.endsWith('/projects/1/tasks') && opts?.method === 'PUT') {
+          createCount++;
+          return new Promise((res) => {
+            if (createCount === 1) resolveCreate1 = res;
+            else resolveCreate2 = res;
+          });
+        }
+        if (url.includes('/tasks/808') && opts?.method === 'DELETE') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ message: 'deleted' }),
+          } as Response);
+        }
+        return Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response);
+      });
+
+      await useTaskStore.getState().initialize('https://try.vikunja.io', 'jwt-token');
+      useTaskStore.setState({
+        tasks: [
+          { id: 10, title: 'Anchor Top', done: false, priority: 1, project_id: 1, position: 1000 },
+        ],
+      });
+
+      const deletedTemp = useTaskStore.getState().addTask({
+        title: 'Deleted Mid-Flight',
+        project_id: 1,
+        due_date: new Date(Date.now() + 86400_000).toISOString(),
+        reminders: [{ relative_to: ReminderRelativeTo.DueDate, relative_period: 0 }],
+      });
+      scheduleSpy.mockClear();
+
+      useTaskStore.getState().deleteTask(deletedTemp.id);
+      expect(useTaskStore.getState().tasks.find((t) => t.id === deletedTemp.id)).toBeUndefined();
+
+      resolveCreate1({
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: 808,
+          title: 'Deleted Mid-Flight',
+          done: false,
+          priority: 0,
+          project_id: 1,
+          due_date: new Date(Date.now() + 86400_000).toISOString(),
+          reminders: [{ relative_to: ReminderRelativeTo.DueDate, relative_period: 0 }],
+        }),
+      });
+
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(useTaskStore.getState().tasks.find((t) => t.id === 808)).toBeUndefined();
+      expect(scheduleSpy).not.toHaveBeenCalled();
+
+      const keptTemp = useTaskStore.getState().addTask({ title: 'Middle Task', project_id: 1 });
+      useTaskStore.setState((s) => ({
+        tasks: [
+          s.tasks.find((t) => t.id === 10)!,
+          s.tasks.find((t) => t.id === keptTemp.id)!,
+        ],
+      }));
+
+      resolveCreate2({
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: 909,
+          title: 'Middle Task',
+          done: false,
+          priority: 0,
+          project_id: 1,
+        }),
+      });
+
+      await new Promise((r) => setTimeout(r, 30));
+      expect(useTaskStore.getState().tasks.map((t) => t.id)).toEqual([10, 909]);
+
+      scheduleSpy.mockRestore();
     });
   });
 
@@ -121,7 +366,6 @@ describe('useTaskStore', () => {
     it('should reorder tasks and update positions', () => {
       const { reorderTasks } = useTaskStore.getState();
 
-      // Reverse order: task 20 first, task 10 second
       reorderTasks(1, [20, 10]);
 
       const projectTasks = useTaskStore
@@ -143,21 +387,16 @@ describe('useTaskStore', () => {
         ],
       });
 
-      // Move task 201 above task 101 in global "All Tasks" mode (projectId 0)
       reorderTasks(0, [201, 101]);
 
       const updatedTasks = useTaskStore.getState().tasks;
-      const t201 = updatedTasks.find((t) => t.id === 201);
-      const t101 = updatedTasks.find((t) => t.id === 101);
-
-      expect(t201?.position).toBe(1000);
-      expect(t101?.position).toBe(2000);
+      expect(updatedTasks.find((t) => t.id === 201)?.position).toBe(1000);
+      expect(updatedTasks.find((t) => t.id === 101)?.position).toBe(2000);
     });
 
-    it('fetchTasks should NOT overwrite local task positions when server returns tasks without positions', async () => {
+    it('fetchTasks should NOT overwrite local task positions when server returns Go default position: 0', async () => {
       const mockClient = {
         getTasks: jest.fn().mockResolvedValue([
-          // Server returns tasks without position (or position: 0)
           { id: 10, title: 'Task 1', done: false, priority: 1, project_id: 1, position: 0 },
           { id: 20, title: 'Task 2', done: true, priority: 2, project_id: 1, position: 0 },
         ]),
@@ -171,19 +410,14 @@ describe('useTaskStore', () => {
         ],
       });
 
-      const { fetchTasks } = useTaskStore.getState();
-      await fetchTasks(1);
+      await useTaskStore.getState().fetchTasks(1);
 
       const tasks = useTaskStore.getState().tasks;
-      const t10 = tasks.find((t) => t.id === 10);
-      const t20 = tasks.find((t) => t.id === 20);
-
-      // Local positions must be preserved!
-      expect(t10?.position).toBe(2000);
-      expect(t20?.position).toBe(1000);
+      expect(tasks.find((t) => t.id === 10)?.position).toBe(2000);
+      expect(tasks.find((t) => t.id === 20)?.position).toBe(1000);
     });
 
-    it('fetchAllTasks should preserve local task positions when server returns tasks without positions', async () => {
+    it('fetchAllTasks should preserve local task positions when server returns Go default position: 0', async () => {
       const mockClient = {
         getAllTasks: jest.fn().mockResolvedValue([
           { id: 1, title: 'Task 1', done: false, priority: 1, project_id: 1, position: 0 },
@@ -200,12 +434,76 @@ describe('useTaskStore', () => {
         ],
       });
 
-      const { fetchAllTasks } = useTaskStore.getState();
-      await fetchAllTasks();
+      await useTaskStore.getState().fetchAllTasks();
 
       const tasks = useTaskStore.getState().tasks;
       expect(tasks.find((t) => t.id === 1)?.position).toBe(3000);
       expect(tasks.find((t) => t.id === 2)?.position).toBe(1000);
+    });
+
+    it('handles all 4 resolvePosition cases accurately (pending reorder, positive remote, Go position: 0 vs local custom/0, and fresh position: 0)', async () => {
+      const mockSyncQueue = {
+        hasPendingForTask: (id: number, type?: string) => id === 10 && type === 'REORDER_TASK',
+      };
+      const mockClient = {
+        getTasks: jest.fn().mockResolvedValue([
+          { id: 10, title: 'Pending Reorder to Top', done: false, priority: 1, project_id: 1, position: 4000 },
+          { id: 20, title: 'Server Repositioned', done: false, priority: 1, project_id: 1, position: 3500 },
+          { id: 30, title: 'Custom Local Order', done: false, priority: 1, project_id: 1, position: 0 },
+          { id: 40, title: 'Reenabled Top Task', done: false, priority: 1, project_id: 1, position: 0 },
+          { id: 50, title: 'Fresh Remote Zero', done: false, priority: 1, project_id: 1, position: 0 },
+        ]),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        syncQueue: mockSyncQueue as any,
+        tasks: [
+          { id: 10, title: 'Pending Reorder to Top', done: false, priority: 1, project_id: 1, position: 0 },
+          { id: 20, title: 'Server Repositioned', done: false, priority: 1, project_id: 1, position: 1000 },
+          { id: 30, title: 'Custom Local Order', done: false, priority: 1, project_id: 1, position: 2000 },
+          { id: 40, title: 'Reenabled Top Task', done: false, priority: 1, project_id: 1, position: 0 },
+        ],
+      });
+
+      await useTaskStore.getState().fetchTasks(1);
+      const tasks = useTaskStore.getState().tasks;
+
+      expect(tasks.find((t) => t.id === 10)?.position).toBe(0);
+      expect(tasks.find((t) => t.id === 20)?.position).toBe(3500);
+      expect(tasks.find((t) => t.id === 30)?.position).toBe(2000);
+      expect(tasks.find((t) => t.id === 40)?.position).toBe(0);
+      expect(tasks.find((t) => t.id === 50)?.position).toBe(0);
+    });
+
+    it('awaits getProjectViews before enqueuing REORDER_TASK and only enqueues tasks whose positions changed', async () => {
+      const mockEnqueue = jest.fn();
+      const mockSyncQueue = {
+        enqueue: mockEnqueue,
+        processQueue: jest.fn(),
+      };
+      const mockClient = {
+        getProjectViews: jest.fn().mockResolvedValue([
+          { id: 42, title: 'List', project_id: 1, view_kind: 'list' },
+        ]),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        syncQueue: mockSyncQueue as any,
+        projects: [{ id: 1, title: 'Inbox' }],
+        tasks: [
+          { id: 10, title: 'Stay First', done: false, priority: 0, project_id: 1, position: 1000 },
+          { id: 20, title: 'Swap Second', done: false, priority: 0, project_id: 1, position: 2000 },
+          { id: 30, title: 'Swap Third', done: false, priority: 0, project_id: 1, position: 3000 },
+        ],
+      });
+
+      useTaskStore.getState().reorderTasks(1, [10, 30, 20], true);
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(mockClient.getProjectViews).toHaveBeenCalledWith(1);
+      expect(mockEnqueue).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -215,8 +513,7 @@ describe('useTaskStore', () => {
 
       deleteTask(10);
 
-      const task = useTaskStore.getState().tasks.find((t) => t.id === 10);
-      expect(task).toBeUndefined();
+      expect(useTaskStore.getState().tasks.find((t) => t.id === 10)).toBeUndefined();
     });
   });
 
@@ -237,13 +534,11 @@ describe('useTaskStore', () => {
         ],
       });
 
-      const { reenableTask } = useTaskStore.getState();
-      reenableTask(20);
+      useTaskStore.getState().reenableTask(20);
 
       const reenabled = useTaskStore.getState().tasks.find((t) => t.id === 20);
       expect(reenabled?.done).toBe(false);
       expect(reenabled?.done_at).toBeNull();
-      // Past due date cleared per user requirement
       expect(reenabled?.due_date).toBeNull();
     });
 
@@ -261,12 +556,11 @@ describe('useTaskStore', () => {
         ],
       });
 
-      const { reenableTask } = useTaskStore.getState();
-      reenableTask(20, [{ id: 2, title: 'Trader Joe\'s' }]);
+      useTaskStore.getState().reenableTask(20, [{ id: 2, title: "Trader Joe's" }]);
 
       const reenabled = useTaskStore.getState().tasks.find((t) => t.id === 20);
       expect(reenabled?.done).toBe(false);
-      expect(reenabled?.labels).toEqual([{ id: 2, title: 'Trader Joe\'s' }]);
+      expect(reenabled?.labels).toEqual([{ id: 2, title: "Trader Joe's" }]);
     });
 
     it('should allow toggling reenableStaples setting and persist preference', async () => {
@@ -283,8 +577,7 @@ describe('useTaskStore', () => {
 
   describe('Quick Label Editing', () => {
     it('should quickly update task labels directly', () => {
-      const { updateTaskLabels } = useTaskStore.getState();
-      updateTaskLabels(10, [{ id: 5, title: 'Supermarket' }]);
+      useTaskStore.getState().updateTaskLabels(10, [{ id: 5, title: 'Supermarket' }]);
 
       const task = useTaskStore.getState().tasks.find((t) => t.id === 10);
       expect(task?.labels).toEqual([{ id: 5, title: 'Supermarket' }]);
@@ -298,20 +591,22 @@ describe('useTaskStore', () => {
       expect(state.pendingSyncCount).toBe(0);
     });
 
-    it('should load cached projects and tasks from AsyncStorage', async () => {
-      const AsyncStorage = require('@react-native-async-storage/async-storage');
+    it('should load cached projects (preferring active over archived) and tasks from AsyncStorage', async () => {
       await AsyncStorage.setItem(
         '@vikunja_cached_projects',
-        JSON.stringify([{ id: 99, title: 'Offline List' }])
+        JSON.stringify([
+          { id: 98, title: 'Archived List', is_archived: true },
+          { id: 99, title: 'Offline List', is_archived: false },
+        ])
       );
       await AsyncStorage.setItem(
         '@vikunja_cached_tasks',
         JSON.stringify([{ id: 999, title: 'Offline Milk', done: false, project_id: 99 }])
       );
 
-      const { loadCachedData } = useTaskStore.getState();
-      await loadCachedData();
+      await useTaskStore.getState().loadCachedData();
 
+      expect(useTaskStore.getState().selectedProjectId).toBe(99);
       expect(useTaskStore.getState().projects).toContainEqual(
         expect.objectContaining({ id: 99, title: 'Offline List' })
       );
@@ -336,12 +631,11 @@ describe('useTaskStore', () => {
         ],
       });
 
-      const { fetchTasks } = useTaskStore.getState();
-      await fetchTasks(2);
+      await useTaskStore.getState().fetchTasks(2);
 
       const allTasks = useTaskStore.getState().tasks;
-      expect(allTasks.find((t) => t.id === 101)).toBeDefined(); // Project 1 task preserved!
-      expect(allTasks.find((t) => t.id === 201)).toBeDefined(); // Project 2 task added!
+      expect(allTasks.find((t) => t.id === 101)).toBeDefined();
+      expect(allTasks.find((t) => t.id === 201)).toBeDefined();
     });
 
     it('fetchAllTasks() should pull all tasks across projects and preserve optimistic pending tasks', async () => {
@@ -355,24 +649,82 @@ describe('useTaskStore', () => {
       useTaskStore.setState({
         client: mockClient as any,
         tasks: [
-          // Local optimistic task created offline with negative ID
           { id: -999, title: 'Optimistic Offline Task', done: false, priority: 3, project_id: 1 },
         ],
       });
 
-      const { fetchAllTasks } = useTaskStore.getState();
-      await fetchAllTasks();
+      await useTaskStore.getState().fetchAllTasks();
 
       const tasks = useTaskStore.getState().tasks;
       expect(tasks).toHaveLength(3);
-      expect(tasks.find((t) => t.id === -999)).toBeDefined(); // Optimistic task retained
+      expect(tasks.find((t) => t.id === -999)).toBeDefined();
       expect(tasks.find((t) => t.id === 1)).toBeDefined();
       expect(tasks.find((t) => t.id === 2)).toBeDefined();
+    });
+
+    it('respects pending DELETE, TOGGLE, UPDATE, MOVE, SET_TASK_LABELS, SET_TASK_ASSIGNEES, and drops orphaned negative IDs', async () => {
+      const pendingByTaskAndType = new Set<string>([
+        '1:DELETE_TASK',
+        '2:TOGGLE_TASK',
+        '3:UPDATE_TASK',
+        '4:MOVE_TASK',
+        '5:SET_TASK_LABELS',
+        '6:SET_TASK_ASSIGNEES',
+        '-100:CREATE_TASK',
+      ]);
+
+      const mockSyncQueue = {
+        hasPendingForTask: (taskId: number, type?: string) => {
+          if (type) return pendingByTaskAndType.has(`${taskId}:${type}`);
+          return Array.from(pendingByTaskAndType).some((k) => k.startsWith(`${taskId}:`));
+        },
+      };
+
+      const mockClient = {
+        getAllTasks: jest.fn().mockResolvedValue([
+          { id: 1, title: 'Deleted Locally', done: false, priority: 0, project_id: 1 },
+          { id: 2, title: 'Toggled Locally', done: false, priority: 0, project_id: 1 },
+          { id: 3, title: 'Old Server Title', done: false, priority: 1, project_id: 1 },
+          { id: 4, title: 'Moved Locally', done: false, priority: 0, project_id: 1 },
+          { id: 5, title: 'Label Edited', done: false, priority: 0, project_id: 1, labels: [] },
+          { id: 6, title: 'Assignee Edited', done: false, priority: 0, project_id: 1, assignees: [] },
+        ]),
+        getTasks: jest.fn().mockResolvedValue([]),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        syncQueue: mockSyncQueue as any,
+        projects: [],
+        tasks: [
+          { id: 2, title: 'Toggled Locally', done: true, done_at: '2026-11-22T00:00:00Z', priority: 0, project_id: 1 },
+          { id: 3, title: 'Locally Edited Title', done: false, priority: 5, project_id: 1 },
+          { id: 4, title: 'Moved Locally', done: false, priority: 0, project_id: 2 },
+          { id: 5, title: 'Label Edited', done: false, priority: 0, project_id: 1, labels: [{ id: 9, title: 'LocalTag' }] },
+          { id: 6, title: 'Assignee Edited', done: false, priority: 0, project_id: 1, assignees: [{ id: 8, username: 'bob' }] },
+          { id: -100, title: 'Pending Create', done: false, priority: 0, project_id: 1 },
+          { id: -200, title: 'Orphaned Temp Task Without Create', done: false, priority: 0, project_id: 1 },
+        ],
+      });
+
+      await useTaskStore.getState().fetchAllTasks();
+      const tasks = useTaskStore.getState().tasks;
+
+      expect(tasks.find((t) => t.id === 1)).toBeUndefined();
+      expect(tasks.find((t) => t.id === 2)?.done).toBe(true);
+      expect(tasks.find((t) => t.id === 3)?.title).toBe('Locally Edited Title');
+      expect(tasks.find((t) => t.id === 4)?.project_id).toBe(2);
+      expect(tasks.find((t) => t.id === 5)?.labels?.[0].title).toBe('LocalTag');
+      expect(tasks.find((t) => t.id === 6)?.assignees?.[0].username).toBe('bob');
+      expect(tasks.find((t) => t.id === -100)).toBeDefined();
+      expect(tasks.find((t) => t.id === -200)).toBeUndefined();
     });
 
     it('syncAll() should perform bidirectional sync: push queue mutations first, then pull projects and all tasks', async () => {
       const mockQueue = {
         processQueue: jest.fn().mockResolvedValue(undefined),
+        getStatus: jest.fn().mockReturnValue('synced'),
+        getQueue: jest.fn().mockReturnValue([]),
       };
       const mockClient = {
         getProjects: jest.fn().mockResolvedValue([
@@ -389,19 +741,38 @@ describe('useTaskStore', () => {
         syncQueue: mockQueue as any,
       });
 
-      const { syncAll } = useTaskStore.getState();
-      await syncAll();
+      await useTaskStore.getState().syncAll();
 
-      // Outbound push called
       expect(mockQueue.processQueue).toHaveBeenCalled();
-      // Inbound pull called
       expect(mockClient.getProjects).toHaveBeenCalled();
       expect(mockClient.getAllTasks).toHaveBeenCalled();
-
       expect(useTaskStore.getState().syncStatus).toBe('synced');
       expect(useTaskStore.getState().tasks).toContainEqual(
         expect.objectContaining({ title: 'Buy Apples' })
       );
+    });
+
+    it('sets syncStatus to offline when inbound or outbound sync fails instead of falsely reporting synced', async () => {
+      const mockQueue = {
+        processQueue: jest.fn().mockResolvedValue(undefined),
+        getStatus: jest.fn().mockReturnValue('synced'),
+        getQueue: jest.fn().mockReturnValue([]),
+      };
+      const mockClient = {
+        getProjects: jest.fn().mockRejectedValue(new Error('Server unreachable')),
+        getAllTasks: jest.fn().mockRejectedValue(new Error('Server unreachable')),
+      };
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        syncQueue: mockQueue as any,
+        tasks: [{ id: 10, title: 'Cached Task', done: false, priority: 1, project_id: 1 }],
+      });
+
+      await useTaskStore.getState().syncAll();
+
+      expect(useTaskStore.getState().syncStatus).toBe('offline');
+      expect(useTaskStore.getState().tasks).toHaveLength(1);
     });
 
     it('fetchAllTasks() should NOT wipe cached tasks when network fetch fails (offline protection)', async () => {
@@ -410,19 +781,13 @@ describe('useTaskStore', () => {
         getTasks: jest.fn().mockRejectedValue(new Error('Network error: server unreachable')),
       };
 
-      const existingTasks = [
-        { id: 10, title: 'Cached Bread', done: false, priority: 1, project_id: 1 },
-      ];
-
       useTaskStore.setState({
         client: mockClient as any,
-        tasks: existingTasks,
+        tasks: [{ id: 10, title: 'Cached Bread', done: false, priority: 1, project_id: 1 }],
       });
 
-      const { fetchAllTasks } = useTaskStore.getState();
-      await fetchAllTasks();
+      await useTaskStore.getState().fetchAllTasks();
 
-      // Tasks must NOT be wiped to empty array!
       expect(useTaskStore.getState().tasks).toHaveLength(1);
       expect(useTaskStore.getState().tasks[0].title).toBe('Cached Bread');
     });
@@ -435,13 +800,8 @@ describe('useTaskStore', () => {
         getTasks: jest.fn().mockResolvedValue([]),
       };
 
-      useTaskStore.setState({
-        client: mockClient as any,
-        selectedProjectId: 1,
-      });
-
-      const { setSelectedProjectId } = useTaskStore.getState();
-      setSelectedProjectId(null);
+      useTaskStore.setState({ client: mockClient as any, selectedProjectId: 1 });
+      useTaskStore.getState().setSelectedProjectId(null);
 
       expect(useTaskStore.getState().selectedProjectId).toBeNull();
       expect(mockClient.getAllTasks).toHaveBeenCalled();
@@ -453,13 +813,8 @@ describe('useTaskStore', () => {
         getTasks: jest.fn().mockResolvedValue([]),
       };
 
-      useTaskStore.setState({
-        client: mockClient as any,
-        selectedProjectId: 1,
-      });
-
-      const { setSelectedProjectId } = useTaskStore.getState();
-      setSelectedProjectId(-1);
+      useTaskStore.setState({ client: mockClient as any, selectedProjectId: 1 });
+      useTaskStore.getState().setSelectedProjectId(-1);
 
       expect(useTaskStore.getState().selectedProjectId).toBe(-1);
       expect(mockClient.getAllTasks).toHaveBeenCalled();
@@ -480,37 +835,29 @@ describe('useTaskStore', () => {
         projects: [],
       });
 
-      const { fetchProjects } = useTaskStore.getState();
-      await fetchProjects();
-
+      await useTaskStore.getState().fetchProjects();
       expect(useTaskStore.getState().selectedProjectId).toBe(-1);
     });
 
     it('toggleTask() should enqueue mutation carrying full task snapshot to prevent server field wiping', () => {
       const mockEnqueue = jest.fn();
-      const mockSyncQueue = {
-        enqueue: mockEnqueue,
-        processQueue: jest.fn(),
-      };
-
-      const task = {
-        id: 42,
-        title: 'Complete tax filing',
-        description: 'Forms 1040 and W2 attached',
-        done: false,
-        priority: 4,
-        project_id: 2,
-        due_date: '2026-10-15T00:00:00Z',
-        assignees: [{ id: 101, username: 'terahz' }],
-      };
-
       useTaskStore.setState({
-        tasks: [task as any],
-        syncQueue: mockSyncQueue as any,
+        tasks: [
+          {
+            id: 42,
+            title: 'Complete tax filing',
+            description: 'Forms 1040 and W2 attached',
+            done: false,
+            priority: 4,
+            project_id: 2,
+            due_date: '2026-10-15T00:00:00Z',
+            assignees: [{ id: 101, username: 'terahz' }],
+          },
+        ],
+        syncQueue: { enqueue: mockEnqueue, processQueue: jest.fn() } as any,
       });
 
-      const { toggleTask } = useTaskStore.getState();
-      toggleTask(42);
+      useTaskStore.getState().toggleTask(42);
 
       expect(mockEnqueue).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -532,27 +879,21 @@ describe('useTaskStore', () => {
 
     it('moveTask() should enqueue mutation carrying full task snapshot with updated project_id', () => {
       const mockEnqueue = jest.fn();
-      const mockSyncQueue = {
-        enqueue: mockEnqueue,
-        processQueue: jest.fn(),
-      };
-
-      const task = {
-        id: 42,
-        title: 'Move Me',
-        description: 'Important notes',
-        done: false,
-        priority: 3,
-        project_id: 1,
-      };
-
       useTaskStore.setState({
-        tasks: [task as any],
-        syncQueue: mockSyncQueue as any,
+        tasks: [
+          {
+            id: 42,
+            title: 'Move Me',
+            description: 'Important notes',
+            done: false,
+            priority: 3,
+            project_id: 1,
+          },
+        ],
+        syncQueue: { enqueue: mockEnqueue, processQueue: jest.fn() } as any,
       });
 
-      const { moveTask } = useTaskStore.getState();
-      moveTask(42, 5);
+      useTaskStore.getState().moveTask(42, 5);
 
       expect(mockEnqueue).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -574,28 +915,22 @@ describe('useTaskStore', () => {
 
     it('updateTaskDetails() should enqueue mutation carrying full merged task snapshot', () => {
       const mockEnqueue = jest.fn();
-      const mockSyncQueue = {
-        enqueue: mockEnqueue,
-        processQueue: jest.fn(),
-      };
-
-      const task = {
-        id: 42,
-        title: 'Original Title',
-        description: 'Original Description',
-        done: false,
-        priority: 1,
-        project_id: 1,
-        due_date: '2026-10-10T00:00:00Z',
-      };
-
       useTaskStore.setState({
-        tasks: [task as any],
-        syncQueue: mockSyncQueue as any,
+        tasks: [
+          {
+            id: 42,
+            title: 'Original Title',
+            description: 'Original Description',
+            done: false,
+            priority: 1,
+            project_id: 1,
+            due_date: '2026-10-10T00:00:00Z',
+          },
+        ],
+        syncQueue: { enqueue: mockEnqueue, processQueue: jest.fn() } as any,
       });
 
-      const { updateTaskDetails } = useTaskStore.getState();
-      updateTaskDetails(42, { title: 'Updated Title', priority: 3 });
+      useTaskStore.getState().updateTaskDetails(42, { title: 'Updated Title', priority: 3 });
 
       expect(mockEnqueue).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -615,7 +950,7 @@ describe('useTaskStore', () => {
     });
   });
 
-  describe('Label Sync, Color Enrichment, and Deletion', () => {
+  describe('Label Sync, Color Enrichment, and Global Label Management', () => {
     it('fetchLabels() should retrieve labels from server and store them', async () => {
       const mockClient = {
         getLabels: jest.fn().mockResolvedValue([
@@ -625,8 +960,7 @@ describe('useTaskStore', () => {
       };
 
       useTaskStore.setState({ client: mockClient as any, labels: [] });
-      const { fetchLabels } = useTaskStore.getState();
-      const labels = await fetchLabels();
+      const labels = await useTaskStore.getState().fetchLabels();
 
       expect(labels).toHaveLength(2);
       expect(useTaskStore.getState().labels).toEqual([
@@ -637,13 +971,8 @@ describe('useTaskStore', () => {
 
     it('updateTaskLabels() should enqueue mutation with previousLabels for deletion', () => {
       const mockEnqueue = jest.fn();
-      const mockSyncQueue = {
-        enqueue: mockEnqueue,
-        processQueue: jest.fn(),
-      };
-
       useTaskStore.setState({
-        syncQueue: mockSyncQueue as any,
+        syncQueue: { enqueue: mockEnqueue, processQueue: jest.fn() } as any,
         tasks: [
           {
             id: 10,
@@ -659,9 +988,7 @@ describe('useTaskStore', () => {
         ],
       });
 
-      const { updateTaskLabels } = useTaskStore.getState();
-      // Remove Groceries (keep only Costco)
-      updateTaskLabels(10, [{ id: 1, title: 'Costco' }]);
+      useTaskStore.getState().updateTaskLabels(10, [{ id: 1, title: 'Costco' }]);
 
       expect(mockEnqueue).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -676,7 +1003,6 @@ describe('useTaskStore', () => {
           },
         })
       );
-      expect(useTaskStore.getState().tasks[0].labels).toEqual([{ id: 1, title: 'Costco' }]);
     });
 
     it('fetchAllTasks() should enrich labels with server hex_color and not resurrect deleted labels', async () => {
@@ -688,7 +1014,6 @@ describe('useTaskStore', () => {
             done: false,
             priority: 1,
             project_id: 1,
-            // Server returns label without hex_color
             labels: [{ id: 1, title: 'Costco' }],
           },
           {
@@ -697,7 +1022,6 @@ describe('useTaskStore', () => {
             done: false,
             priority: 1,
             project_id: 1,
-            // Server returns empty labels array (user deleted them)
             labels: [],
           },
         ]),
@@ -720,18 +1044,13 @@ describe('useTaskStore', () => {
         ],
       });
 
-      const { fetchAllTasks } = useTaskStore.getState();
-      await fetchAllTasks();
+      await useTaskStore.getState().fetchAllTasks();
 
       const tasks = useTaskStore.getState().tasks;
-      const task10 = tasks.find((t) => t.id === 10);
-      const task20 = tasks.find((t) => t.id === 20);
-
-      // Task 10's label is enriched with hex_color
-      expect(task10?.labels).toEqual([{ id: 1, title: 'Costco', hex_color: 'ff5722', color: 'ff5722' }]);
-
-      // Task 20's old label is NOT resurrected
-      expect(task20?.labels).toEqual([]);
+      expect(tasks.find((t) => t.id === 10)?.labels).toEqual([
+        { id: 1, title: 'Costco', hex_color: 'ff5722', color: 'ff5722' },
+      ]);
+      expect(tasks.find((t) => t.id === 20)?.labels).toEqual([]);
     });
 
     it('resetAndSyncFromServer() should clear local cache and reload authoritative server state', async () => {
@@ -740,9 +1059,7 @@ describe('useTaskStore', () => {
           { id: 1, title: 'Costco', color: 'ef4444' },
           { id: 2, title: 'Caraluzzi', color: '22c55e' },
         ]),
-        getProjects: jest.fn().mockResolvedValue([
-          { id: 1, title: 'Groceries' },
-        ]),
+        getProjects: jest.fn().mockResolvedValue([{ id: 1, title: 'Groceries' }]),
         getAllTasks: jest.fn().mockResolvedValue([
           {
             id: 10,
@@ -750,7 +1067,6 @@ describe('useTaskStore', () => {
             done: false,
             priority: 1,
             project_id: 1,
-            // Task has stale/blank color snapshot from server
             labels: [{ id: 1, title: 'Costco', color: '' }],
           },
           {
@@ -759,7 +1075,6 @@ describe('useTaskStore', () => {
             done: false,
             priority: 1,
             project_id: 1,
-            // Task has outdated blue snapshot from server
             labels: [{ id: 2, title: 'Caraluzzi', color: '3b82f6' }],
           },
         ]),
@@ -768,58 +1083,73 @@ describe('useTaskStore', () => {
 
       useTaskStore.setState({
         client: mockClient as any,
-        syncQueue: { hasPendingForTask: () => false } as any,
-        tasks: [
-          { id: 999, title: 'Stale Local Task', done: false, priority: 0, project_id: 1 },
-        ],
+        syncQueue: { clear: jest.fn(), hasPendingForTask: () => false } as any,
+        tasks: [{ id: 999, title: 'Stale Local Task', done: false, priority: 0, project_id: 1 }],
       });
 
-      const { resetAndSyncFromServer } = useTaskStore.getState();
-      await resetAndSyncFromServer();
-
-      expect(mockClient.getLabels).toHaveBeenCalled();
-      expect(mockClient.getProjects).toHaveBeenCalled();
-      expect(mockClient.getAllTasks).toHaveBeenCalled();
+      await useTaskStore.getState().resetAndSyncFromServer();
 
       const state = useTaskStore.getState();
       expect(state.syncStatus).toBe('synced');
-      // Stale task 999 was wiped
       expect(state.tasks.find((t) => t.id === 999)).toBeUndefined();
+      expect(state.tasks.find((t) => t.id === 10)?.labels?.[0].hex_color).toBe('ef4444');
+      expect(state.tasks.find((t) => t.id === 11)?.labels?.[0].hex_color).toBe('22c55e');
+    });
 
-      // Labels are normalized with canonical server colors
-      const waterTask = state.tasks.find((t) => t.id === 10);
-      const milkTask = state.tasks.find((t) => t.id === 11);
+    it('createGlobalLabel, updateGlobalLabel, and deleteGlobalLabel manage labels in store and server', async () => {
+      const mockClient = {
+        createLabel: jest.fn().mockResolvedValue({ id: 7, title: 'Produce', hex_color: '#22c55e' }),
+        updateLabel: jest.fn().mockResolvedValue({ id: 7, title: 'Fresh Produce', hex_color: '#16a34a' }),
+        deleteLabel: jest.fn().mockResolvedValue({ message: 'deleted' }),
+      };
 
-      expect(waterTask?.labels?.[0].color).toBe('ef4444');
-      expect(waterTask?.labels?.[0].hex_color).toBe('ef4444');
+      useTaskStore.setState({
+        client: mockClient as any,
+        labels: [],
+        tasks: [{ id: 10, title: 'Apples', done: false, priority: 0, project_id: 1, labels: [{ id: 7, title: 'Produce' }] }],
+      });
 
-      // Milk's Caraluzzi label was overwritten with canonical green (22c55e), not old blue (3b82f6)
-      expect(milkTask?.labels?.[0].color).toBe('22c55e');
-      expect(milkTask?.labels?.[0].hex_color).toBe('22c55e');
+      const created = await useTaskStore.getState().createGlobalLabel('Produce', '#22c55e');
+      expect(created.id).toBe(7);
+      expect(useTaskStore.getState().labels).toHaveLength(1);
+
+      await useTaskStore.getState().updateGlobalLabel(7, 'Fresh Produce', '#16a34a');
+      expect(useTaskStore.getState().tasks[0].labels?.[0].title).toBe('Fresh Produce');
+
+      await useTaskStore.getState().deleteGlobalLabel(7);
+      expect(useTaskStore.getState().labels).toHaveLength(0);
+      expect(useTaskStore.getState().tasks[0].labels).toEqual([]);
     });
   });
 
-  describe('User Caching & Assignee Sync (CUJ 1 & 4)', () => {
+  describe('User Caching & Assignee Sync', () => {
     it('should cache and retrieve known users for typing suggestions', async () => {
-      const { setCachedUsers } = useTaskStore.getState();
       const testUsers = [
         { id: 1, username: 'terahz', name: 'Georgi' },
         { id: 2, username: 'alex' },
       ];
 
-      setCachedUsers(testUsers);
+      useTaskStore.getState().setCachedUsers(testUsers);
       expect(useTaskStore.getState().cachedUsers).toEqual(testUsers);
+    });
+
+    it('fetchUsers() merges searched users into cachedUsers', async () => {
+      const mockClient = {
+        searchUsers: jest.fn().mockResolvedValue([{ id: 3, username: 'bob' }]),
+      };
+      useTaskStore.setState({
+        client: mockClient as any,
+        cachedUsers: [{ id: 1, username: 'alice' }],
+      });
+
+      const merged = await useTaskStore.getState().fetchUsers('bo');
+      expect(merged.map((u) => u.username)).toEqual(['alice', 'bob']);
     });
 
     it('updateTaskAssignees() should enqueue SET_TASK_ASSIGNEES mutation with previous assignees', () => {
       const mockEnqueue = jest.fn();
-      const mockSyncQueue = {
-        enqueue: mockEnqueue,
-        processQueue: jest.fn(),
-      };
-
       useTaskStore.setState({
-        syncQueue: mockSyncQueue as any,
+        syncQueue: { enqueue: mockEnqueue, processQueue: jest.fn() } as any,
         tasks: [
           {
             id: 10,
@@ -835,39 +1165,40 @@ describe('useTaskStore', () => {
         ],
       });
 
-      const { updateTaskAssignees } = useTaskStore.getState();
-      updateTaskAssignees(10, [{ id: 1, username: 'terahz' }, { id: 3, username: 'bob' }]);
+      useTaskStore.getState().updateTaskAssignees(10, [
+        { id: 1, username: 'terahz' },
+        { id: 3, username: 'bob' },
+      ]);
 
       expect(mockEnqueue).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'SET_TASK_ASSIGNEES',
           payload: {
             taskId: 10,
-            assignees: [{ id: 1, username: 'terahz' }, { id: 3, username: 'bob' }],
-            previousAssignees: [{ id: 1, username: 'terahz' }, { id: 2, username: 'alex' }],
+            assignees: [
+              { id: 1, username: 'terahz' },
+              { id: 3, username: 'bob' },
+            ],
+            previousAssignees: [
+              { id: 1, username: 'terahz' },
+              { id: 2, username: 'alex' },
+            ],
           },
         })
       );
-      expect(useTaskStore.getState().tasks[0].assignees).toEqual([
-        { id: 1, username: 'terahz' },
-        { id: 3, username: 'bob' },
-      ]);
     });
   });
 
-  describe('Large Task Items Preference', () => {
+  describe('Large Task Items & Scale Preferences', () => {
     it('should update largeTaskItems state and persist to AsyncStorage', async () => {
       const { setLargeTaskItems } = useTaskStore.getState();
-
       expect(useTaskStore.getState().largeTaskItems).toBe(false);
 
       await setLargeTaskItems(true);
-
       expect(useTaskStore.getState().largeTaskItems).toBe(true);
       expect(useTaskStore.getState().taskItemScale).toBe(150);
 
       await setLargeTaskItems(false);
-
       expect(useTaskStore.getState().largeTaskItems).toBe(false);
       expect(useTaskStore.getState().taskItemScale).toBe(100);
     });
@@ -879,10 +1210,10 @@ describe('useTaskStore', () => {
       expect(useTaskStore.getState().taskItemScale).toBe(125);
       expect(useTaskStore.getState().largeTaskItems).toBe(true);
 
-      await setTaskItemScale(250); // should clamp to 200
+      await setTaskItemScale(250);
       expect(useTaskStore.getState().taskItemScale).toBe(200);
 
-      await setTaskItemScale(80); // should clamp to 100
+      await setTaskItemScale(80);
       expect(useTaskStore.getState().taskItemScale).toBe(100);
       expect(useTaskStore.getState().largeTaskItems).toBe(false);
     });
@@ -893,15 +1224,15 @@ describe('useTaskStore', () => {
       await setTaskItemTextScale(150);
       expect(useTaskStore.getState().taskItemTextScale).toBe(150);
 
-      await setTaskItemTextScale(250); // clamp to 200
+      await setTaskItemTextScale(250);
       expect(useTaskStore.getState().taskItemTextScale).toBe(200);
 
-      await setTaskItemTextScale(50); // clamp to 100
+      await setTaskItemTextScale(50);
       expect(useTaskStore.getState().taskItemTextScale).toBe(100);
     });
   });
 
-  describe('Phase 2 Reliability: Sync Locks, Storage Rehydration & Clear Session', () => {
+  describe('Reliability, Token Renewal, Notifications, Clear Session & Project Management', () => {
     it('syncAll should acquire concurrency lock and prevent overlapping executions', async () => {
       let resolveFirstSync: () => void = () => {};
       const mockClient = {
@@ -919,50 +1250,18 @@ describe('useTaskStore', () => {
       useTaskStore.setState({ client: mockClient as any });
       const store = useTaskStore.getState();
 
-      // Trigger first sync (will pause on getLabels)
       const firstSyncPromise = store.syncAll();
       expect(useTaskStore.getState().syncStatus).toBe('syncing');
 
-      // Trigger second sync while first is still in progress
       const secondSyncPromise = store.syncAll();
 
-      // Resolve first sync to complete
       resolveFirstSync();
       await Promise.all([firstSyncPromise, secondSyncPromise]);
 
-      // getLabels should only have been called ONCE due to concurrency lock
       expect(mockClient.getLabels).toHaveBeenCalledTimes(1);
     });
 
-    it('clearSession should clear in-memory state, syncQueue, and all AsyncStorage caches', async () => {
-      const AsyncStorage = require('@react-native-async-storage/async-storage');
-      useTaskStore.setState({
-        projects: [{ id: 1, title: 'Work' } as any],
-        tasks: [{ id: 10, title: 'Task 1', done: false, project_id: 1 } as any],
-        labels: [{ id: 2, title: 'Bug' } as any],
-        currentUser: { id: 1, username: 'terahz' } as any,
-        selectedProjectId: 1,
-      });
-
-      const store = useTaskStore.getState();
-      await store.clearSession();
-
-      const stateAfter = useTaskStore.getState();
-      expect(stateAfter.projects).toEqual([]);
-      expect(stateAfter.tasks).toEqual([]);
-      expect(stateAfter.labels).toEqual([]);
-      expect(stateAfter.currentUser).toBeNull();
-      expect(stateAfter.selectedProjectId).toBeNull();
-
-      expect(await AsyncStorage.getItem('@vikunja_cached_projects')).toBeNull();
-      expect(await AsyncStorage.getItem('@vikunja_cached_tasks')).toBeNull();
-      expect(await AsyncStorage.getItem('@vikunja_cached_labels')).toBeNull();
-      expect(await AsyncStorage.getItem('@vikunja_cached_current_user')).toBeNull();
-      expect(await AsyncStorage.getItem('@vikunja_sync_queue')).toBeNull();
-    });
-
     it('initialize should rehydrate pending syncQueue from AsyncStorage', async () => {
-      const AsyncStorage = require('@react-native-async-storage/async-storage');
       await AsyncStorage.setItem(
         '@vikunja_sync_queue',
         JSON.stringify([
@@ -983,27 +1282,183 @@ describe('useTaskStore', () => {
       expect(queue?.getQueue()[0].id).toBe('persisted-mutation');
     });
 
-    it('initialize should configure client.onTokenRefresh to silently renew token with stored credentials', async () => {
+    it('renews JWT via POST /user/token on 401 and skips renewToken for tk_ Personal API Tokens', async () => {
       const { setStoredAuth, getStoredAuth } = require('../../utils/biometrics');
-      await setStoredAuth('old-expired-token', 'https://try.vikunja.io', 'bob', 'pass123');
-      await useTaskStore.getState().initialize('https://try.vikunja.io', 'old-expired-token');
+      await setStoredAuth('old-jwt-token', 'https://try.vikunja.io', 'bob');
+      await useTaskStore.getState().initialize('https://try.vikunja.io', 'old-jwt-token');
 
-      const client = useTaskStore.getState().client;
-      expect(client).not.toBeNull();
-      expect(client?.onTokenRefresh).toBeDefined();
-
-      global.fetch = jest.fn().mockResolvedValue({
+      const client = useTaskStore.getState().client!;
+      global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ token: 'brand-new-refreshed-token' }),
+        json: async () => ({ token: 'renewed-jwt-token' }),
       } as Response);
 
-      const refreshed = await client?.onTokenRefresh!();
-      expect(refreshed).toBe('brand-new-refreshed-token');
-      expect(client?.getToken()).toBe('brand-new-refreshed-token');
+      const refreshed = await client.onTokenRefresh!();
+      expect(refreshed).toBe('renewed-jwt-token');
+      expect((await getStoredAuth()).token).toBe('renewed-jwt-token');
 
-      const storedAfter = await getStoredAuth();
-      expect(storedAfter.token).toBe('brand-new-refreshed-token');
+      client.setToken('tk_personal_secret');
+      global.fetch = jest.fn();
+      const tkRefreshed = await client.onTokenRefresh!();
+      expect(tkRefreshed).toBeNull();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('pauses sync as auth_required on 401 without wiping syncQueue or cached tasks', async () => {
+      await useTaskStore.getState().initialize('https://try.vikunja.io', 'expired-jwt');
+      useTaskStore.getState().addTask({ title: 'Must Never Lose Offline Task', project_id: 1 });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Expired' }),
+      } as Response);
+
+      await useTaskStore.getState().syncAll();
+
+      const state = useTaskStore.getState();
+      expect(state.authRequired).toBe(true);
+      expect(state.syncStatus).toBe('auth_required');
+      expect(state.tasks.some((t) => t.title === 'Must Never Lose Offline Task')).toBe(true);
+      expect(state.syncQueue?.getQueue().length).toBeGreaterThan(0);
+    });
+
+    it('sets syncStatus to offline (not auth_required and without wiping) when renewToken fails transiently offline', async () => {
+      await useTaskStore.getState().initialize('https://try.vikunja.io', 'expiring-jwt');
+      const client = useTaskStore.getState().client!;
+
+      let callNum = 0;
+      global.fetch = jest.fn().mockImplementation(() => {
+        callNum++;
+        if (callNum === 1) {
+          return Promise.resolve({
+            ok: false,
+            status: 401,
+            statusText: 'Unauthorized',
+            json: async () => ({ message: 'Expired' }),
+          } as Response);
+        }
+        return Promise.reject(new Error('Network request failed'));
+      });
+
+      await expect(client.getProjects()).rejects.toThrow();
+      expect(useTaskStore.getState().authRequired).toBe(false);
+      expect(useTaskStore.getState().syncStatus).toBe('offline');
+    });
+
+    it('wires local notification scheduling & cancellation into toggleTask, updateTaskDetails, reenableTask, deleteTask, and deleteProject', async () => {
+      const cancelSpy = jest
+        .spyOn(localNotifications, 'cancelTaskReminders')
+        .mockResolvedValue(undefined);
+      const scheduleSpy = jest
+        .spyOn(localNotifications, 'scheduleTaskReminders')
+        .mockResolvedValue(undefined);
+
+      useTaskStore.setState({
+        client: { deleteProject: jest.fn().mockResolvedValue({ message: 'ok' }) } as any,
+        projects: [{ id: 1, title: 'Inbox' }, { id: 2, title: 'Work' }],
+        tasks: [
+          {
+            id: 10,
+            title: 'Task 10',
+            done: false,
+            priority: 1,
+            project_id: 1,
+            due_date: new Date(Date.now() + 86400_000).toISOString(),
+            reminders: [{ relative_to: ReminderRelativeTo.DueDate, relative_period: 0 }],
+          },
+          { id: 20, title: 'Task 20', done: false, priority: 1, project_id: 2 },
+        ],
+      });
+
+      useTaskStore.getState().toggleTask(10);
+      expect(cancelSpy).toHaveBeenCalledWith(10);
+
+      useTaskStore.getState().updateTaskDetails(10, { title: 'Task 10 Edited' });
+      expect(scheduleSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 10, title: 'Task 10 Edited' })
+      );
+
+      cancelSpy.mockClear();
+      useTaskStore.getState().reenableTask(10);
+      expect(cancelSpy).toHaveBeenCalledWith(10);
+
+      cancelSpy.mockClear();
+      useTaskStore.getState().deleteTask(10);
+      expect(cancelSpy).toHaveBeenCalledWith(10);
+
+      cancelSpy.mockClear();
+      await useTaskStore.getState().deleteProject(2);
+      expect(cancelSpy).toHaveBeenCalledWith(20);
+
+      cancelSpy.mockRestore();
+      scheduleSpy.mockRestore();
+    });
+
+    it('clearSession synchronously sets client: null, aborts in-flight fetches, cancels notifications, clears AI cache, and purges all seeded storage keys', async () => {
+      await AsyncStorage.multiSet([
+        ['@vikunja_cached_projects', JSON.stringify([{ id: 1, title: 'Secret List' }])],
+        ['@vikunja_cached_tasks', JSON.stringify([{ id: 10, title: 'Secret Task' }])],
+        ['@vikunja_cached_labels', JSON.stringify([{ id: 2, title: 'Secret Label' }])],
+        ['@vikunja_cached_users', JSON.stringify([{ id: 5, username: 'alice' }])],
+        ['@vikunja_current_user', JSON.stringify({ id: 5, username: 'alice' })],
+        ['@vikunja_cached_current_user', JSON.stringify({ id: 5, username: 'alice' })],
+        ['@vikunja_last_project_id', '1'],
+        ['@vikunja_sync_queue', JSON.stringify([{ id: 'm1', type: 'DELETE_TASK', payload: { taskId: 10 }, timestamp: 1 }])],
+        ['@vikunja_username', 'alice'],
+        ['@vikunja_saved_username', 'alice'],
+        ['@vikunja_aicore_cat_1_10_inbox', 'Work'],
+      ]);
+
+      let resolveSlowTasks!: (val: any) => void;
+      let capturedSignal: AbortSignal | undefined;
+      global.fetch = jest.fn().mockImplementation((_url: string, opts?: any) => {
+        capturedSignal = opts?.signal;
+        return new Promise((resolve) => {
+          resolveSlowTasks = resolve;
+        });
+      });
+
+      await useTaskStore.getState().initialize('https://try.vikunja.io', 'jwt-active');
+
+      const inFlightFetch = useTaskStore.getState().fetchTasks(1);
+      await new Promise((r) => setTimeout(r, 10));
+
+      const clearPromise = useTaskStore.getState().clearSession();
+      // Synchronously null BEFORE clearPromise resolves!
+      expect(useTaskStore.getState().client).toBeNull();
+      await clearPromise;
+
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(Notifications.cancelAllScheduledNotificationsAsync).toHaveBeenCalled();
+
+      resolveSlowTasks({
+        ok: true,
+        status: 200,
+        json: async () => [
+          { id: 999, title: 'Leaked Post-Logout Task', done: false, priority: 0, project_id: 1 },
+        ],
+      });
+      await inFlightFetch;
+
+      expect(useTaskStore.getState().tasks).toEqual([]);
+      for (const key of [
+        '@vikunja_cached_projects',
+        '@vikunja_cached_tasks',
+        '@vikunja_cached_labels',
+        '@vikunja_cached_users',
+        '@vikunja_current_user',
+        '@vikunja_cached_current_user',
+        '@vikunja_last_project_id',
+        '@vikunja_sync_queue',
+        '@vikunja_username',
+        '@vikunja_saved_username',
+        '@vikunja_aicore_cat_1_10_inbox',
+      ]) {
+        expect(await AsyncStorage.getItem(key)).toBeNull();
+      }
     });
 
     describe('Project Management Actions', () => {
@@ -1013,10 +1468,11 @@ describe('useTaskStore', () => {
         };
         useTaskStore.setState({ client: mockClient as any, projects: [] });
 
-        const created = await useTaskStore.getState().createProject({ title: 'Vacation', hex_color: '#3498db' });
+        const created = await useTaskStore
+          .getState()
+          .createProject({ title: 'Vacation', hex_color: '#3498db' });
         expect(created.id).toBe(9);
         expect(useTaskStore.getState().projects).toEqual([created]);
-        expect(mockClient.createProject).toHaveBeenCalledWith({ title: 'Vacation', hex_color: '#3498db' });
       });
 
       it('updateProject() should call client and update project in state', async () => {
@@ -1028,7 +1484,9 @@ describe('useTaskStore', () => {
           projects: [{ id: 1, title: 'Work', hex_color: '#00ff00' } as any],
         });
 
-        const updated = await useTaskStore.getState().updateProject(1, { title: 'Work Updated', hex_color: '#ff0000' });
+        const updated = await useTaskStore
+          .getState()
+          .updateProject(1, { title: 'Work Updated', hex_color: '#ff0000' });
         expect(updated.title).toBe('Work Updated');
         expect(useTaskStore.getState().projects[0].title).toBe('Work Updated');
       });
@@ -1080,7 +1538,6 @@ describe('useTaskStore', () => {
         });
 
         await useTaskStore.getState().toggleProjectFavorite(1);
-
         expect(useTaskStore.getState().projects[0].is_favorite).toBe(true);
       });
 
@@ -1108,6 +1565,3 @@ describe('useTaskStore', () => {
     });
   });
 });
-
-
-

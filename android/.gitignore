@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+
+# Gradle & Build Outputs
+.gradle/
+build/
+app/build/
+.kotlin/
+.cxx/
+app/.cxx/
+.externalNativeBuild/
+captures/
+
+# Local SDK / Machine Config
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.hprof
+
+# Secrets, Signing Keys & Binary Artifacts (NEVER commit)
+*.keystore
+*.jks
+*.aab
+*.apk
+*.ap_
+*.dex
+play-service-account*.json
+
+# Generated inline modules & JS bundles
+app/src/main/java/inline/
+*.jsbundle

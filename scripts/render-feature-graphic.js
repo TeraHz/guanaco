@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const iconPath = path.resolve(__dirname, '../assets/icon.png');
 const iconBase64 = fs.readFileSync(iconPath).toString('base64');
@@ -78,16 +78,36 @@ const htmlPath = path.resolve(__dirname, '../assets/store_listing/feature_graphi
 fs.writeFileSync(htmlPath, html);
 
 const outputPath = path.resolve(__dirname, '../assets/store_listing/feature_graphic_1024x500.png');
+const chromeBinary =
+  process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+
+if (!fs.existsSync(chromeBinary)) {
+  console.error(`❌ Chrome binary not found at "${chromeBinary}". Set CHROME_BIN to override.`);
+  process.exit(1);
+}
 
 console.log('Rendering 1024x500 feature graphic via Chrome headless...');
-execSync(`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
-  --headless=new \\
-  --hide-scrollbars \\
-  --window-size=1024,500 \\
-  --force-device-scale-factor=1 \\
-  --screenshot="${outputPath}" \\
-  "file://${htmlPath}"`, { stdio: 'inherit' });
+execFileSync(
+  chromeBinary,
+  [
+    '--headless=new',
+    '--hide-scrollbars',
+    '--window-size=1024,500',
+    '--force-device-scale-factor=1',
+    `--screenshot=${outputPath}`,
+    `file://${htmlPath}`,
+  ],
+  { stdio: 'inherit' }
+);
 
 // Ensure strict 1024x500, 24-bit RGB (no alpha channel) as required by Google Play
-execSync(`magick "${outputPath}" -crop 1024x500+0+0 +repage -alpha off "${outputPath}"`);
+execFileSync('magick', [
+  outputPath,
+  '-crop',
+  '1024x500+0+0',
+  '+repage',
+  '-alpha',
+  'off',
+  outputPath,
+]);
 console.log('Optimized feature graphic: 1024x500 without alpha channel.');

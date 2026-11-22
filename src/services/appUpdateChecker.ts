@@ -10,6 +10,7 @@ export interface AppUpdateInfo {
   clientVersionStalenessDays: number | null;
   updatePriority: number;
   inProgress: boolean;
+  installStatus?: InstallStatus;
 }
 
 export type InstallStatus =
@@ -29,22 +30,23 @@ export interface InstallProgress {
   errorCode: number;
 }
 
-const { InAppUpdate } = NativeModules;
+const getInAppUpdateModule = () => NativeModules?.InAppUpdate;
 
 export const isNativeUpdateSupported = (): boolean => {
-  return Platform.OS === 'android' && !!InAppUpdate;
+  return Platform.OS === 'android' && !!getInAppUpdateModule();
 };
 
 /**
  * Queries Google Play Services for an available in-app update.
  */
 export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
-  if (!isNativeUpdateSupported()) {
+  const nativeModule = getInAppUpdateModule();
+  if (Platform.OS !== 'android' || !nativeModule) {
     return null;
   }
 
   try {
-    const info: AppUpdateInfo = await InAppUpdate.checkForUpdate();
+    const info: AppUpdateInfo = await nativeModule.checkForUpdate();
     return info;
   } catch (error) {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
@@ -61,22 +63,25 @@ export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
 export async function startAppUpdate(
   type: 'flexible' | 'immediate' = 'flexible'
 ): Promise<'accepted' | 'canceled' | 'failed'> {
-  if (!isNativeUpdateSupported()) {
-    // Fallback: Open Google Play directly
-    await openPlayStore();
-    return 'accepted';
+  const nativeModule = getInAppUpdateModule();
+  if (Platform.OS !== 'android' || !nativeModule) {
+    const opened = await openPlayStore();
+    return opened ? 'accepted' : 'failed';
   }
 
   try {
-    const result = await InAppUpdate.startUpdateFlow(type);
-    return result?.status || 'accepted';
+    const result = await nativeModule.startUpdateFlow(type);
+    const status = result?.status;
+    if (status === 'accepted' || status === 'canceled' || status === 'failed') {
+      return status;
+    }
+    return status ? 'failed' : 'accepted';
   } catch (error) {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.warn('[AppUpdateChecker] In-app update flow failed, falling back to Play Store:', error);
     }
-    // Fallback to opening Play Store page
-    await openPlayStore();
-    return 'accepted';
+    const opened = await openPlayStore();
+    return opened ? 'accepted' : 'failed';
   }
 }
 
@@ -84,9 +89,10 @@ export async function startAppUpdate(
  * For flexible updates: Triggers Google Play to complete the update and restart the app.
  */
 export async function completeAppUpdate(): Promise<boolean> {
-  if (!isNativeUpdateSupported()) return false;
+  const nativeModule = getInAppUpdateModule();
+  if (Platform.OS !== 'android' || !nativeModule) return false;
   try {
-    return await InAppUpdate.completeUpdate();
+    return await nativeModule.completeUpdate();
   } catch (error) {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.warn('[AppUpdateChecker] completeAppUpdate failed:', error);
@@ -99,11 +105,12 @@ export async function completeAppUpdate(): Promise<boolean> {
  * Opens Guanaco's Google Play Store listing.
  */
 export async function openPlayStore(): Promise<boolean> {
-  if (isNativeUpdateSupported()) {
+  const nativeModule = getInAppUpdateModule();
+  if (Platform.OS === 'android' && nativeModule) {
     try {
-      return await InAppUpdate.openPlayStore();
+      return await nativeModule.openPlayStore();
     } catch {
-      // Fallback
+      return false;
     }
   }
   return false;

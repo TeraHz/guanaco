@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -8,10 +8,12 @@ import {
   ScrollView,
   StyleSheet,
   TouchableWithoutFeedback,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { safeHaptics } from '../utils/haptics';
-import { getLabelBadgeStyles, getLabelColor } from '../utils/colors';
+import { getLabelBadgeStyles } from '../utils/colors';
 import { Label, Task } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
 
@@ -38,49 +40,75 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [allLabels, setAllLabels] = useState<string[]>([]);
   const [newLabelText, setNewLabelText] = useState('');
+  const initializedTaskIdRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (task && visible) {
+    if (!visible || !task) {
+      initializedTaskIdRef.current = null;
+      return;
+    }
+
+    const prevId = initializedTaskIdRef.current;
+    // If same optimistic task resolved from negative tempId -> positive server ID while open, keep user's in-progress edits
+    if (prevId !== null && prevId < 0 && task.id > 0) {
+      initializedTaskIdRef.current = task.id;
+      return;
+    }
+
+    if (prevId !== task.id) {
+      initializedTaskIdRef.current = task.id;
       const taskLabelTitles = (task.labels || []).map((l) => l.title);
       setSelectedLabels(taskLabelTitles);
 
-      // Combine available labels, labelDefinitions, and task labels, deduplicated
       const defTitles = (labelDefinitions || []).map((l) => l.title);
-      const combined = Array.from(
-        new Set([...(availableLabels || []), ...defTitles, ...taskLabelTitles])
-      ).filter(Boolean);
+      const seen = new Set<string>();
+      const combined: string[] = [];
+      for (const item of [...(availableLabels || []), ...defTitles, ...taskLabelTitles]) {
+        const clean = (item || '').trim();
+        if (clean && !seen.has(clean.toLowerCase())) {
+          seen.add(clean.toLowerCase());
+          combined.push(clean);
+        }
+      }
       setAllLabels(combined);
+      setNewLabelText('');
     }
-  }, [task?.id, visible]);
+  }, [task?.id, visible, availableLabels, labelDefinitions]);
 
-  if (!task) return null;
+  if (!task || !visible) return null;
 
   const getHexColor = (title: string): string | undefined => {
-    const fromDef = labelDefinitions.find(
+    const def = labelDefinitions.find(
       (l) => l.title.toLowerCase() === title.toLowerCase()
-    )?.hex_color;
+    );
+    const fromDef = def?.hex_color || def?.color;
     if (fromDef) return fromDef;
-    return task.labels?.find((l) => l.title.toLowerCase() === title.toLowerCase())?.hex_color;
+    const taskLbl = task.labels?.find((l) => l.title.toLowerCase() === title.toLowerCase());
+    return taskLbl?.hex_color || taskLbl?.color;
   };
 
   const toggleLabel = (label: string) => {
     safeHaptics.selection();
-    if (selectedLabels.includes(label)) {
-      setSelectedLabels(selectedLabels.filter((l) => l !== label));
+    const exists = selectedLabels.some((l) => l.toLowerCase() === label.toLowerCase());
+    if (exists) {
+      setSelectedLabels(selectedLabels.filter((l) => l.toLowerCase() !== label.toLowerCase()));
     } else {
       setSelectedLabels([...selectedLabels, label]);
     }
   };
 
   const handleAddNewLabel = () => {
-    const trimmed = newLabelText.trim();
+    const trimmed = newLabelText.trim().replace(/^#+/, '').trim();
     if (!trimmed) return;
 
-    if (!allLabels.includes(trimmed)) {
-      setAllLabels([trimmed, ...allLabels]);
+    const existingCanonical =
+      allLabels.find((l) => l.toLowerCase() === trimmed.toLowerCase()) || trimmed;
+
+    if (!allLabels.some((l) => l.toLowerCase() === trimmed.toLowerCase())) {
+      setAllLabels([existingCanonical, ...allLabels]);
     }
-    if (!selectedLabels.includes(trimmed)) {
-      setSelectedLabels([...selectedLabels, trimmed]);
+    if (!selectedLabels.some((l) => l.toLowerCase() === trimmed.toLowerCase())) {
+      setSelectedLabels([...selectedLabels, existingCanonical]);
     }
 
     setNewLabelText('');
@@ -88,14 +116,22 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
   };
 
   const handleSave = () => {
-    const formattedLabels: Label[] = selectedLabels.map((title, idx) => {
+    let finalSelected = [...selectedLabels];
+    const pendingTyped = newLabelText.trim().replace(/^#+/, '').trim();
+    if (pendingTyped && !finalSelected.some((l) => l.toLowerCase() === pendingTyped.toLowerCase())) {
+      const canonical =
+        allLabels.find((l) => l.toLowerCase() === pendingTyped.toLowerCase()) || pendingTyped;
+      finalSelected.push(canonical);
+    }
+
+    const formattedLabels: Label[] = finalSelected.map((title, idx) => {
       const existing = task.labels?.find((l) => l.title.toLowerCase() === title.toLowerCase());
       const def = labelDefinitions.find((l) => l.title.toLowerCase() === title.toLowerCase());
       return (
         existing || {
-          id: def?.id || -Math.floor(Date.now() + idx),
-          title,
-          hex_color: def?.hex_color,
+          id: def?.id || -Math.floor(Date.now() + idx + 1),
+          title: def?.title || title,
+          hex_color: def?.hex_color || def?.color,
         }
       );
     });
@@ -112,7 +148,11 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView
+        testID="quick-label-keyboard-avoiding"
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <TouchableWithoutFeedback onPress={onClose}>
           <View style={styles.backdrop} />
         </TouchableWithoutFeedback>
@@ -127,7 +167,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
           ]}
         >
           <View style={styles.header}>
-            <View>
+            <View style={styles.headerTextCol}>
               <Text style={[styles.title, { color: theme.colors.text }]}>Edit Labels</Text>
               <Text style={[styles.taskTitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
                 {task.title}
@@ -138,6 +178,8 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
               style={styles.doneBtn}
               onPress={handleSave}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Save labels"
             >
               <Text style={styles.doneBtnText}>Done</Text>
             </TouchableOpacity>
@@ -166,11 +208,15 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
               testID="label-modal-add-btn"
               style={[
                 styles.addBtn,
-                !newLabelText.trim() && styles.addBtnDisabled,
+                !newLabelText.trim() && {
+                  backgroundColor: theme.isDark ? '#3A3A3C' : '#D1D1D6',
+                },
               ]}
               onPress={handleAddNewLabel}
               disabled={!newLabelText.trim()}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Add new label"
             >
               <Text style={styles.addBtnText}>+ Add</Text>
             </TouchableOpacity>
@@ -180,11 +226,17 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
           <Text style={[styles.sectionHeading, { color: theme.colors.textSecondary }]}>
             Tap to tag or move stores:
           </Text>
-          <ScrollView style={styles.labelsList} contentContainerStyle={styles.chipsContainer}>
+          <ScrollView
+            style={styles.labelsList}
+            contentContainerStyle={styles.chipsContainer}
+            keyboardShouldPersistTaps="handled"
+          >
             {allLabels.map((label) => {
-              const isSelected = selectedLabels.includes(label);
+              const isSelected = selectedLabels.some(
+                (l) => l.toLowerCase() === label.toLowerCase()
+              );
               const hex = getHexColor(label);
-              const badgeStyle = getLabelBadgeStyles(label, hex);
+              const badgeStyle = getLabelBadgeStyles(label, hex, theme.isDark);
 
               return (
                 <TouchableOpacity
@@ -204,6 +256,9 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
                   ]}
                   onPress={() => toggleLabel(label)}
                   activeOpacity={0.7}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: isSelected }}
+                  accessibilityLabel={`Label ${label}`}
                 >
                   <Text
                     style={[
@@ -223,18 +278,26 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
           {onOpenManageLabels && (
             <TouchableOpacity
               testID="quick-label-manage-btn"
-              style={styles.manageLabelsBtn}
+              style={[styles.manageLabelsBtn, { borderTopColor: theme.colors.border }]}
               onPress={() => {
                 onClose();
                 onOpenManageLabels();
               }}
               activeOpacity={0.7}
+              accessibilityRole="button"
             >
-              <Text style={styles.manageLabelsBtnText}>⚙️ Manage & Delete Global Labels</Text>
+              <Text
+                style={[
+                  styles.manageLabelsBtnText,
+                  { color: theme.colors.accent },
+                ]}
+              >
+                ⚙️ Manage & Delete Global Labels
+              </Text>
             </TouchableOpacity>
           )}
         </SafeAreaView>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -249,15 +312,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalContent: {
-    backgroundColor: '#1C1C1E',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,
     paddingTop: 18,
     paddingBottom: 28,
-    maxHeight: '75%',
+    maxHeight: '80%',
     borderWidth: 1,
-    borderColor: '#2C2C2E',
   },
   header: {
     flexDirection: 'row',
@@ -265,16 +326,17 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 16,
   },
+  headerTextCol: {
+    flex: 1,
+    paddingRight: 12,
+  },
   title: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
   taskTitle: {
     fontSize: 14,
-    color: '#8E8E93',
     marginTop: 2,
-    maxWidth: 240,
   },
   doneBtn: {
     backgroundColor: '#007AFF',
@@ -295,23 +357,17 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: '#2C2C2E',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 15,
-    color: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#3A3A3C',
   },
   addBtn: {
     backgroundColor: '#30D158',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
-  },
-  addBtnDisabled: {
-    backgroundColor: '#3A3A3C',
   },
   addBtnText: {
     color: '#FFFFFF',
@@ -321,7 +377,6 @@ const styles = StyleSheet.create({
   sectionHeading: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#8E8E93',
     marginBottom: 10,
   },
   labelsList: {
@@ -339,23 +394,9 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
   },
-  chipSelected: {
-    backgroundColor: '#0A84FF25',
-    borderColor: '#0A84FF',
-  },
-  chipUnselected: {
-    backgroundColor: '#2C2C2E',
-    borderColor: '#3A3A3C',
-  },
   chipText: {
     fontSize: 14,
     fontWeight: '600',
-  },
-  chipTextSelected: {
-    color: '#0A84FF',
-  },
-  chipTextUnselected: {
-    color: '#E5E5EA',
   },
   manageLabelsBtn: {
     marginTop: 12,
@@ -363,10 +404,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderTopWidth: 1,
-    borderTopColor: '#2C2C2E',
   },
   manageLabelsBtnText: {
-    color: '#0A84FF',
     fontSize: 13,
     fontWeight: '600',
   },

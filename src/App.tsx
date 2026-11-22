@@ -1,48 +1,122 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, AppState, Platform, useWindowDimensions } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  AppState,
+  Platform,
+  useWindowDimensions,
+  Image,
+  Alert,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useTaskStore } from './store/taskStore';
-import { LoginScreen } from './screens/LoginScreen';
+import { SYNC_QUEUE_STORAGE_KEY } from './store/syncQueue';
+import { LoginScreen, LoginConnectOptions } from './screens/LoginScreen';
 import { ProjectTasksScreen } from './screens/ProjectTasksScreen';
 import { ProjectDrawer } from './screens/ProjectDrawer';
-import { VikunjaClient } from './api/client';
+import { VikunjaClient, parseAndValidateServerUrl } from './api/client';
+import { User } from './types/vikunja';
 import { useAppTheme } from './utils/theme';
 import {
   getStoredAuth,
   setStoredAuth,
   clearStoredAuth,
+  checkBiometricAvailable,
   isBiometricEnabled,
   authenticateWithBiometrics,
+  isPersonalApiToken,
 } from './utils/biometrics';
 import { initNotifications } from './services/localNotifications';
 import { useUpdateStore } from './store/updateStore';
 import { AppUpdatePromptModal } from './components/AppUpdatePromptModal';
 
+/** Grace period in milliseconds in background before requiring biometric re-unlock on resume. */
+export const BIOMETRIC_LOCK_GRACE_MS = 15_000;
+
 export default function App() {
   const theme = useAppTheme();
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  const { initialize, syncAll } = useTaskStore();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockError, setLockError] = useState<string | null>(null);
+  const [pendingLockLogoutCount, setPendingLockLogoutCount] = useState<number | null>(null);
+  const [showReauthLogin, setShowReauthLogin] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [pendingStoredSession, setPendingStoredSession] = useState<{
+    serverUrl: string;
+    token: string;
+    username: string | null;
+  } | null>(null);
+
+  const backgroundedAtRef = useRef<number | null>(null);
+  const biometricPromptInFlightRef = useRef(false);
+  const isConnectingRef = useRef(false);
+  const isLockedRef = useRef(isLocked);
+  isLockedRef.current = isLocked;
+
+  const { initialize, syncAll, authRequired, pendingSyncCount } = useTaskStore();
+
+  useEffect(() => {
+    const unsub = useTaskStore.subscribe((state, prev) => {
+      if (prev.client && !state.client && !isConnectingRef.current) {
+        setIsDrawerOpen(false);
+        setShowReauthLogin(false);
+        setLockError(null);
+        setPendingLockLogoutCount(null);
+        setIsLocked(false);
+        setIsAuthenticated(false);
+      }
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     initNotifications().catch(() => {});
   }, []);
 
-  // Google Play In-App Updates lifecycle & listeners
+  const promptBiometricUnlock = useCallback(async (): Promise<boolean> => {
+    if (biometricPromptInFlightRef.current) return false;
+    biometricPromptInFlightRef.current = true;
+    try {
+      return await authenticateWithBiometrics('Unlock Guanaco');
+    } finally {
+      biometricPromptInFlightRef.current = false;
+    }
+  }, []);
+
+  const unlockOfflineSession = useCallback(
+    async (sessionOverride?: { serverUrl: string; token: string; username: string | null }) => {
+      const target = sessionOverride || pendingStoredSession;
+      if (!isAuthenticated && target) {
+        await initialize(target.serverUrl, target.token);
+        setIsAuthenticated(true);
+        setPendingStoredSession(null);
+      }
+      setLockError(null);
+      setPendingLockLogoutCount(null);
+      setIsLocked(false);
+      syncAll().catch(() => {});
+    },
+    [initialize, isAuthenticated, pendingStoredSession, syncAll]
+  );
+
+  // Google Play In-App Updates lifecycle & listeners (only check when authenticated & unlocked)
   useEffect(() => {
+    if (!isAuthenticated || isLocked) return;
+
     const unsub = useUpdateStore.getState().initialize();
 
-    // Check Google Play Services after launch
     const initialCheckTimer = setTimeout(() => {
       useUpdateStore.getState().checkForUpdate().catch(() => {});
     }, 2500);
 
-    // Periodic check every 3 hours while app is running
     const periodicCheckTimer = setInterval(() => {
       useUpdateStore.getState().checkForUpdate().catch(() => {});
     }, 3 * 60 * 60 * 1000);
@@ -52,46 +126,60 @@ export default function App() {
       clearInterval(periodicCheckTimer);
       unsub();
     };
-  }, []);
+  }, [isAuthenticated, isLocked]);
 
-  // Auto-restore session from stored token/credentials and check biometrics (Reload & App launch)
+  // Cold-start session restoration & offline-capable biometric gate
   useEffect(() => {
+    let mounted = true;
     async function restoreSession() {
       const stored = await getStoredAuth();
-      if (!stored.serverUrl || (!stored.token && !stored.password)) return;
+      if (!mounted) return;
+      if (!stored.serverUrl || !stored.token) return;
 
-      const biometricActive = await isBiometricEnabled();
+      const biometricActive =
+        (await isBiometricEnabled()) && (await checkBiometricAvailable());
+      if (!mounted) return;
+
       if (biometricActive) {
-        const passed = await authenticateWithBiometrics('Unlock Guanaco');
-        if (!passed) return;
+        const sessionData = {
+          serverUrl: stored.serverUrl,
+          token: stored.token,
+          username: stored.username,
+        };
+        setPendingStoredSession(sessionData);
+        setLockError(null);
+        setIsLocked(true);
+
+        const passed = await promptBiometricUnlock();
+        if (!mounted) return;
+        if (!passed) {
+          // Stay on the biometric lock gate without exposing cached tasks or requiring network login
+          return;
+        }
+
+        await initialize(stored.serverUrl, stored.token);
+        if (!mounted) return;
+        setPendingStoredSession(null);
+        setIsAuthenticated(true);
+        setIsLocked(false);
+        syncAll().catch(() => {});
+        return;
       }
 
-      let activeToken = stored.token;
-      // If token is missing but credentials exist, login silently
-      if (!activeToken && stored.username && stored.password) {
-        try {
-          const tempClient = new VikunjaClient({ baseUrl: stored.serverUrl });
-          const auth = await tempClient.login(stored.username, stored.password);
-          if (auth.token) {
-            activeToken = auth.token;
-            await setStoredAuth(activeToken, stored.serverUrl, stored.username, stored.password);
-          }
-        } catch (_) {}
-      }
-
-      if (!activeToken) return;
-
-      // Load cached data first for 0ms immediate offline rendering
-      await initialize(stored.serverUrl, activeToken);
+      // Biometrics disabled or unavailable on device: restore offline cached data in 0ms
+      await initialize(stored.serverUrl, stored.token);
+      if (!mounted) return;
       setIsAuthenticated(true);
-
-      // Trigger bi-directional sync (push outbound queue, pull all remote tasks & lists)
+      setIsLocked(false);
       syncAll().catch(() => {});
     }
     restoreSession();
-  }, []);
+    return () => {
+      mounted = false;
+    };
+  }, [initialize, promptBiometricUnlock, syncAll]);
 
-  // Bi-directional sync when app returns from background or window gains focus
+  // Resume-aware biometric lock (grace period) + bi-directional foreground sync
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -100,10 +188,10 @@ export default function App() {
     const startPolling = () => {
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(() => {
-        if (AppState.currentState === 'active') {
+        if (AppState.currentState === 'active' && !isLockedRef.current) {
           syncAll().catch(() => {});
         }
-      }, 60000); // 60s active polling interval
+      }, 60000);
     };
 
     const stopPolling = () => {
@@ -113,29 +201,61 @@ export default function App() {
       }
     };
 
-    // Start polling initially if active
-    if (AppState.currentState === 'active') {
+    if (AppState.currentState === 'active' && !isLockedRef.current) {
       startPolling();
     }
 
-    // React Native AppState listener
     const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active') {
-        syncAll().catch(() => {});
-        useUpdateStore.getState().checkForUpdate().catch(() => {});
-        startPolling();
-      } else {
+      if (nextAppState === 'background') {
+        if (!biometricPromptInFlightRef.current && backgroundedAtRef.current === null) {
+          backgroundedAtRef.current = Date.now();
+        }
         stopPolling();
+        return;
+      }
+
+      if (nextAppState === 'active') {
+        const bgAt = backgroundedAtRef.current;
+        backgroundedAtRef.current = null;
+        const elapsedMs = bgAt !== null ? Date.now() - bgAt : 0;
+
+        (async () => {
+          if (bgAt !== null && elapsedMs >= BIOMETRIC_LOCK_GRACE_MS) {
+            const bioActive =
+              (await isBiometricEnabled()) && (await checkBiometricAvailable());
+            if (bioActive) {
+              isLockedRef.current = true;
+              setLockError(null);
+              setPendingLockLogoutCount(null);
+              setIsLocked(true);
+              setIsDrawerOpen(false);
+              stopPolling();
+              const passed = await promptBiometricUnlock();
+              if (!passed) {
+                return;
+              }
+              isLockedRef.current = false;
+              setIsLocked(false);
+            }
+          }
+
+          if (!isLockedRef.current) {
+            syncAll().catch(() => {});
+            useUpdateStore.getState().checkForUpdate().catch(() => {});
+            startPolling();
+          }
+        })().catch(() => {});
       }
     });
 
-    // Web window focus / blur listener
     let handleFocus: (() => void) | null = null;
     let handleBlur: (() => void) | null = null;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       handleFocus = () => {
-        syncAll().catch(() => {});
-        startPolling();
+        if (!isLockedRef.current) {
+          syncAll().catch(() => {});
+          startPolling();
+        }
       };
       handleBlur = () => {
         stopPolling();
@@ -145,7 +265,7 @@ export default function App() {
     }
 
     return () => {
-      subscription.remove();
+      subscription?.remove?.();
       stopPolling();
       if (handleFocus && typeof window !== 'undefined') {
         window.removeEventListener('focus', handleFocus);
@@ -154,40 +274,188 @@ export default function App() {
         window.removeEventListener('blur', handleBlur);
       }
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, promptBiometricUnlock, syncAll]);
 
-  const handleConnect = async (serverUrl: string, username: string, pass: string) => {
-    // Authenticate with Vikunja
-    const tempClient = new VikunjaClient({ baseUrl: serverUrl });
-    const auth = await tempClient.login(username, pass);
+  const handleConnect = async (
+    rawServerUrl: string,
+    username: string,
+    secret: string,
+    options?: LoginConnectOptions
+  ) => {
+    const parsedUrl = parseAndValidateServerUrl(rawServerUrl);
+    if (parsedUrl.isInsecureHttp && !options?.allowInsecureHttp) {
+      throw new Error('Insecure HTTP connection requires explicit confirmation.');
+    }
 
-    // Save token, URL, and credentials to persistent secure storage
-    await setStoredAuth(auth.token, serverUrl, username, pass);
+    const normalizedUrl = parsedUrl.serverUrl;
+    const isTokenAuth =
+      options?.authMethod === 'api_token' || isPersonalApiToken(secret);
 
-    // Initialize task store with authenticated client & sync queue
-    await initialize(serverUrl, auth.token);
+    let activeToken: string;
+    let resolvedUsername = username.trim();
+    let authUser: User | null = null;
 
-    setIsAuthenticated(true);
+    if (isTokenAuth) {
+      const candidateToken = secret.trim();
+      const tempClient = new VikunjaClient({
+        baseUrl: normalizedUrl,
+        token: candidateToken,
+      });
+      const user = await tempClient.getCurrentUser();
+      if (!user || (!user.id && !user.username)) {
+        throw new Error('Invalid Personal API Token');
+      }
+      authUser = user;
+      activeToken = candidateToken;
+      if (user.username) {
+        resolvedUsername = user.username;
+      }
+    } else {
+      const tempClient = new VikunjaClient({ baseUrl: normalizedUrl });
+      const auth = await tempClient.login(
+        resolvedUsername,
+        secret,
+        true,
+        options?.totpPasscode
+      );
+      activeToken = auth.token;
+      // Best-effort resolve canonical user profile so email <-> username / tk_ re-auth matches accurately
+      authUser = await tempClient.getCurrentUser().catch(() => null);
+      if (authUser?.username) {
+        resolvedUsername = authUser.username;
+      }
+    }
 
-    // Run full bidirectional sync (push queue & pull projects and all tasks)
-    syncAll().catch(() => {});
+    // Isolate sessions if switching to a different server or genuinely different user account
+    isConnectingRef.current = true;
+    try {
+      const prevStored = await getStoredAuth();
+      const prevCurrentUser = useTaskStore.getState().currentUser;
+      const isDifferentServer =
+        Boolean(prevStored.serverUrl) && prevStored.serverUrl !== normalizedUrl;
+
+      let isDifferentUser = false;
+      if (authUser && prevCurrentUser && authUser.id > 0 && prevCurrentUser.id > 0) {
+        isDifferentUser = authUser.id !== prevCurrentUser.id;
+      } else if (prevStored.username && resolvedUsername) {
+        const prevIdentifiers = new Set(
+          [
+            prevStored.username,
+            prevCurrentUser?.username,
+            prevCurrentUser?.email,
+          ]
+            .filter((v): v is string => Boolean(v))
+            .map((v) => v.toLowerCase())
+        );
+        const nextIdentifiers = [
+          resolvedUsername,
+          username.trim(),
+          authUser?.username,
+          authUser?.email,
+        ]
+          .filter((v): v is string => Boolean(v))
+          .map((v) => v.toLowerCase());
+
+        isDifferentUser =
+          prevIdentifiers.size > 0 &&
+          nextIdentifiers.length > 0 &&
+          !nextIdentifiers.some((id) => prevIdentifiers.has(id));
+      }
+
+      if (isDifferentServer || isDifferentUser) {
+        await useTaskStore.getState().clearSession();
+      }
+
+      // Persist token, normalized server URL, and canonical username ONLY (zero plaintext passwords!)
+      await setStoredAuth(activeToken, normalizedUrl, resolvedUsername || undefined);
+
+      await initialize(normalizedUrl, activeToken);
+      if (authUser && authUser.username) {
+        useTaskStore.setState({ currentUser: authUser });
+      }
+
+      setPendingStoredSession(null);
+      setShowReauthLogin(false);
+      setLockError(null);
+      setPendingLockLogoutCount(null);
+      setIsLocked(false);
+      setIsAuthenticated(true);
+
+      syncAll().catch(() => {});
+    } finally {
+      isConnectingRef.current = false;
+    }
   };
 
   const handleLogout = async () => {
-    await clearStoredAuth();
+    // Initiate clearSession() FIRST (synchronously setting store.client = null)
+    // before unmounting authenticated screens so unmount effects never fire mutations!
+    const clearPromise = useTaskStore.getState().clearSession();
+    setIsDrawerOpen(false);
+    setShowReauthLogin(false);
+    setLockError(null);
+    setPendingLockLogoutCount(null);
+    setIsLocked(false);
+    setPendingStoredSession(null);
     setIsAuthenticated(false);
-    await useTaskStore.getState().clearSession();
+    await Promise.all([clearStoredAuth(), clearPromise]);
   };
 
-  useEffect(() => {
-    const unsub = useTaskStore.subscribe((state, prev) => {
-      if (prev.client && !state.client) {
-        clearStoredAuth().catch(() => {});
-        setIsAuthenticated(false);
+  const handleLockRequestLogout = async () => {
+    let unsyncedCount = pendingSyncCount;
+    if (unsyncedCount <= 0) {
+      try {
+        const rawQueue = await AsyncStorage.getItem(SYNC_QUEUE_STORAGE_KEY);
+        if (rawQueue) {
+          const parsed = JSON.parse(rawQueue);
+          if (Array.isArray(parsed)) {
+            unsyncedCount = parsed.length;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (unsyncedCount <= 0) {
+      await handleLogout();
+      return;
+    }
+
+    const message = `You have ${unsyncedCount} unsynced offline change(s). Signing out now will permanently discard them. Sign out anyway?`;
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        if (window.confirm(`Unsynced Changes\n\n${message}`)) {
+          await handleLogout();
+        }
+      } else {
+        setPendingLockLogoutCount(unsyncedCount);
       }
-    });
-    return unsub;
-  }, []);
+      return;
+    }
+
+    Alert.alert('Unsynced Changes', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: () => {
+          handleLogout().catch(() => {});
+        },
+      },
+    ]);
+  };
+
+  const handleManualLockUnlock = async () => {
+    setLockError(null);
+    setPendingLockLogoutCount(null);
+    const passed = await promptBiometricUnlock();
+    if (passed) {
+      await unlockOfflineSession();
+    } else {
+      setLockError('Authentication failed or was cancelled. Tap Unlock to try again.');
+    }
+  };
+
+  const showAppShell = isAuthenticated && !isLocked && !showReauthLogin;
 
   return (
     <SafeAreaProvider style={{ flex: 1 }}>
@@ -195,36 +463,259 @@ export default function App() {
         style={[styles.root, { backgroundColor: theme.colors.background }]}
       >
         <StatusBar style={theme.isDark ? 'light' : 'dark'} />
-        {!isAuthenticated ? (
-          <LoginScreen onConnect={handleConnect} />
-        ) : isTablet ? (
-          <View style={styles.tabletRoot}>
-            <View style={[styles.tabletSidebar, { borderRightColor: theme.colors.cardBorder }]}>
-              <ProjectDrawer
-                visible={true}
-                inline={true}
-                onClose={() => {}}
-                onLogout={handleLogout}
+
+        {isLocked ? (
+          <SafeAreaView
+            testID="biometric-lock-screen"
+            style={[
+              styles.lockScreen,
+              { backgroundColor: theme.colors.background },
+            ]}
+          >
+            <View
+              style={[
+                styles.lockCard,
+                {
+                  backgroundColor: theme.colors.cardBackground,
+                  borderColor: theme.colors.cardBorder,
+                },
+              ]}
+            >
+              <Image
+                source={require('../assets/icon.png')}
+                style={styles.lockLogo}
+                resizeMode="cover"
               />
+              <Text style={[styles.lockTitle, { color: theme.colors.text }]}>
+                Guanaco is Locked
+              </Text>
+              <Text
+                style={[styles.lockSubtitle, { color: theme.colors.textSecondary }]}
+              >
+                Authenticate with biometrics or device credentials to access your tasks offline or online.
+              </Text>
+
+              {lockError && (
+                <View
+                  testID="lock-error-banner"
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                  style={[
+                    styles.lockErrorBanner,
+                    {
+                      backgroundColor: theme.isDark
+                        ? 'rgba(255, 69, 58, 0.16)'
+                        : 'rgba(215, 0, 21, 0.08)',
+                      borderColor: theme.isDark ? '#FF453A' : '#D70015',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.lockErrorText,
+                      { color: theme.isDark ? '#FF453A' : '#D70015' },
+                    ]}
+                  >
+                    {lockError}
+                  </Text>
+                </View>
+              )}
+
+              {pendingLockLogoutCount !== null && (
+                <View
+                  testID="lock-logout-confirm-banner"
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                  style={[
+                    styles.lockErrorBanner,
+                    {
+                      backgroundColor: theme.isDark
+                        ? 'rgba(255, 159, 10, 0.16)'
+                        : 'rgba(197, 108, 0, 0.1)',
+                      borderColor: theme.isDark ? '#FF9F0A' : '#C56C00',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.lockErrorText,
+                      { color: theme.colors.text, marginBottom: 10 },
+                    ]}
+                  >
+                    Discard {pendingLockLogoutCount} unsynced offline change(s) and sign out?
+                  </Text>
+                  <View style={styles.lockConfirmActions}>
+                    <TouchableOpacity
+                      testID="lock-logout-cancel-btn"
+                      accessibilityRole="button"
+                      style={[
+                        styles.lockConfirmCancelBtn,
+                        { borderColor: theme.colors.border },
+                      ]}
+                      onPress={() => setPendingLockLogoutCount(null)}
+                    >
+                      <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
+                        Cancel
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      testID="lock-logout-confirm-btn"
+                      accessibilityRole="button"
+                      style={styles.lockConfirmDangerBtn}
+                      onPress={() => {
+                        handleLogout().catch(() => {});
+                      }}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>
+                        Sign Out
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              <TouchableOpacity
+                testID="login-biometric-btn"
+                accessibilityRole="button"
+                style={styles.unlockButton}
+                onPress={handleManualLockUnlock}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.unlockButtonText}>🔒 Unlock with Biometrics</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                testID="lock-logout-btn"
+                accessibilityRole="button"
+                style={styles.lockSignOutBtn}
+                onPress={handleLockRequestLogout}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.lockSignOutText,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  Sign Out
+                </Text>
+              </TouchableOpacity>
             </View>
-            <View style={styles.tabletContent}>
-              <ProjectTasksScreen
-                hideDrawerButton={true}
-                onOpenDrawer={() => {}}
-              />
-            </View>
+          </SafeAreaView>
+        ) : !isAuthenticated || showReauthLogin ? (
+          <View style={styles.content}>
+            {showReauthLogin && (
+              <SafeAreaView edges={['top']}>
+                <View
+                  style={[
+                    styles.reauthTopBar,
+                    {
+                      backgroundColor: theme.colors.cardBackground,
+                      borderBottomColor: theme.colors.cardBorder,
+                    },
+                  ]}
+                >
+                  <TouchableOpacity
+                    testID="reauth-back-btn"
+                    accessibilityRole="button"
+                    onPress={() => setShowReauthLogin(false)}
+                  >
+                    <Text style={[styles.reauthBackText, { color: theme.colors.accent }]}>
+                      ← Back to Offline Tasks
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </SafeAreaView>
+            )}
+            <LoginScreen
+              onConnect={handleConnect}
+              onBiometricUnlock={
+                pendingStoredSession
+                  ? () => unlockOfflineSession(pendingStoredSession)
+                  : undefined
+              }
+            />
           </View>
         ) : (
           <View style={styles.content}>
-            <ProjectTasksScreen onOpenDrawer={() => setIsDrawerOpen(true)} />
-            <ProjectDrawer
-              visible={isDrawerOpen}
-              onClose={() => setIsDrawerOpen(false)}
-              onLogout={handleLogout}
-            />
+            {authRequired && (
+              <SafeAreaView edges={['top']}>
+                <View
+                  testID="auth-required-banner"
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                  style={[
+                    styles.authRequiredBanner,
+                    {
+                      backgroundColor: theme.isDark
+                        ? 'rgba(255, 159, 10, 0.2)'
+                        : '#FFF4E5',
+                      borderBottomColor: theme.isDark ? '#FF9F0A' : '#E6A100',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.authRequiredText,
+                      { color: theme.isDark ? '#FFB340' : '#8A4B00' },
+                    ]}
+                  >
+                    Session expired
+                    {pendingSyncCount > 0
+                      ? ` • ${pendingSyncCount} offline change${pendingSyncCount === 1 ? '' : 's'} preserved`
+                      : ''}
+                  </Text>
+                  <TouchableOpacity
+                    testID="auth-required-signin-btn"
+                    accessibilityRole="button"
+                    style={[
+                      styles.authRequiredBtn,
+                      { backgroundColor: theme.colors.accent },
+                    ]}
+                    onPress={() => setShowReauthLogin(true)}
+                  >
+                    <Text style={styles.authRequiredBtnText}>Sign In</Text>
+                  </TouchableOpacity>
+                </View>
+              </SafeAreaView>
+            )}
+
+            {isTablet ? (
+              <View style={styles.tabletRoot}>
+                <View
+                  style={[
+                    styles.tabletSidebar,
+                    { borderRightColor: theme.colors.cardBorder },
+                  ]}
+                >
+                  <ProjectDrawer
+                    visible={true}
+                    inline={true}
+                    onClose={() => {}}
+                    onLogout={handleLogout}
+                  />
+                </View>
+                <View style={styles.tabletContent}>
+                  <ProjectTasksScreen
+                    hideDrawerButton={true}
+                    onOpenDrawer={() => {}}
+                  />
+                </View>
+              </View>
+            ) : (
+              <View style={styles.content}>
+                <ProjectTasksScreen onOpenDrawer={() => setIsDrawerOpen(true)} />
+                <ProjectDrawer
+                  visible={isDrawerOpen}
+                  onClose={() => setIsDrawerOpen(false)}
+                  onLogout={handleLogout}
+                />
+              </View>
+            )}
           </View>
         )}
-        <AppUpdatePromptModal />
+
+        {showAppShell && <AppUpdatePromptModal />}
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );
@@ -233,7 +724,6 @@ export default function App() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#0D0D0E',
   },
   content: {
     flex: 1,
@@ -249,5 +739,120 @@ const styles = StyleSheet.create({
   },
   tabletContent: {
     flex: 1,
+  },
+  lockScreen: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  lockCard: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 24,
+    alignItems: 'center',
+  },
+  lockLogo: {
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    marginBottom: 16,
+  },
+  lockTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  lockSubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  lockErrorBanner: {
+    width: '100%',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  lockErrorText: {
+    fontSize: 13,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  lockConfirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  lockConfirmCancelBtn: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  lockConfirmDangerBtn: {
+    backgroundColor: '#FF453A',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  unlockButton: {
+    width: '100%',
+    backgroundColor: '#248A3D',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  unlockButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  lockSignOutBtn: {
+    marginTop: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  lockSignOutText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  authRequiredBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    gap: 12,
+  },
+  authRequiredText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  authRequiredBtn: {
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  authRequiredBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  reauthTopBar: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  reauthBackText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

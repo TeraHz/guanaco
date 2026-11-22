@@ -30,6 +30,14 @@ const PERMISSION_LABELS: Record<Permission, string> = {
   2: 'Admin',
 };
 
+function getPermissionLabel(perm: Permission): string {
+  return Object.prototype.hasOwnProperty.call(PERMISSION_LABELS, perm)
+    ? PERMISSION_LABELS[perm]
+    : 'Custom';
+}
+
+const PERMISSION_OPTIONS: Permission[] = [0, 1, 2];
+
 export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
   visible,
   project,
@@ -52,41 +60,82 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const loadSeqRef = React.useRef(0);
 
   useEffect(() => {
+    const seq = ++loadSeqRef.current;
     if (visible && project && client) {
-      loadData();
+      loadData(project.id, seq);
     } else {
+      setIsLoading(false);
       setUsers([]);
       setTeams([]);
       setUsernameInput('');
+      setUserPermission(1);
       setSelectedTeamId(null);
+      setTeamPermission(0);
       setErrorMessage(null);
     }
-  }, [visible, project, client]);
+    return () => {
+      loadSeqRef.current += 1;
+    };
+  }, [visible, project?.id, client]);
 
-  const loadData = async () => {
-    if (!project || !client) return;
+  const loadData = async (projectId: number, seq: number) => {
+    if (!client) return;
     setIsLoading(true);
     setErrorMessage(null);
+    setUsers([]);
+    setTeams([]);
     try {
-      const [fetchedUsers, fetchedTeams, fetchedAvailableTeams] = await Promise.all([
-        client.getProjectUsers(project.id).catch(() => []),
-        client.getProjectTeams(project.id).catch(() => []),
-        client.getTeams().catch(() => []),
+      const [usersResult, teamsResult, availTeamsResult] = await Promise.allSettled([
+        client.getProjectUsers(projectId),
+        client.getProjectTeams(projectId),
+        client.getTeams(),
       ]);
-      setUsers(Array.isArray(fetchedUsers) ? fetchedUsers : []);
-      setTeams(Array.isArray(fetchedTeams) ? fetchedTeams : []);
-      setAvailableTeams(Array.isArray(fetchedAvailableTeams) ? fetchedAvailableTeams : []);
+
+      if (seq !== loadSeqRef.current) return;
+
+      if (usersResult.status === 'fulfilled') {
+        setUsers(Array.isArray(usersResult.value) ? usersResult.value : []);
+      } else {
+        setUsers([]);
+      }
+
+      if (teamsResult.status === 'fulfilled') {
+        setTeams(Array.isArray(teamsResult.value) ? teamsResult.value : []);
+      } else {
+        setTeams([]);
+      }
+
+      if (availTeamsResult.status === 'fulfilled') {
+        setAvailableTeams(Array.isArray(availTeamsResult.value) ? availTeamsResult.value : []);
+      } else {
+        setAvailableTeams([]);
+      }
+
+      const firstFailure =
+        usersResult.status === 'rejected'
+          ? usersResult.reason
+          : teamsResult.status === 'rejected'
+          ? teamsResult.reason
+          : null;
+
+      if (firstFailure) {
+        setErrorMessage(firstFailure?.message || 'Failed to load project sharing settings.');
+      }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to load project sharing settings.');
+      if (seq !== loadSeqRef.current) return;
+      setErrorMessage(err?.message || 'Failed to load project sharing settings.');
     } finally {
-      setIsLoading(false);
+      if (seq === loadSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
   const handleAddUser = async () => {
-    const trimmed = usernameInput.trim();
+    const trimmed = usernameInput.trim().replace(/^@/, '');
     if (!trimmed || !project || !client) return;
 
     setIsSubmitting(true);
@@ -101,7 +150,7 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
       setUsernameInput('');
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err.message || 'Failed to share list with user.');
+      setErrorMessage(err?.message || 'Failed to share list with user.');
     } finally {
       setIsSubmitting(false);
     }
@@ -111,28 +160,32 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
     if (!project || !client) return;
     const nextPerm: Permission = share.permission === 0 ? 1 : share.permission === 1 ? 2 : 0;
     const userId = share.user?.id ?? share.id;
+    setErrorMessage(null);
     try {
       safeHaptics.selection();
       const updated = await client.updateProjectUser(project.id, userId, nextPerm);
       setUsers((prev) =>
-        prev.map((u) => (u.id === share.id ? { ...u, permission: updated.permission ?? nextPerm } : u))
+        prev.map((u) =>
+          u.id === share.id ? { ...u, permission: updated?.permission ?? nextPerm } : u
+        )
       );
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err.message || 'Failed to update user permission.');
+      setErrorMessage(err?.message || 'Failed to update user permission.');
     }
   };
 
   const handleRemoveUser = async (share: ProjectUserShare) => {
     if (!project || !client) return;
     const userId = share.user?.id ?? share.id;
+    setErrorMessage(null);
     try {
       safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
       await client.removeProjectUser(project.id, userId);
       setUsers((prev) => prev.filter((u) => u.id !== share.id));
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err.message || 'Failed to remove user share.');
+      setErrorMessage(err?.message || 'Failed to remove user share.');
     }
   };
 
@@ -151,22 +204,42 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
       setSelectedTeamId(null);
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err.message || 'Failed to share list with team.');
+      setErrorMessage(err?.message || 'Failed to share list with team.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleCycleTeamPermission = async (share: ProjectTeamShare) => {
+    if (!project || !client) return;
+    const nextPerm: Permission = share.permission === 0 ? 1 : share.permission === 1 ? 2 : 0;
+    const teamId = share.team?.id ?? share.id;
+    setErrorMessage(null);
+    try {
+      safeHaptics.selection();
+      const updated = await client.updateProjectTeam(project.id, teamId, nextPerm);
+      setTeams((prev) =>
+        prev.map((t) =>
+          t.id === share.id ? { ...t, permission: updated?.permission ?? nextPerm } : t
+        )
+      );
+    } catch (err: any) {
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setErrorMessage(err?.message || 'Failed to update team permission.');
     }
   };
 
   const handleRemoveTeam = async (share: ProjectTeamShare) => {
     if (!project || !client) return;
     const teamId = share.team?.id ?? share.id;
+    setErrorMessage(null);
     try {
       safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
       await client.removeProjectTeam(project.id, teamId);
       setTeams((prev) => prev.filter((t) => t.id !== share.id));
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err.message || 'Failed to remove team share.');
+      setErrorMessage(err?.message || 'Failed to remove team share.');
     }
   };
 
@@ -194,10 +267,13 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
             >
               {/* Header */}
               <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
-                <View>
+                <View style={styles.headerTextCol}>
                   <Text style={[styles.title, { color: theme.colors.text }]}>Share List</Text>
                   {project && (
-                    <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+                    <Text
+                      style={[styles.subtitle, { color: theme.colors.textSecondary }]}
+                      numberOfLines={1}
+                    >
                       {project.title}
                     </Text>
                   )}
@@ -206,6 +282,8 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                   testID="share-modal-close-btn"
                   onPress={onClose}
                   style={styles.closeBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close sharing dialog"
                 >
                   <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
                 </TouchableOpacity>
@@ -224,16 +302,29 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                   <View style={[styles.tabsRow, { borderBottomColor: theme.colors.border }]}>
                     <TouchableOpacity
                       testID="share-tab-users"
-                      style={[styles.tab, activeTab === 'users' && styles.tabActive]}
+                      style={[
+                        styles.tab,
+                        activeTab === 'users' && [
+                          styles.tabActive,
+                          { borderBottomColor: theme.colors.accent },
+                        ],
+                      ]}
                       onPress={() => {
                         safeHaptics.selection();
                         setActiveTab('users');
                       }}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: activeTab === 'users' }}
                     >
                       <Text
                         style={[
                           styles.tabText,
-                          { color: activeTab === 'users' ? theme.colors.accent : theme.colors.textSecondary },
+                          {
+                            color:
+                              activeTab === 'users'
+                                ? theme.colors.accent
+                                : theme.colors.textSecondary,
+                          },
                         ]}
                       >
                         Users ({users.length})
@@ -241,16 +332,29 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                     </TouchableOpacity>
                     <TouchableOpacity
                       testID="share-tab-teams"
-                      style={[styles.tab, activeTab === 'teams' && styles.tabActive]}
+                      style={[
+                        styles.tab,
+                        activeTab === 'teams' && [
+                          styles.tabActive,
+                          { borderBottomColor: theme.colors.accent },
+                        ],
+                      ]}
                       onPress={() => {
                         safeHaptics.selection();
                         setActiveTab('teams');
                       }}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: activeTab === 'teams' }}
                     >
                       <Text
                         style={[
                           styles.tabText,
-                          { color: activeTab === 'teams' ? theme.colors.accent : theme.colors.textSecondary },
+                          {
+                            color:
+                              activeTab === 'teams'
+                                ? theme.colors.accent
+                                : theme.colors.textSecondary,
+                          },
                         ]}
                       >
                         Teams ({teams.length})
@@ -260,7 +364,11 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
 
                   {/* Error Message */}
                   {errorMessage ? (
-                    <View style={styles.errorBanner}>
+                    <View
+                      testID="project-sharing-error"
+                      style={styles.errorBanner}
+                      accessibilityRole="alert"
+                    >
                       <Text style={styles.errorText}>{errorMessage}</Text>
                     </View>
                   ) : null}
@@ -288,7 +396,9 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                           placeholderTextColor={theme.colors.textTertiary}
                           value={usernameInput}
                           onChangeText={setUsernameInput}
+                          onSubmitEditing={handleAddUser}
                           autoCapitalize="none"
+                          autoCorrect={false}
                         />
                         <TouchableOpacity
                           testID="share-add-user-btn"
@@ -299,9 +409,49 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                           ]}
                           onPress={handleAddUser}
                           disabled={!usernameInput.trim() || isSubmitting}
+                          accessibilityRole="button"
+                          accessibilityLabel="Share with user"
                         >
                           <Text style={styles.addBtnText}>Add</Text>
                         </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.permPickerRow}>
+                        {PERMISSION_OPTIONS.map((perm) => {
+                          const selected = userPermission === perm;
+                          return (
+                            <TouchableOpacity
+                              key={perm}
+                              testID={`share-new-user-perm-${perm}`}
+                              style={[
+                                styles.permOptionChip,
+                                {
+                                  backgroundColor: selected
+                                    ? theme.colors.accent
+                                    : theme.colors.inputBg,
+                                  borderColor: selected
+                                    ? theme.colors.accent
+                                    : theme.colors.border,
+                                },
+                              ]}
+                              onPress={() => {
+                                safeHaptics.selection();
+                                setUserPermission(perm);
+                              }}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected }}
+                            >
+                              <Text
+                                style={[
+                                  styles.permOptionText,
+                                  { color: selected ? '#FFFFFF' : theme.colors.textSecondary },
+                                ]}
+                              >
+                                {PERMISSION_LABELS[perm]}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
                       </View>
 
                       {/* Current Shared Users */}
@@ -339,9 +489,11 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                               testID={`share-user-perm-${share.id}`}
                               style={[styles.permBadge, { backgroundColor: theme.colors.inputBg }]}
                               onPress={() => handleCycleUserPermission(share)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Change permission for ${share.user?.username || share.username}`}
                             >
                               <Text style={[styles.permBadgeText, { color: theme.colors.accent }]}>
-                                {PERMISSION_LABELS[share.permission] || 'Custom'} ▾
+                                {getPermissionLabel(share.permission)} ▾
                               </Text>
                             </TouchableOpacity>
 
@@ -349,6 +501,8 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                               testID={`share-remove-user-${share.id}`}
                               style={styles.removeBtn}
                               onPress={() => handleRemoveUser(share)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Remove ${share.user?.username || share.username}`}
                             >
                               <Text style={styles.removeBtnText}>✕</Text>
                             </TouchableOpacity>
@@ -368,37 +522,78 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                           {availableTeams
                             .filter((t) => !teams.some((st) => (st.team?.id ?? st.id) === t.id))
                             .map((team) => {
-                            const isSelected = selectedTeamId === team.id;
+                              const isSelected = selectedTeamId === team.id;
+                              return (
+                                <TouchableOpacity
+                                  key={team.id}
+                                  testID={`share-select-team-${team.id}`}
+                                  style={[
+                                    styles.teamChip,
+                                    {
+                                      backgroundColor: isSelected
+                                        ? theme.colors.accent
+                                        : theme.colors.inputBg,
+                                      borderColor: theme.colors.border,
+                                    },
+                                  ]}
+                                  onPress={() => {
+                                    safeHaptics.selection();
+                                    setSelectedTeamId(team.id);
+                                  }}
+                                  accessibilityRole="button"
+                                  accessibilityState={{ selected: isSelected }}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.teamChipText,
+                                      { color: isSelected ? '#FFFFFF' : theme.colors.text },
+                                    ]}
+                                  >
+                                    {team.name}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                        </View>
+
+                        <View style={styles.permPickerRow}>
+                          {PERMISSION_OPTIONS.map((perm) => {
+                            const selected = teamPermission === perm;
                             return (
                               <TouchableOpacity
-                                key={team.id}
-                                testID={`share-select-team-${team.id}`}
+                                key={perm}
+                                testID={`share-new-team-perm-${perm}`}
                                 style={[
-                                  styles.teamChip,
+                                  styles.permOptionChip,
                                   {
-                                    backgroundColor: isSelected
+                                    backgroundColor: selected
                                       ? theme.colors.accent
                                       : theme.colors.inputBg,
-                                    borderColor: theme.colors.border,
+                                    borderColor: selected
+                                      ? theme.colors.accent
+                                      : theme.colors.border,
                                   },
                                 ]}
                                 onPress={() => {
                                   safeHaptics.selection();
-                                  setSelectedTeamId(team.id);
+                                  setTeamPermission(perm);
                                 }}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected }}
                               >
                                 <Text
                                   style={[
-                                    styles.teamChipText,
-                                    { color: isSelected ? '#FFFFFF' : theme.colors.text },
+                                    styles.permOptionText,
+                                    { color: selected ? '#FFFFFF' : theme.colors.textSecondary },
                                   ]}
                                 >
-                                  {team.name}
+                                  {PERMISSION_LABELS[perm]}
                                 </Text>
                               </TouchableOpacity>
                             );
                           })}
                         </View>
+
                         <TouchableOpacity
                           testID="share-add-team-btn"
                           style={[
@@ -408,6 +603,8 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                           ]}
                           onPress={handleAddTeam}
                           disabled={!selectedTeamId || isSubmitting}
+                          accessibilityRole="button"
+                          accessibilityLabel="Share with selected team"
                         >
                           <Text style={styles.addBtnText}>Share with Team</Text>
                         </TouchableOpacity>
@@ -444,16 +641,24 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
                               ) : null}
                             </View>
 
-                            <View style={[styles.permBadge, { backgroundColor: theme.colors.inputBg }]}>
+                            <TouchableOpacity
+                              testID={`share-team-perm-${share.id}`}
+                              style={[styles.permBadge, { backgroundColor: theme.colors.inputBg }]}
+                              onPress={() => handleCycleTeamPermission(share)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Change permission for ${share.team?.name || share.name}`}
+                            >
                               <Text style={[styles.permBadgeText, { color: theme.colors.accent }]}>
-                                {PERMISSION_LABELS[share.permission] || 'Custom'}
+                                {getPermissionLabel(share.permission)} ▾
                               </Text>
-                            </View>
+                            </TouchableOpacity>
 
                             <TouchableOpacity
                               testID={`share-remove-team-${share.id}`}
                               style={styles.removeBtn}
                               onPress={() => handleRemoveTeam(share)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Remove ${share.team?.name || share.name}`}
                             >
                               <Text style={styles.removeBtnText}>✕</Text>
                             </TouchableOpacity>
@@ -497,6 +702,10 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderBottomWidth: 1,
   },
+  headerTextCol: {
+    flex: 1,
+    paddingRight: 12,
+  },
   title: {
     fontSize: 18,
     fontWeight: '700',
@@ -532,7 +741,6 @@ const styles = StyleSheet.create({
   },
   tabActive: {
     borderBottomWidth: 2,
-    borderBottomColor: '#007AFF',
   },
   tabText: {
     fontSize: 14,
@@ -565,7 +773,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 10,
+  },
+  permPickerRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  permOptionChip: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  permOptionText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   input: {
     flex: 1,

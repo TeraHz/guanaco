@@ -1,8 +1,8 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { Project, Task, Label, User } from '../types/vikunja';
 import { SortOption, sortTasks } from '../utils/sorting';
 import { isShoppingList } from '../utils/smartClassifier';
-import { classifyTasksWithAIAsync } from '../utils/aiCore';
+import { classifyTaskWithAI, classifyTasksWithAIAsync } from '../utils/aiCore';
 import { MY_TASKS_PROJECT_ID, MY_TASKS_PROJECT, isTaskAssignedToUser } from '../utils/taskFilters';
 
 export type FilterType = 'all' | 'active' | 'done';
@@ -42,10 +42,10 @@ export function useFilteredSortedTasks({
   sortBy,
 }: UseFilteredSortedTasksParams): UseFilteredSortedTasksResult {
   const safeProjects = useMemo(
-    () => (Array.isArray(projects) ? projects.filter((p) => p.id > 0) : []),
+    () => (Array.isArray(projects) ? projects.filter((p) => p && p.id > 0) : []),
     [projects]
   );
-  const safeTasks = useMemo(() => (Array.isArray(tasks) ? tasks : []), [tasks]);
+  const safeTasks = useMemo(() => (Array.isArray(tasks) ? tasks.filter(Boolean) : []), [tasks]);
 
   const isAllTasksView = selectedProjectId === null;
   const isMyTasksView = selectedProjectId === MY_TASKS_PROJECT_ID;
@@ -55,22 +55,33 @@ export function useFilteredSortedTasks({
     if (isAllTasksView) return { id: 0, title: 'All Tasks', hex_color: '#007AFF' };
     return (
       safeProjects.find((p) => p.id === selectedProjectId) ||
+      safeProjects.find((p) => !p.is_archived) ||
       safeProjects[0] || { id: 0, title: 'All Tasks', hex_color: '#007AFF' }
     );
   }, [isMyTasksView, isAllTasksView, safeProjects, selectedProjectId]);
 
   const isShopping = useMemo(() => isShoppingList(activeProject?.title), [activeProject?.title]);
 
-  // Extract all unique labels available across tasks and definitions
+  // Extract unique labels (case-insensitively deduplicated, prioritizing storeLabels casing)
   const availableLabels = useMemo(() => {
-    const list = [
-      ...(storeLabels || []).map((l) => l.title),
-      ...safeTasks.flatMap((t) => (t.labels || []).map((l) => l.title)),
-    ].filter(Boolean);
-    return Array.from(new Set(list));
+    const seenLower = new Set<string>();
+    const unique: string[] = [];
+    const candidates = [
+      ...(Array.isArray(storeLabels) ? storeLabels.map((l) => l?.title) : []),
+      ...safeTasks.flatMap((t) => (Array.isArray(t.labels) ? t.labels.map((l) => l?.title) : [])),
+    ];
+    for (const raw of candidates) {
+      const trimmed = (raw || '').trim();
+      if (!trimmed) continue;
+      const lower = trimmed.toLowerCase();
+      if (!seenLower.has(lower)) {
+        seenLower.add(lower);
+        unique.push(trimmed);
+      }
+    }
+    return unique;
   }, [storeLabels, safeTasks]);
 
-  // Tasks scoped to the active project/smart-view
   const projectTasks = useMemo(() => {
     if (isMyTasksView) {
       return safeTasks.filter((t) => isTaskAssignedToUser(t, currentUser));
@@ -83,14 +94,13 @@ export function useFilteredSortedTasks({
 
   const doneTasks = useMemo(() => projectTasks.filter((t) => t.done), [projectTasks]);
 
-  // Filter tasks by active/done and label selection
   const filteredTasks = useMemo(() => {
     return projectTasks.filter((task) => {
       if (filter === 'active' && task.done) return false;
       if (filter === 'done' && !task.done) return false;
       if (selectedLabel) {
         const hasLabel = task.labels?.some(
-          (l) => l.title.toLowerCase() === selectedLabel.toLowerCase()
+          (l) => (l?.title || '').toLowerCase() === selectedLabel.toLowerCase()
         );
         if (!hasLabel) return false;
       }
@@ -99,6 +109,9 @@ export function useFilteredSortedTasks({
   }, [projectTasks, filter, selectedLabel]);
 
   const [aiVersion, setAiVersion] = useState(0);
+  const filteredTasksRef = useRef(filteredTasks);
+  filteredTasksRef.current = filteredTasks;
+
   const tasksSignature = useMemo(
     () => filteredTasks.map((t) => `${t.id}:${t.title}`).join('|'),
     [filteredTasks]
@@ -106,22 +119,38 @@ export function useFilteredSortedTasks({
 
   useEffect(() => {
     let isMounted = true;
-    if (sortBy === 'aiSmart' && filteredTasks.length > 0) {
-      classifyTasksWithAIAsync(filteredTasks, activeProject?.title)
+    const currentTasks = filteredTasksRef.current;
+
+    if (sortBy === 'aiSmart' && currentTasks.length > 0) {
+      // Snapshot synchronous categories first so we ONLY update state if async classification
+      // (from AsyncStorage or live Prompt API) actually changes at least one category!
+      // Prevents spurious post-microtask re-renders and React `act(...)` warnings in tests.
+      const syncSnapshot: Record<number, string> = {};
+      for (const t of currentTasks) {
+        syncSnapshot[t.id] = classifyTaskWithAI(t, activeProject?.title);
+      }
+
+      classifyTasksWithAIAsync(currentTasks, activeProject?.title)
         .then((cats) => {
-          if (isMounted && cats && Object.keys(cats).length > 0) {
+          if (!isMounted || !cats) return;
+          const changed = currentTasks.some(
+            (t) => Boolean(cats[t.id]) && cats[t.id] !== syncSnapshot[t.id]
+          );
+          if (changed) {
             setAiVersion((v) => v + 1);
           }
         })
         .catch(() => {});
     }
+
     return () => {
       isMounted = false;
     };
   }, [sortBy, tasksSignature, activeProject?.title]);
 
   const sortedTasks = useMemo(() => {
-    // aiVersion referenced to trigger re-sort when async classification finishes
+    // Reference aiVersion so async classification updates trigger re-sorting
+    void aiVersion;
     return sortTasks(filteredTasks, sortBy, activeProject?.title);
   }, [filteredTasks, sortBy, activeProject?.title, aiVersion]);
 

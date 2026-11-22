@@ -40,7 +40,7 @@ const LIGHT_COLORS: ThemeColors = {
   cardSecondary: '#F9F9FB',
   text: '#000000',
   textSecondary: '#6C6C70',
-  textTertiary: '#8E8E93',
+  textTertiary: '#6E6E73',
   border: '#E5E5EA',
   cardBorder: '#E5E5EA',
   inputBg: '#E5E5EA',

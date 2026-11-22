@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   TextInput,
@@ -22,7 +22,8 @@ import {
   replaceMentionQuery,
 } from '../utils/userSuggestions';
 import { getHistoricalStoreSuggestion } from '../utils/storeSuggestions';
-import { CreateTaskInput, Label, Project, Task, User } from '../types/vikunja';
+import { formatRepeatDescription } from '../utils/repeat';
+import { CreateTaskInput, Label, RepeatMode, Task, User } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
 
 interface QuickAddBarProps {
@@ -65,64 +66,83 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   const [rawText, setRawText] = useState('');
   const [manualPriority, setManualPriority] = useState<number>(0);
   const [lastUsedLabel, setLastUsedLabel] = useState<string>('');
-  const inputRef = React.useRef<TextInput>(null);
+  const inputRef = useRef<TextInput>(null);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Live Quick Add Magic Parsing
-  const parsed: ParsedTaskInput = rawText.trim()
-    ? parseQuickAdd(rawText)
-    : { title: '', labels: [], assignees: [], dueDate: null };
+  useEffect(() => {
+    return () => {
+      if (focusTimerRef.current) {
+        clearTimeout(focusTimerRef.current);
+      }
+    };
+  }, []);
+
+  const focusInputSoon = () => {
+    if (focusTimerRef.current) {
+      clearTimeout(focusTimerRef.current);
+    }
+    focusTimerRef.current = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 10);
+  };
+
+  // Memoized Live Quick Add Magic Parsing
+  const parsed: ParsedTaskInput & { repeatMode?: RepeatMode } = useMemo(() => {
+    return rawText.trim()
+      ? (parseQuickAdd(rawText) as ParsedTaskInput & { repeatMode?: RepeatMode })
+      : { title: '', labels: [], assignees: [], dueDate: null };
+  }, [rawText]);
 
   const effectivePriority =
     parsed.priority !== undefined ? parsed.priority : manualPriority;
 
   // Resolve target project if specified with +Project
-  let targetProjectId = activeProjectId;
-  let targetProjectTitle: string | undefined;
-
-  if (parsed.projectName && availableProjects.length > 0) {
-    const matched = availableProjects.find(
-      (p) => p.title.toLowerCase() === parsed.projectName!.toLowerCase()
-    );
-    if (matched) {
-      targetProjectId = matched.id;
-      targetProjectTitle = matched.title;
+  const { targetProjectId, targetProjectTitle } = useMemo(() => {
+    if (parsed.projectName && availableProjects.length > 0) {
+      const matched = availableProjects.find(
+        (p) => p.title.toLowerCase() === parsed.projectName!.toLowerCase()
+      );
+      if (matched) {
+        return { targetProjectId: matched.id, targetProjectTitle: matched.title };
+      }
     }
-  }
+    return { targetProjectId: activeProjectId, targetProjectTitle: undefined };
+  }, [parsed.projectName, availableProjects, activeProjectId]);
 
   // Assignee Suggestions (when typing @user)
-  const mentionQuery = extractMentionQuery(rawText);
-  const userSuggestions =
-    mentionQuery !== null ? getUserSuggestions(mentionQuery, availableUsers) : [];
+  const userSuggestions = useMemo(() => {
+    const mentionQuery = extractMentionQuery(rawText);
+    return mentionQuery !== null ? getUserSuggestions(mentionQuery, availableUsers) : [];
+  }, [rawText, availableUsers]);
 
-  // Label Suggestions (when typing *label) - prioritized with last used label first
-  const labelSuggestions =
-    userSuggestions.length === 0
-      ? getLabelSuggestions(rawText, availableLabels, lastUsedLabel)
-      : [];
+  // Label Suggestions (when typing *label or #label) - prioritized with last used label first
+  const labelSuggestions = useMemo(() => {
+    if (userSuggestions.length > 0) return [];
+    return getLabelSuggestions(rawText, availableLabels, lastUsedLabel);
+  }, [rawText, availableLabels, lastUsedLabel, userSuggestions.length]);
 
   // Task Suggestions (from completed / done tasks)
-  const taskSuggestions =
-    userSuggestions.length === 0 && labelSuggestions.length === 0
-      ? getTaskSuggestions(rawText, doneTasks)
-      : [];
+  const taskSuggestions = useMemo(() => {
+    if (userSuggestions.length > 0 || labelSuggestions.length > 0) return [];
+    return getTaskSuggestions(rawText, doneTasks);
+  }, [rawText, doneTasks, userSuggestions.length, labelSuggestions.length]);
 
   // High-Confidence Historical Store Suggestion (>=75% consistency across past tasks)
-  const historicalStoreSuggestion =
-    userSuggestions.length === 0 && labelSuggestions.length === 0
-      ? getHistoricalStoreSuggestion(
-          rawText,
-          historyTasks && historyTasks.length > 0 ? historyTasks : doneTasks,
-          (availableLabels || []).map((l, idx) => ({ id: idx + 1, title: l }))
-        )
-      : null;
+  const historicalStoreSuggestion = useMemo(() => {
+    if (userSuggestions.length > 0 || labelSuggestions.length > 0) return null;
+    const labelObjs = (availableLabels || []).map((l, idx) => ({ id: idx + 1, title: l }));
+    return getHistoricalStoreSuggestion(
+      rawText,
+      historyTasks && historyTasks.length > 0 ? historyTasks : doneTasks,
+      labelObjs
+    );
+  }, [rawText, historyTasks, doneTasks, availableLabels, userSuggestions.length, labelSuggestions.length]);
 
   const handleSelectUserSuggestion = (user: User) => {
     const updated = replaceMentionQuery(rawText, user.username);
     setRawText(updated);
     safeHaptics.selection();
-    setTimeout(() => {
-      inputRef.current?.focus();
-    }, 10);
+    focusInputSoon();
   };
 
   const handleSelectLabelSuggestion = (label: string) => {
@@ -130,10 +150,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
     setRawText(updated);
     setLastUsedLabel(label);
     safeHaptics.selection();
-    // Do not close out keyboard when label is selected
-    setTimeout(() => {
-      inputRef.current?.focus();
-    }, 10);
+    focusInputSoon();
   };
 
   const handleSelectTaskSuggestion = (task: Task) => {
@@ -147,25 +164,42 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
     }
   };
 
+  // Cycle through ALL priority levels 0 -> 1 -> 2 -> 3 -> 4 -> 5 (Critical) -> 0
   const handleCyclePriority = () => {
-    setManualPriority((prev) => (prev >= 4 ? 0 : prev + 1));
+    setManualPriority((prev) => (prev >= 5 ? 0 : prev + 1));
     safeHaptics.selection();
   };
 
   const handleSubmit = () => {
-    if (!rawText.trim()) return;
+    if (!rawText.trim() || !parsed.title.trim()) return;
 
-    const formattedLabels: Label[] = parsed.labels.map((name, idx) => ({
-      id: -Math.floor(Date.now() + idx),
-      title: name,
-    }));
+    const seenLabels = new Set<string>();
+    const formattedLabels: Label[] = [];
+    for (let idx = 0; idx < parsed.labels.length; idx++) {
+      const name = parsed.labels[idx].trim();
+      if (name && !seenLabels.has(name.toLowerCase())) {
+        seenLabels.add(name.toLowerCase());
+        formattedLabels.push({
+          id: -Math.floor(Date.now() + idx + 1),
+          title: name,
+        });
+      }
+    }
 
-    const formattedAssignees: User[] = (parsed.assignees || []).map((username, idx) => {
-      const matched = availableUsers.find(
-        (u) => u.username.toLowerCase() === username.toLowerCase()
-      );
-      return matched || { id: -Math.floor(Date.now() + idx), username };
-    });
+    const seenUsers = new Set<string>();
+    const formattedAssignees: User[] = [];
+    for (let idx = 0; idx < (parsed.assignees || []).length; idx++) {
+      const username = parsed.assignees[idx].trim();
+      if (username && !seenUsers.has(username.toLowerCase())) {
+        seenUsers.add(username.toLowerCase());
+        const matched = availableUsers.find(
+          (u) => u.username.toLowerCase() === username.toLowerCase()
+        );
+        formattedAssignees.push(
+          matched || { id: -Math.floor(Date.now() + idx + 1), username }
+        );
+      }
+    }
 
     onAddTask({
       title: parsed.title,
@@ -175,6 +209,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
       assignees: formattedAssignees,
       due_date: parsed.dueDate || null,
       repeat_after: parsed.repeatAfter,
+      ...(parsed.repeatMode !== undefined ? { repeat_mode: parsed.repeatMode } : {}),
     });
 
     if (parsed.labels && parsed.labels.length > 0) {
@@ -186,13 +221,18 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const curPriority = PRIORITY_LABELS[effectivePriority] || PRIORITY_LABELS[0];
+  const curPriority = Object.prototype.hasOwnProperty.call(PRIORITY_LABELS, effectivePriority)
+    ? PRIORITY_LABELS[effectivePriority]
+    : PRIORITY_LABELS[0];
+  const canSubmit = Boolean(parsed.title.trim());
+  const hasRepeat = Boolean(parsed.repeatAfter && parsed.repeatAfter > 0);
   const hasMagicAttributes =
     parsed.labels.length > 0 ||
     parsed.assignees.length > 0 ||
-    parsed.dueDate ||
-    parsed.projectName ||
-    parsed.priority !== undefined;
+    Boolean(parsed.dueDate) ||
+    Boolean(targetProjectTitle) ||
+    parsed.priority !== undefined ||
+    hasRepeat;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -209,11 +249,28 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
             <TouchableOpacity
               key={user.id || user.username}
               testID={`user-suggestion-${user.username}`}
-              style={[styles.taskSuggestionChip, styles.userSuggestionChip]}
+              style={[
+                styles.taskSuggestionChip,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(191, 90, 242, 0.15)'
+                    : 'rgba(123, 31, 162, 0.1)',
+                  borderColor: theme.isDark
+                    ? 'rgba(191, 90, 242, 0.45)'
+                    : 'rgba(123, 31, 162, 0.35)',
+                },
+              ]}
               onPress={() => handleSelectUserSuggestion(user)}
               activeOpacity={0.7}
             >
-              <Text style={styles.userSuggestionText}>👤 @{user.username}</Text>
+              <Text
+                style={[
+                  styles.userSuggestionText,
+                  { color: theme.isDark ? '#BF5AF2' : '#7B1FA2' },
+                ]}
+              >
+                👤 @{user.username}
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -230,11 +287,26 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           {labelSuggestions.map((label) => (
             <TouchableOpacity
               key={label}
-              style={styles.labelSuggestionChip}
+              style={[
+                styles.labelSuggestionChip,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(48, 209, 88, 0.14)'
+                    : 'rgba(21, 128, 61, 0.1)',
+                  borderColor: theme.isDark ? '#30D158' : 'rgba(21, 128, 61, 0.4)',
+                },
+              ]}
               onPress={() => handleSelectLabelSuggestion(label)}
               activeOpacity={0.7}
             >
-              <Text style={styles.labelSuggestionText}>#{label}</Text>
+              <Text
+                style={[
+                  styles.labelSuggestionText,
+                  { color: theme.isDark ? '#30D158' : '#15803D' },
+                ]}
+              >
+                #{label}
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -251,17 +323,37 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           {historicalStoreSuggestion && (
             <TouchableOpacity
               testID="store-suggestion-chip"
-              style={[styles.taskSuggestionChip, styles.storeSuggestionChip]}
+              style={[
+                styles.taskSuggestionChip,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(255, 159, 10, 0.15)'
+                    : 'rgba(180, 83, 9, 0.1)',
+                  borderColor: theme.isDark
+                    ? 'rgba(255, 159, 10, 0.45)'
+                    : 'rgba(180, 83, 9, 0.35)',
+                },
+              ]}
               onPress={() => {
-                const labelTitle = historicalStoreSuggestion.label.title;
-                const formatted = labelTitle.includes(' ') ? `*"${labelTitle}"` : `*${labelTitle}`;
+                const safeTitle = (historicalStoreSuggestion.label.title || '')
+                  .replace(/"/g, '')
+                  .trim();
+                if (!safeTitle) return;
+                const formatted = /[\s*#+@!]/.test(safeTitle)
+                  ? `*"${safeTitle}"`
+                  : `*${safeTitle}`;
                 setRawText((prev) => `${prev.trim()} ${formatted} `);
                 safeHaptics.selection();
-                setTimeout(() => inputRef.current?.focus(), 10);
+                focusInputSoon();
               }}
               activeOpacity={0.7}
             >
-              <Text style={styles.storeSuggestionText}>
+              <Text
+                style={[
+                  styles.storeSuggestionText,
+                  { color: theme.isDark ? '#FF9F0A' : '#B45309' },
+                ]}
+              >
                 🛒 Usually at #{historicalStoreSuggestion.label.title}
               </Text>
             </TouchableOpacity>
@@ -269,44 +361,178 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           {taskSuggestions.map((task) => (
             <TouchableOpacity
               key={task.id}
-              style={styles.taskSuggestionChip}
+              style={[
+                styles.taskSuggestionChip,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(10, 132, 255, 0.14)'
+                    : 'rgba(0, 85, 212, 0.09)',
+                  borderColor: theme.isDark
+                    ? 'rgba(10, 132, 255, 0.5)'
+                    : 'rgba(0, 85, 212, 0.35)',
+                },
+              ]}
               onPress={() => handleSelectTaskSuggestion(task)}
               activeOpacity={0.7}
             >
-              <Text style={styles.taskSuggestionText}>↩ {task.title}</Text>
+              <Text
+                style={[
+                  styles.taskSuggestionText,
+                  { color: theme.isDark ? '#0A84FF' : '#0055D4' },
+                ]}
+              >
+                ↩ {task.title}
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
       )}
 
-      {/* Live Magic Attribute Preview */}
+      {/* Live Magic Attribute Preview — Themed for both Dark and Light Mode */}
       {hasMagicAttributes && (
         <View style={styles.magicPreviewRow}>
           {targetProjectTitle && (
-            <View style={styles.magicBadge}>
-              <Text style={styles.magicBadgeText}>📁 {targetProjectTitle}</Text>
+            <View
+              testID="magic-project-badge"
+              style={[
+                styles.magicBadge,
+                {
+                  backgroundColor: theme.isDark ? '#2C2C2E' : 'rgba(0, 85, 212, 0.1)',
+                  borderColor: theme.isDark ? '#3A3A3C' : 'rgba(0, 85, 212, 0.35)',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.magicBadgeText,
+                  { color: theme.isDark ? '#0A84FF' : '#0055D4' },
+                ]}
+              >
+                📁 {targetProjectTitle}
+              </Text>
             </View>
           )}
           {parsed.assignees.map((u) => (
-            <View key={u} style={[styles.magicBadge, styles.magicAssigneeBadge]}>
-              <Text style={styles.magicAssigneeBadgeText}>@{u}</Text>
+            <View
+              key={u}
+              style={[
+                styles.magicBadge,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(191, 90, 242, 0.15)'
+                    : 'rgba(123, 31, 162, 0.1)',
+                  borderColor: theme.isDark
+                    ? 'rgba(191, 90, 242, 0.4)'
+                    : 'rgba(123, 31, 162, 0.35)',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.magicAssigneeBadgeText,
+                  { color: theme.isDark ? '#BF5AF2' : '#7B1FA2' },
+                ]}
+              >
+                @{u}
+              </Text>
             </View>
           ))}
           {parsed.labels.map((lbl) => (
-            <View key={lbl} style={[styles.magicBadge, styles.magicLabelBadge]}>
-              <Text style={styles.magicLabelBadgeText}>#{lbl}</Text>
+            <View
+              key={lbl}
+              style={[
+                styles.magicBadge,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(48, 209, 88, 0.12)'
+                    : 'rgba(21, 128, 61, 0.1)',
+                  borderColor: theme.isDark
+                    ? 'rgba(48, 209, 88, 0.35)'
+                    : 'rgba(21, 128, 61, 0.35)',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.magicLabelBadgeText,
+                  { color: theme.isDark ? '#30D158' : '#15803D' },
+                ]}
+              >
+                #{lbl}
+              </Text>
             </View>
           ))}
           {parsed.dueDate && (
-            <View style={[styles.magicBadge, styles.magicDateBadge]}>
-              <Text style={styles.magicDateBadgeText}>
+            <View
+              testID="magic-date-badge"
+              style={[
+                styles.magicBadge,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(255, 149, 0, 0.12)'
+                    : 'rgba(180, 83, 9, 0.1)',
+                  borderColor: theme.isDark
+                    ? 'rgba(255, 149, 0, 0.35)'
+                    : 'rgba(180, 83, 9, 0.35)',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.magicDateBadgeText,
+                  { color: theme.isDark ? '#FF9500' : '#B45309' },
+                ]}
+              >
                 📅 {new Date(parsed.dueDate).toLocaleDateString()}
               </Text>
             </View>
           )}
+          {hasRepeat && (
+            <View
+              testID="magic-repeat-badge"
+              style={[
+                styles.magicBadge,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(100, 210, 255, 0.12)'
+                    : 'rgba(15, 118, 110, 0.1)',
+                  borderColor: theme.isDark
+                    ? 'rgba(100, 210, 255, 0.35)'
+                    : 'rgba(15, 118, 110, 0.35)',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.magicRepeatBadgeText,
+                  { color: theme.isDark ? '#64D2FF' : '#0F766E' },
+                ]}
+              >
+                🔁 {formatRepeatDescription(parsed.repeatAfter, parsed.repeatMode ?? RepeatMode.FromDueDate)}
+              </Text>
+            </View>
+          )}
           {parsed.priority !== undefined && (
-            <View style={[styles.magicBadge, styles.magicPriorityBadge]}>
-              <Text style={styles.magicPriorityBadgeText}>
+            <View
+              testID="magic-priority-badge"
+              style={[
+                styles.magicBadge,
+                {
+                  backgroundColor: theme.isDark
+                    ? 'rgba(255, 59, 48, 0.12)'
+                    : 'rgba(220, 38, 38, 0.1)',
+                  borderColor: theme.isDark
+                    ? 'rgba(255, 59, 48, 0.35)'
+                    : 'rgba(220, 38, 38, 0.35)',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.magicPriorityBadgeText,
+                  { color: theme.isDark ? '#FF3B30' : '#DC2626' },
+                ]}
+              >
                 ⚡ P{parsed.priority}
               </Text>
             </View>
@@ -319,10 +545,8 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           <TouchableOpacity
             testID="green-add-task-fab"
             style={styles.detailedAddBtn}
-            onPress={() => {
-              safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-              onDetailedAdd();
-            }}
+            onPress={onDetailedAdd}
+            accessibilityRole="button"
             accessibilityLabel="Create task with details"
             activeOpacity={0.8}
           >
@@ -330,7 +554,12 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           </TouchableOpacity>
         )}
 
-        <View style={[styles.inputCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+        <View
+          style={[
+            styles.inputCard,
+            { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
+          ]}
+        >
           <TextInput
             ref={inputRef}
             testID="quick-add-input"
@@ -350,6 +579,8 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
               style={[styles.priorityBadge, { borderColor: curPriority.color }]}
               onPress={handleCyclePriority}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={`Priority: ${curPriority.label}. Tap to cycle priority`}
             >
               <Text style={[styles.priorityText, { color: curPriority.color }]}>
                 {curPriority.text}
@@ -360,11 +591,16 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
               testID="quick-add-submit"
               style={[
                 styles.submitButton,
-                !rawText.trim() && (theme.isDark ? styles.submitButtonDisabled : { backgroundColor: '#D1D1D6' }),
+                !canSubmit &&
+                  (theme.isDark
+                    ? styles.submitButtonDisabled
+                    : { backgroundColor: '#D1D1D6' }),
               ]}
               onPress={handleSubmit}
-              disabled={!rawText.trim()}
+              disabled={!canSubmit}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Add task"
             >
               <Text style={styles.submitButtonText}>↑</Text>
             </TouchableOpacity>
@@ -390,37 +626,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   labelSuggestionChip: {
-    backgroundColor: '#30D15820',
-    borderColor: '#30D158',
     borderWidth: 1,
     borderRadius: 10,
     paddingHorizontal: 9,
     paddingVertical: 3.5,
   },
   labelSuggestionText: {
-    color: '#30D158',
     fontSize: 12,
     fontWeight: '700',
   },
   taskSuggestionChip: {
-    backgroundColor: '#0A84FF20',
-    borderColor: '#0A84FF80',
     borderWidth: 1,
     borderRadius: 10,
     paddingHorizontal: 9,
     paddingVertical: 3.5,
   },
   taskSuggestionText: {
-    color: '#0A84FF',
     fontSize: 12,
     fontWeight: '600',
   },
-  userSuggestionChip: {
-    borderColor: 'rgba(191, 90, 242, 0.4)',
-    backgroundColor: 'rgba(191, 90, 242, 0.15)',
-  },
   userSuggestionText: {
-    color: '#BF5AF2',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -432,51 +657,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   magicBadge: {
-    backgroundColor: '#2C2C2E',
     borderRadius: 6,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderWidth: 1,
-    borderColor: '#3A3A3C',
   },
   magicBadgeText: {
-    color: '#0A84FF',
     fontSize: 11,
     fontWeight: '600',
-  },
-  magicAssigneeBadge: {
-    borderColor: 'rgba(191, 90, 242, 0.4)',
-    backgroundColor: 'rgba(191, 90, 242, 0.15)',
   },
   magicAssigneeBadgeText: {
-    color: '#BF5AF2',
     fontSize: 11,
     fontWeight: '600',
-  },
-  magicLabelBadge: {
-    borderColor: '#30D15840',
-    backgroundColor: '#30D15815',
   },
   magicLabelBadgeText: {
-    color: '#30D158',
     fontSize: 11,
     fontWeight: '600',
-  },
-  magicDateBadge: {
-    borderColor: '#FF950040',
-    backgroundColor: '#FF950015',
   },
   magicDateBadgeText: {
-    color: '#FF9500',
     fontSize: 11,
     fontWeight: '600',
   },
-  magicPriorityBadge: {
-    borderColor: '#FF3B3040',
-    backgroundColor: '#FF3B3015',
+  magicRepeatBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   magicPriorityBadgeText: {
-    color: '#FF3B30',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -508,7 +714,6 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1C1C1E',
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: Platform.OS === 'ios' ? 6 : 4,
@@ -518,12 +723,10 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
     borderWidth: 1,
-    borderColor: '#2C2C2E',
   },
   input: {
     flex: 1,
     fontSize: 14.5,
-    color: '#FFFFFF',
     paddingVertical: 2,
   },
   actionsRow: {
@@ -562,12 +765,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 18,
   },
-  storeSuggestionChip: {
-    backgroundColor: 'rgba(255, 159, 10, 0.15)',
-    borderColor: 'rgba(255, 159, 10, 0.45)',
-  },
   storeSuggestionText: {
-    color: '#FF9F0A',
     fontSize: 12.5,
     fontWeight: '700',
   },

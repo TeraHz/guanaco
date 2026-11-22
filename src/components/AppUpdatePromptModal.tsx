@@ -19,18 +19,23 @@ export const AppUpdatePromptModal: React.FC = () => {
     updateInfo,
     installProgress,
     isPromptVisible,
+    isDownloadedDismissed,
     dismissPrompt,
+    hidePrompt,
     startUpdate,
     completeDownloadedUpdate,
     openStore,
   } = useUpdateStore();
 
-  if (!isPromptVisible && installProgress?.status !== 'DOWNLOADED') {
+  const isDownloaded = installProgress?.status === 'DOWNLOADED';
+  const isDownloading =
+    installProgress?.status === 'DOWNLOADING' ||
+    installProgress?.status === 'PENDING';
+  const isVisible = isPromptVisible || (isDownloaded && !isDownloadedDismissed);
+
+  if (!isVisible) {
     return null;
   }
-
-  const isDownloaded = installProgress?.status === 'DOWNLOADED';
-  const isDownloading = installProgress?.status === 'DOWNLOADING';
 
   const newBuild = updateInfo?.availableVersionCode || 'Latest';
   const currentBuild = updateInfo?.currentVersionCode || APP_BUILD_NUMBER;
@@ -39,8 +44,14 @@ export const AppUpdatePromptModal: React.FC = () => {
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
     if (isDownloaded) {
       await completeDownloadedUpdate();
+    } else if (isDownloading) {
+      hidePrompt();
     } else {
-      await startUpdate('flexible');
+      const preferredType =
+        updateInfo && !updateInfo.isFlexibleAllowed && updateInfo.isImmediateAllowed
+          ? 'immediate'
+          : 'flexible';
+      await startUpdate(preferredType);
     }
   };
 
@@ -51,34 +62,55 @@ export const AppUpdatePromptModal: React.FC = () => {
 
   const handleOpenPlayStore = async () => {
     safeHaptics.selection();
-    await openStore();
+    const opened = await openStore();
+    if (opened) {
+      hidePrompt();
+    }
   };
 
-  // Calculate download percentage if available
+  // Calculate download percentage if available (indeterminate while PENDING)
   let downloadPercent: number | null = null;
   if (
-    isDownloading &&
+    installProgress?.status === 'DOWNLOADING' &&
     installProgress.totalBytesToDownload > 0 &&
     installProgress.bytesDownloaded >= 0
   ) {
-    downloadPercent = Math.min(
-      100,
-      Math.round(
-        (installProgress.bytesDownloaded / installProgress.totalBytesToDownload) * 100
+    downloadPercent = Math.max(
+      0,
+      Math.min(
+        100,
+        Math.round(
+          (installProgress.bytesDownloaded / installProgress.totalBytesToDownload) * 100
+        )
       )
     );
   }
 
+  const badgeTextColor = isDownloaded
+    ? theme.isDark
+      ? '#30D158'
+      : '#15803D'
+    : theme.isDark
+    ? '#0A84FF'
+    : '#0066CC';
+
+  const primaryBtnBg = isDownloaded
+    ? theme.isDark
+      ? '#248A3D'
+      : '#15803D'
+    : theme.colors.accent;
+
   return (
     <Modal
       testID="app-update-prompt-modal"
-      visible={isPromptVisible || isDownloaded}
+      visible={isVisible}
       transparent
       animationType="fade"
       onRequestClose={handleDismissPress}
     >
       <View style={styles.backdrop}>
         <View
+          accessibilityViewIsModal={true}
           style={[
             styles.card,
             {
@@ -94,12 +126,7 @@ export const AppUpdatePromptModal: React.FC = () => {
               { backgroundColor: isDownloaded ? '#30D15822' : '#0A84FF22' },
             ]}
           >
-            <Text
-              style={[
-                styles.badgeText,
-                { color: isDownloaded ? '#30D158' : '#0A84FF' },
-              ]}
-            >
+            <Text style={[styles.badgeText, { color: badgeTextColor }]}>
               {isDownloaded
                 ? '✓ READY TO INSTALL'
                 : isDownloading
@@ -162,10 +189,8 @@ export const AppUpdatePromptModal: React.FC = () => {
           {/* Primary Action Button */}
           <TouchableOpacity
             testID="update-prompt-primary-btn"
-            style={[
-              styles.primaryBtn,
-              { backgroundColor: isDownloaded ? '#30D158' : theme.colors.accent },
-            ]}
+            accessibilityRole="button"
+            style={[styles.primaryBtn, { backgroundColor: primaryBtnBg }]}
             onPress={handleUpdatePress}
             activeOpacity={0.8}
           >
@@ -182,6 +207,7 @@ export const AppUpdatePromptModal: React.FC = () => {
           <View style={styles.secondaryRow}>
             <TouchableOpacity
               testID="update-prompt-dismiss-btn"
+              accessibilityRole="button"
               style={styles.dismissBtn}
               onPress={handleDismissPress}
               activeOpacity={0.7}
@@ -196,6 +222,7 @@ export const AppUpdatePromptModal: React.FC = () => {
             {!isDownloaded && !isDownloading && (
               <TouchableOpacity
                 testID="update-prompt-store-btn"
+                accessibilityRole="button"
                 style={styles.storeBtn}
                 onPress={handleOpenPlayStore}
                 activeOpacity={0.7}

@@ -49,6 +49,13 @@ jest.mock('expo-secure-store', () => ({
     mockSecureStoreMap.delete(key);
   }),
   isAvailableAsync: jest.fn(async () => true),
+  AFTER_FIRST_UNLOCK: 1,
+  AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 2,
+  ALWAYS: 3,
+  ALWAYS_THIS_DEVICE_ONLY: 4,
+  WHEN_UNLOCKED: 5,
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 6,
+  WHEN_PASSCODE_SET_THIS_DEVICE_ONLY: 7,
 }));
 
 // Mock Reanimated
@@ -182,6 +189,13 @@ jest.mock('expo-notifications', () => ({
 // Mock / enhance React Native Keyboard for event testing
 const { Keyboard } = require('react-native');
 const keyboardListeners: Record<string, ((...args: any[]) => void)[]> = {};
+
+beforeEach(() => {
+  mockSecureStoreMap.clear();
+  for (const key of Object.keys(keyboardListeners)) {
+    delete keyboardListeners[key];
+  }
+});
 
 Keyboard.addListener = jest.fn((event: string, callback: (...args: any[]) => void) => {
   if (!keyboardListeners[event]) {

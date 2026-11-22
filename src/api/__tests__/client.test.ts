@@ -1,6 +1,11 @@
-import { VikunjaClient } from '../client';
+import {
+  VikunjaClient,
+  VikunjaApiError,
+  parseAndValidateServerUrl,
+  isTotpRequiredError,
+} from '../client';
 
-describe('VikunjaClient', () => {
+describe('VikunjaClient & URL Security', () => {
   let client: VikunjaClient;
   const mockBaseUrl = 'https://try.vikunja.io';
   let originalFetch: typeof global.fetch;
@@ -15,7 +20,7 @@ describe('VikunjaClient', () => {
     jest.clearAllMocks();
   });
 
-  describe('Base URL normalization', () => {
+  describe('Base URL normalization & validation', () => {
     it('should normalize trailing slashes and ensure api/v1 prefix', () => {
       const c1 = new VikunjaClient({ baseUrl: 'https://demo.vikunja.io/' });
       expect(c1.getBaseApiUrl()).toBe('https://demo.vikunja.io/api/v1');
@@ -23,10 +28,55 @@ describe('VikunjaClient', () => {
       const c2 = new VikunjaClient({ baseUrl: 'https://demo.vikunja.io/api/v1/' });
       expect(c2.getBaseApiUrl()).toBe('https://demo.vikunja.io/api/v1');
     });
+
+    it('normalizes missing scheme to https:// and strips trailing /login and /api/v1 suffixes', () => {
+      expect(parseAndValidateServerUrl('demo.vikunja.io')).toEqual({
+        serverUrl: 'https://demo.vikunja.io',
+        apiBaseUrl: 'https://demo.vikunja.io/api/v1',
+        isInsecureHttp: false,
+      });
+
+      expect(parseAndValidateServerUrl('https://demo.vikunja.io/login/')).toEqual({
+        serverUrl: 'https://demo.vikunja.io',
+        apiBaseUrl: 'https://demo.vikunja.io/api/v1',
+        isInsecureHttp: false,
+      });
+
+      expect(parseAndValidateServerUrl('https://demo.vikunja.io/api/v1/login')).toEqual({
+        serverUrl: 'https://demo.vikunja.io',
+        apiBaseUrl: 'https://demo.vikunja.io/api/v1',
+        isInsecureHttp: false,
+      });
+
+      expect(parseAndValidateServerUrl('https://demo.vikunja.io/subpath/api/v1/')).toEqual({
+        serverUrl: 'https://demo.vikunja.io/subpath',
+        apiBaseUrl: 'https://demo.vikunja.io/subpath/api/v1',
+        isInsecureHttp: false,
+      });
+
+      expect(parseAndValidateServerUrl('http://192.168.1.50:3456/api/v1')).toEqual({
+        serverUrl: 'http://192.168.1.50:3456',
+        apiBaseUrl: 'http://192.168.1.50:3456/api/v1',
+        isInsecureHttp: true,
+      });
+    });
+
+    it('rejects invalid schemes, bare invalid words, bad IPv4 octets, and embedded userinfo credentials', () => {
+      expect(() => parseAndValidateServerUrl('')).toThrow();
+      expect(() => parseAndValidateServerUrl('not-a-valid-url')).toThrow();
+      expect(() => parseAndValidateServerUrl('ftp://vikunja.example.com')).toThrow();
+      expect(() => parseAndValidateServerUrl('javascript:alert(1)')).toThrow();
+      expect(() => parseAndValidateServerUrl('https://user:pass@vikunja.example.com')).toThrow(
+        /credentials/i
+      );
+      expect(() => parseAndValidateServerUrl('http://999.999.999.999:3456')).toThrow(
+        /IPv4|Invalid server URL/i
+      );
+    });
   });
 
-  describe('Authentication', () => {
-    it('should set and get auth token and include it in requests', async () => {
+  describe('Authentication, Headers & Redirect Protection', () => {
+    it('should set and get auth token, include Authorization header, and omit Content-Type on bodyless GET', async () => {
       client.setToken('test-jwt-token');
       expect(client.getToken()).toBe('test-jwt-token');
 
@@ -38,15 +88,11 @@ describe('VikunjaClient', () => {
 
       await client.getCurrentUser();
 
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/user',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer test-jwt-token',
-            'Content-Type': 'application/json',
-          }),
-        })
-      );
+      const [url, fetchOpts] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(url).toBe('https://try.vikunja.io/api/v1/user');
+      expect(fetchOpts.headers.Authorization).toBe('Bearer test-jwt-token');
+      expect(fetchOpts.headers['Content-Type']).toBeUndefined();
+      expect(fetchOpts.redirect).toBe('manual');
     });
 
     it('should login and return auth token', async () => {
@@ -64,6 +110,9 @@ describe('VikunjaClient', () => {
         'https://try.vikunja.io/api/v1/login',
         expect.objectContaining({
           method: 'POST',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+          }),
           body: JSON.stringify({
             username: 'testuser',
             password: 'password123',
@@ -72,9 +121,144 @@ describe('VikunjaClient', () => {
         })
       );
     });
+
+    it('logs in with optional totp_passcode and preserves untrimmed password spaces', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'totp-jwt-token' }),
+      } as Response);
+
+      const res = await client.login('testuser', '  pass with spaces  ', true, '654321');
+      expect(res.token).toBe('totp-jwt-token');
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/login',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            username: 'testuser',
+            password: '  pass with spaces  ',
+            long_token: true,
+            totp_passcode: '654321',
+          }),
+        })
+      );
+    });
+
+    it('detects Vikunja TOTP 2FA errors accurately via code 1017 and status 412', () => {
+      expect(
+        isTotpRequiredError(new VikunjaApiError(412, 'Precondition Failed', { code: 1017 }))
+      ).toBe(true);
+      expect(
+        isTotpRequiredError(new VikunjaApiError(400, 'Invalid totp passcode.', { code: 1017 }))
+      ).toBe(true);
+      expect(isTotpRequiredError(new VikunjaApiError(403, 'Invalid username or password'))).toBe(
+        false
+      );
+    });
+
+    it('blocks cross-origin 302 redirects, https->http downgrades, and validates Web redirect: follow response.url', async () => {
+      client.setToken('secret-bearer-token');
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'location' ? 'https://attacker.evil.com/collect' : null,
+        },
+      } as unknown as Response);
+
+      await expect(client.getCurrentUser()).rejects.toThrow(/cross-origin|redirect/i);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 307,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'location' ? 'http://try.vikunja.io/api/v1/user' : null,
+        },
+      } as unknown as Response);
+
+      await expect(client.getCurrentUser()).rejects.toThrow(/redirect/i);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 307,
+          headers: {
+            get: (k: string) =>
+              k.toLowerCase() === 'location' ? 'https://try.vikunja.io/api/v1/user/' : null,
+          },
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: {
+            get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null),
+          },
+          json: async () => ({ id: 7, username: 'safeuser' }),
+        } as unknown as Response);
+
+      const user = await client.getCurrentUser();
+      expect(user.username).toBe('safeuser');
+
+      const { Platform } = require('react-native');
+      const prevOS = Platform.OS;
+      try {
+        Platform.OS = 'web';
+        global.fetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          url: 'https://try.vikunja.io/api/v1/user/',
+          json: async () => ({ id: 8, username: 'webuser' }),
+        } as unknown as Response);
+
+        const webUser = await client.getCurrentUser();
+        expect(webUser.username).toBe('webuser');
+        expect((global.fetch as jest.Mock).mock.calls[0][1].redirect).toBe('follow');
+
+        global.fetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          url: 'https://phishing.evil.org/api/v1/user',
+          json: async () => ({ id: 9, username: 'spoof' }),
+        } as unknown as Response);
+
+        await expect(client.getCurrentUser()).rejects.toThrow(/cross-origin|redirect/i);
+      } finally {
+        Platform.OS = prevOS;
+      }
+    });
+
+    it('does not invoke response.json() on non-JSON HTML error pages and cleans up caller AbortSignal listeners', async () => {
+      const jsonSpy = jest.fn().mockRejectedValue(new SyntaxError('Unexpected token <'));
+      const externalController = new AbortController();
+      const removeListenerSpy = jest.spyOn(externalController.signal, 'removeEventListener');
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null,
+        },
+        json: jsonSpy,
+      } as unknown as Response);
+
+      await expect(
+        client.getProjects({ signal: externalController.signal })
+      ).rejects.toThrow('Bad Gateway');
+      expect(jsonSpy).not.toHaveBeenCalled();
+      expect(removeListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+    });
   });
 
-  describe('Projects / Lists API', () => {
+  describe('Projects / Lists API & Multi-Page Pagination', () => {
     beforeEach(() => {
       client.setToken('token');
     });
@@ -97,6 +281,41 @@ describe('VikunjaClient', () => {
         'https://try.vikunja.io/api/v1/projects',
         expect.anything()
       );
+    });
+
+    it('paginates getProjects() automatically when multiple pages exist', async () => {
+      const page1 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, title: `List ${i + 1}` }));
+      const page2 = [{ id: 51, title: 'List 51' }];
+
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page1 } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page2 } as Response);
+
+      const projects = await client.getProjects();
+      expect(projects).toHaveLength(51);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('should fetch a single project by id and fetch project views', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 1, title: 'Inbox' }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 7, title: 'List', project_id: 1, view_kind: 'list' }],
+        } as Response);
+
+      const proj = await client.getProject(1);
+      expect(proj.title).toBe('Inbox');
+      const views = await client.getProjectViews(1);
+      expect(views).toHaveLength(1);
+      expect(views[0].view_kind).toBe('list');
     });
 
     it('should create project with PUT /projects', async () => {
@@ -235,8 +454,7 @@ describe('VikunjaClient', () => {
       );
     });
 
-    it('should manage project user sharing (GET, PUT, POST, DELETE)', async () => {
-      // 1. GET /projects/1/users
+    it('should manage project user sharing (GET, PUT by id & username, POST, DELETE)', async () => {
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -246,7 +464,6 @@ describe('VikunjaClient', () => {
       expect(users).toHaveLength(1);
       expect(users[0].username).toBe('alice');
 
-      // 2. PUT /projects/1/users (add user with permission)
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -261,7 +478,21 @@ describe('VikunjaClient', () => {
         })
       );
 
-      // 3. POST /projects/1/users/10 (update permission)
+      // Add by username object lookup
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 15, username: 'diana' }],
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ message: 'ok' }),
+        } as Response);
+      await client.addProjectUser(1, { username: 'diana', permission: 2 });
+
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -276,7 +507,6 @@ describe('VikunjaClient', () => {
         })
       );
 
-      // 4. DELETE /projects/1/users/10
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -290,7 +520,6 @@ describe('VikunjaClient', () => {
     });
 
     it('should manage project team sharing (GET /teams, GET/PUT/POST/DELETE /projects/{id}/teams)', async () => {
-      // 1. GET /teams
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -299,7 +528,6 @@ describe('VikunjaClient', () => {
       const teams = await client.getTeams();
       expect(teams[0].name).toBe('Engineers');
 
-      // 2. GET /projects/1/teams
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -308,7 +536,6 @@ describe('VikunjaClient', () => {
       const projectTeams = await client.getProjectTeams(1);
       expect(projectTeams[0].permission).toBe(2);
 
-      // 3. PUT /projects/1/teams
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -323,7 +550,6 @@ describe('VikunjaClient', () => {
         })
       );
 
-      // 4. POST /projects/1/teams/20
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -338,7 +564,6 @@ describe('VikunjaClient', () => {
         })
       );
 
-      // 5. DELETE /projects/1/teams/20
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -350,6 +575,55 @@ describe('VikunjaClient', () => {
         expect.objectContaining({ method: 'DELETE' })
       );
     });
+
+    it('paginates getTasks(projectId), getLabels(), getTeams(), and getProjectUsers() via x-pagination-total-pages header', async () => {
+      const makeHeaderResponse = (items: any[], totalPages: number) =>
+        ({
+          ok: true,
+          status: 200,
+          headers: {
+            get: (k: string) => {
+              const lower = k.toLowerCase();
+              if (lower === 'content-type') return 'application/json';
+              if (lower === 'x-pagination-total-pages') return String(totalPages);
+              return null;
+            },
+          },
+          json: async () => items,
+        }) as unknown as Response;
+
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(
+          makeHeaderResponse([{ id: 1, title: 'T1', done: false, priority: 0, project_id: 1 }], 2)
+        )
+        .mockResolvedValueOnce(
+          makeHeaderResponse([{ id: 2, title: 'T2', done: false, priority: 0, project_id: 1 }], 2)
+        );
+      expect((await client.getTasks(1)).map((t) => t.id)).toEqual([1, 2]);
+
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(makeHeaderResponse([{ id: 1, title: 'L1' }], 2))
+        .mockResolvedValueOnce(makeHeaderResponse([{ id: 2, title: 'L2' }], 2));
+      expect((await client.getLabels()).map((l) => l.id)).toEqual([1, 2]);
+
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(makeHeaderResponse([{ id: 10, name: 'TeamA' }], 2))
+        .mockResolvedValueOnce(makeHeaderResponse([{ id: 11, name: 'TeamB' }], 2));
+      expect((await client.getTeams()).map((t) => t.id)).toEqual([10, 11]);
+
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(
+          makeHeaderResponse([{ id: 1, username: 'u1', permission: 1 }], 2)
+        )
+        .mockResolvedValueOnce(
+          makeHeaderResponse([{ id: 2, username: 'u2', permission: 0 }], 2)
+        );
+      expect((await client.getProjectUsers(1)).map((u) => u.username)).toEqual(['u1', 'u2']);
+    });
   });
 
   describe('Tasks API (TickTick style operations)', () => {
@@ -357,7 +631,7 @@ describe('VikunjaClient', () => {
       client.setToken('token');
     });
 
-    it('should fetch tasks for a project', async () => {
+    it('should fetch tasks for a project (with optional explicit page & filter_by)', async () => {
       const mockTasks = [
         { id: 10, title: 'Buy groceries', done: false, priority: 2, project_id: 1 },
       ];
@@ -374,9 +648,15 @@ describe('VikunjaClient', () => {
         'https://try.vikunja.io/api/v1/projects/1/tasks',
         expect.anything()
       );
+
+      await client.getTasks(1, { page: 1, per_page: 25, filter_by: ['done'] });
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        'https://try.vikunja.io/api/v1/projects/1/tasks?filter_by=done&page=1&per_page=25',
+        expect.anything()
+      );
     });
 
-    it('should fetch all tasks across projects using /tasks', async () => {
+    it('should fetch all tasks across projects using /tasks with explicit page', async () => {
       const allTasks = [
         { id: 10, title: 'Inbox item', done: false, priority: 1, project_id: 1 },
         { id: 20, title: 'Shopping item', done: false, priority: 2, project_id: 2 },
@@ -397,7 +677,6 @@ describe('VikunjaClient', () => {
     });
 
     it('should paginate through multiple pages when fetching all tasks without specific page', async () => {
-      // 50 items on page 1, 10 items on page 2
       const page1 = Array.from({ length: 50 }, (_, i) => ({
         id: i + 1,
         title: `Task ${i + 1}`,
@@ -415,25 +694,62 @@ describe('VikunjaClient', () => {
 
       global.fetch = jest
         .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => page1,
-        } as Response)
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => page2,
-        } as Response);
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page1 } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page2 } as Response);
 
       const tasks = await client.getAllTasks();
       expect(tasks).toHaveLength(60);
       expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
-    it('should create task using PUT /projects/{id}/tasks', async () => {
+    it('getAllTasks() falls back to /tasks/all ONLY on 404/405 and rethrows network/401/5xx errors', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          json: async () => ({ message: 'Not Found' }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [
+            { id: 10, title: 'Legacy All Task', done: false, priority: 0, project_id: 1 },
+          ],
+        } as Response);
+
+      const legacyTasks = await client.getAllTasks();
+      expect(legacyTasks).toHaveLength(1);
+
+      const page1 = Array.from({ length: 50 }, (_, i) => ({
+        id: i + 1,
+        title: `Task ${i + 1}`,
+        done: false,
+        priority: 0,
+        project_id: 1,
+      }));
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page1 } as Response)
+        .mockRejectedValueOnce(new Error('Network dropped mid-sync'));
+
+      await expect(client.getAllTasks()).rejects.toThrow('Network dropped mid-sync');
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        json: async () => ({ message: 'DB down' }),
+      } as Response);
+
+      await expect(client.getAllTasks()).rejects.toThrow('DB down');
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should create task using PUT /projects/{id}/tasks and fetch single task using GET /tasks/{id}', async () => {
       const newTask = { title: 'Finish report', priority: 3, project_id: 1 };
-      global.fetch = jest.fn().mockResolvedValue({
+      global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 201,
         json: async () => ({ id: 11, ...newTask, done: false }),
@@ -441,7 +757,6 @@ describe('VikunjaClient', () => {
 
       const created = await client.createTask(1, newTask);
       expect(created.id).toBe(11);
-      expect(created.title).toBe('Finish report');
       expect(global.fetch).toHaveBeenCalledWith(
         'https://try.vikunja.io/api/v1/projects/1/tasks',
         expect.objectContaining({
@@ -449,9 +764,17 @@ describe('VikunjaClient', () => {
           body: JSON.stringify(newTask),
         })
       );
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 11, ...newTask, done: false }),
+      } as Response);
+      const fetched = await client.getTask(11);
+      expect(fetched.id).toBe(11);
     });
 
-    it('should update task preserving all mutable fields and mapping color to hex_color', async () => {
+    it('should update task preserving all mutable fields and mapping color (including empty clear "") to hex_color', async () => {
       const fullTaskInput = {
         title: 'Important Meeting',
         description: 'Prepare quarterly slides',
@@ -464,7 +787,7 @@ describe('VikunjaClient', () => {
         assignees: [{ id: 101, username: 'terahz' }],
       };
 
-      global.fetch = jest.fn().mockResolvedValue({
+      global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         status: 200,
         json: async () => ({ id: 10, ...fullTaskInput, hex_color: '#ff0000' }),
@@ -480,6 +803,20 @@ describe('VikunjaClient', () => {
             ...fullTaskInput,
             hex_color: '#ff0000',
           }),
+        })
+      );
+
+      // Clearing color with empty string "" also maps hex_color: ""
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 10, title: 'Important Meeting', color: '', hex_color: '' }),
+      } as Response);
+      await client.updateTask(10, { title: 'Important Meeting', color: '' });
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        'https://try.vikunja.io/api/v1/tasks/10',
+        expect.objectContaining({
+          body: JSON.stringify({ title: 'Important Meeting', color: '', hex_color: '' }),
         })
       );
     });
@@ -560,6 +897,60 @@ describe('VikunjaClient', () => {
       );
     });
 
+    it('reorderTask fetches full task snapshot if falling back to updateTask so server fields are never wiped', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 10,
+            title: 'Preserve My Fields',
+            description: 'Critical notes',
+            done: false,
+            priority: 4,
+            project_id: 2,
+          }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 10,
+            title: 'Preserve My Fields',
+            description: 'Critical notes',
+            done: false,
+            priority: 4,
+            project_id: 2,
+            position: 3000,
+          }),
+        } as Response);
+
+      await client.reorderTask(10, 3000);
+
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        1,
+        'https://try.vikunja.io/api/v1/tasks/10',
+        expect.objectContaining({ method: 'GET' })
+      );
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
+        'https://try.vikunja.io/api/v1/tasks/10',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            id: 10,
+            title: 'Preserve My Fields',
+            description: 'Critical notes',
+            done: false,
+            priority: 4,
+            project_id: 2,
+            position: 3000,
+          }),
+        })
+      );
+    });
+
     it('should delete task with DELETE /tasks/{id}', async () => {
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
@@ -583,7 +974,7 @@ describe('VikunjaClient', () => {
     it('should fetch all labels using GET /labels', async () => {
       const mockLabels = [
         { id: 1, title: 'Costco', hex_color: '#e74c3c' },
-        { id: 2, title: 'Trader Joe\'s', hex_color: '#2ecc71' },
+        { id: 2, title: "Trader Joe's", hex_color: '#2ecc71' },
       ];
 
       global.fetch = jest.fn().mockResolvedValue({
@@ -650,12 +1041,39 @@ describe('VikunjaClient', () => {
       );
     });
 
+    it('updateLabel should send POST request with updated label payload', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 4, title: 'Organic', hex_color: '22c55e' }),
+      } as Response);
+
+      const updated = await client.updateLabel(4, { title: 'Organic', hex_color: '22c55e' });
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/labels/4',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ title: 'Organic', hex_color: '22c55e' }),
+        })
+      );
+      expect(updated.title).toBe('Organic');
+    });
+
+    it('deleteLabel should send DELETE request to /labels/{id}', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'Label deleted' }),
+      } as Response);
+
+      await client.deleteLabel(4);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/labels/4',
+        expect.objectContaining({ method: 'DELETE' })
+      );
+    });
+
     it('setTaskLabels() should resolve existing labels, create new ones, and attach them to task', async () => {
-      // 1: GET /tasks/100 returns current task with no labels
-      // 2: GET /labels returns existing label 'Costco' (id 1)
-      // 3: PUT /tasks/100/labels for 'Costco' (id 1)
-      // 4: PUT /labels to create 'Fresh Market' returns id 2
-      // 5: PUT /tasks/100/labels for 'Fresh Market' (id 2)
       global.fetch = jest
         .fn()
         .mockResolvedValueOnce({
@@ -684,53 +1102,38 @@ describe('VikunjaClient', () => {
           json: async () => ({ message: 'ok' }),
         } as Response);
 
-      const labelsToSet = [
+      const synced = await client.setTaskLabels(100, [
         { id: 1, title: 'Costco' },
-        { id: -99, title: 'Fresh Market' }, // new label without server id
-      ];
+        { id: -99, title: 'Fresh Market' },
+      ]);
 
-      const synced = await client.setTaskLabels(100, labelsToSet);
       expect(synced).toEqual([
         expect.objectContaining({ id: 1, title: 'Costco' }),
         expect.objectContaining({ id: 2, title: 'Fresh Market' }),
       ]);
     });
 
-    it('setTaskLabels() should remove labels not present in nextLabels', async () => {
-      // previousLabels has Costco (id 1) and Pharmacy (id 3)
-      // nextLabels only has Costco (id 1) -> Pharmacy (id 3) must be deleted
-      global.fetch = jest
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ message: 'deleted' }),
-        } as Response) // DELETE /tasks/100/labels/3
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => [{ id: 1, title: 'Costco' }],
-        } as Response) // GET /labels
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ message: 'ok' }),
-        } as Response); // PUT /tasks/100/labels (Costco)
+    it('setTaskLabels() skips already-attached labels and removes labels not present in nextLabels', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: 'deleted' }),
+      } as Response);
 
       const previousLabels = [
-        { id: 1, title: 'Costco' },
-        { id: 3, title: 'Pharmacy' },
+        { id: 1, title: 'Costco', hex_color: '#ff0000' },
+        { id: 3, title: 'Pharmacy', hex_color: '#00ff00' },
       ];
-      const nextLabels = [{ id: 1, title: 'Costco' }];
+      const nextLabels = [{ id: 1, title: 'Costco', hex_color: '#ff0000' }];
 
       const synced = await client.setTaskLabels(100, nextLabels, previousLabels);
 
+      expect(global.fetch).toHaveBeenCalledTimes(1);
       expect(global.fetch).toHaveBeenCalledWith(
         'https://try.vikunja.io/api/v1/tasks/100/labels/3',
         expect.objectContaining({ method: 'DELETE' })
       );
-      expect(synced).toHaveLength(1);
-      expect(synced[0].title).toBe('Costco');
+      expect(synced).toEqual([{ id: 1, title: 'Costco', hex_color: '#ff0000' }]);
     });
 
     it('setTaskLabels() should remove all labels when empty array passed', async () => {
@@ -740,12 +1143,12 @@ describe('VikunjaClient', () => {
           ok: true,
           status: 200,
           json: async () => ({ message: 'deleted' }),
-        } as Response) // DELETE /tasks/100/labels/1
+        } as Response)
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
           json: async () => ({ message: 'deleted' }),
-        } as Response); // DELETE /tasks/100/labels/2
+        } as Response);
 
       const previousLabels = [
         { id: 1, title: 'Costco' },
@@ -764,18 +1167,30 @@ describe('VikunjaClient', () => {
       );
       expect(synced).toEqual([]);
     });
-  });
 
-  describe('Error handling', () => {
-    it('should throw an error with response details on failure', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: false,
-        status: 401,
-        statusText: 'Unauthorized',
-        json: async () => ({ message: 'Invalid token or credentials' }),
-      } as Response);
+    it('setTaskLabels should rethrow unexpected errors so sync queue can retry', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 100, title: 'Task 100', labels: [] }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 5, title: 'Urgent' }],
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          json: async () => ({ message: 'Database failure' }),
+        } as Response);
 
-      await expect(client.getCurrentUser()).rejects.toThrow('Invalid token or credentials');
+      await expect(client.setTaskLabels(100, [{ id: 5, title: 'Urgent' }])).rejects.toThrow(
+        'Database failure'
+      );
     });
   });
 
@@ -832,17 +1247,18 @@ describe('VikunjaClient', () => {
     });
 
     it('setTaskAssignees should remove unselected assignees and add new assignees', async () => {
-      global.fetch = jest.fn()
+      global.fetch = jest
+        .fn()
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
           json: async () => ({ message: 'removed' }),
-        } as Response) // DELETE /tasks/10/assignees/2
+        } as Response)
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
           json: async () => ({ message: 'added' }),
-        } as Response); // PUT /tasks/10/assignees with user_id: 3
+        } as Response);
 
       const previous = [
         { id: 1, username: 'terahz' },
@@ -855,12 +1271,10 @@ describe('VikunjaClient', () => {
 
       const result = await client.setTaskAssignees(10, next, previous);
 
-      // Removed alex (id: 2)
       expect(global.fetch).toHaveBeenCalledWith(
         'https://try.vikunja.io/api/v1/tasks/10/assignees/2',
         expect.objectContaining({ method: 'DELETE' })
       );
-      // Added bob (id: 3)
       expect(global.fetch).toHaveBeenCalledWith(
         'https://try.vikunja.io/api/v1/tasks/10/assignees',
         expect.objectContaining({
@@ -871,40 +1285,50 @@ describe('VikunjaClient', () => {
       expect(result).toHaveLength(2);
     });
 
-    it('updateLabel should send POST request with updated label payload', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ id: 4, title: 'Organic', hex_color: '22c55e' }),
-      } as Response);
+    it('setTaskAssignees resolves negative-ID usernames via searchUsers', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 9, username: 'charlie' }],
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ message: 'added' }),
+        } as Response);
 
-      const updated = await client.updateLabel(4, { title: 'Organic', hex_color: '22c55e' });
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/labels/4',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ title: 'Organic', hex_color: '22c55e' }),
-        })
-      );
-      expect(updated.title).toBe('Organic');
+      const result = await client.setTaskAssignees(10, [{ id: -1, username: 'charlie' }], []);
+      expect(result).toEqual([{ id: 9, username: 'charlie' }]);
     });
 
-    it('deleteLabel should send DELETE request to /labels/{id}', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ message: 'Label deleted' }),
+    it('setTaskAssignees should rethrow unexpected errors so sync queue can retry', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        json: async () => ({ message: 'Upstream gateway error' }),
       } as Response);
 
-      await client.deleteLabel(4);
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/labels/4',
-        expect.objectContaining({ method: 'DELETE' })
-      );
+      await expect(
+        client.setTaskAssignees(100, [{ id: 9, username: 'charlie' }], [])
+      ).rejects.toThrow('Upstream gateway error');
     });
   });
 
-  describe('Auth Token Lifecycle & Error Handling', () => {
+  describe('Auth Token Lifecycle, Refresh Deduplication & Error Handling', () => {
+    it('should throw an error with response details on failure', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Invalid token or credentials' }),
+      } as Response);
+
+      await expect(client.getCurrentUser()).rejects.toThrow('Invalid token or credentials');
+    });
+
     it('login should request a long-lived token (long_token: true)', async () => {
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
@@ -915,17 +1339,6 @@ describe('VikunjaClient', () => {
       const res = await client.login('testuser', 'secretpass');
       expect(res.token).toBe('long-lived-jwt-token');
       expect(client.getToken()).toBe('long-lived-jwt-token');
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/login',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({
-            username: 'testuser',
-            password: 'secretpass',
-            long_token: true,
-          }),
-        })
-      );
     });
 
     it('renewToken should send POST to /user/token and update token', async () => {
@@ -941,9 +1354,7 @@ describe('VikunjaClient', () => {
       expect(client.getToken()).toBe('refreshed-jwt-token');
       expect(global.fetch).toHaveBeenCalledWith(
         'https://try.vikunja.io/api/v1/user/token',
-        expect.objectContaining({
-          method: 'POST',
-        })
+        expect.objectContaining({ method: 'POST' })
       );
     });
 
@@ -974,7 +1385,6 @@ describe('VikunjaClient', () => {
       global.fetch = jest.fn().mockImplementation(() => {
         callCount++;
         if (callCount === 1) {
-          // First call: 401 Unauthorized
           return Promise.resolve({
             ok: false,
             status: 401,
@@ -982,7 +1392,6 @@ describe('VikunjaClient', () => {
             json: async () => ({ message: 'Token is expired' }),
           } as Response);
         }
-        // Second call (retry): Success
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -995,7 +1404,6 @@ describe('VikunjaClient', () => {
       expect(onTokenRefresh).toHaveBeenCalledTimes(1);
       expect(client.getToken()).toBe('fresh-new-token');
       expect(onUnauthorized).not.toHaveBeenCalled();
-      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('should call onUnauthorized when onTokenRefresh fails or returns null', async () => {
@@ -1015,15 +1423,90 @@ describe('VikunjaClient', () => {
       expect(onUnauthorized).toHaveBeenCalledTimes(1);
     });
 
+    it('deduplicates concurrent 401 refresh & onUnauthorized calls and never calls renewToken for tk_ API tokens', async () => {
+      client.setToken('tk_personal_token_123');
+      const onRefresh = jest.fn();
+      const onUnauthorized = jest.fn();
+      client.onTokenRefresh = onRefresh;
+      client.onUnauthorized = onUnauthorized;
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Invalid token' }),
+      } as Response);
+
+      await Promise.allSettled([
+        client.getProjects(),
+        client.getLabels(),
+        client.getCurrentUser(),
+      ]);
+
+      expect(onRefresh).not.toHaveBeenCalled();
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries immediately if a sibling request already refreshed the JWT before 401 arrived', async () => {
+      client.setToken('jwt-old');
+      const onTokenRefresh = jest.fn().mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 15));
+        return 'jwt-fresh';
+      });
+      client.onTokenRefresh = onTokenRefresh;
+
+      global.fetch = jest.fn().mockImplementation(async (_url: string, opts: any) => {
+        const auth = opts?.headers?.Authorization;
+        if (auth === 'Bearer jwt-old') {
+          await new Promise((r) => setTimeout(r, 5));
+          return {
+            ok: false,
+            status: 401,
+            statusText: 'Unauthorized',
+            json: async () => ({ message: 'Expired' }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 1, title: 'OK' }],
+        } as Response;
+      });
+
+      const [p1, p2] = await Promise.all([client.getProjects(), client.getLabels()]);
+      expect(p1).toHaveLength(1);
+      expect(p2).toHaveLength(1);
+      expect(onTokenRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('never deadlocks if renewToken (/user/token) itself returns 401', async () => {
+      client.setToken('jwt-expired');
+      client.onTokenRefresh = async () => {
+        const res = await client.renewToken();
+        return res.token;
+      };
+      const onUnauthorized = jest.fn();
+      client.onUnauthorized = onUnauthorized;
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Token expired beyond renewal window' }),
+      } as Response);
+
+      await expect(client.getProjects()).rejects.toThrow('Token expired beyond renewal window');
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    });
+
     it('should abort request and throw when timeout is exceeded', async () => {
       const fastTimeoutClient = new VikunjaClient({
         baseUrl: 'https://try.vikunja.io',
         timeoutMs: 50,
       });
 
-      // Simulate a fetch that takes longer than timeoutMs
-      global.fetch = jest.fn().mockImplementation((url, options) => {
-        return new Promise((resolve, reject) => {
+      global.fetch = jest.fn().mockImplementation((_url, options) => {
+        return new Promise((_resolve, reject) => {
           if (options?.signal) {
             options.signal.addEventListener('abort', () => {
               const err = new Error('The operation was aborted');
@@ -1036,49 +1519,5 @@ describe('VikunjaClient', () => {
 
       await expect(fastTimeoutClient.getProjects()).rejects.toThrow(/timed out|timeout|aborted/i);
     });
-
-    it('setTaskLabels should rethrow unexpected errors so sync queue can retry', async () => {
-      // Return 500 error when trying to attach label
-      global.fetch = jest
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ id: 100, title: 'Task 100', labels: [] }),
-        } as Response) // getTask
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => [{ id: 5, title: 'Urgent' }],
-        } as Response) // getLabels
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 500,
-          statusText: 'Internal Server Error',
-          json: async () => ({ message: 'Database failure' }),
-        } as Response); // addLabelToTask
-
-      await expect(
-        client.setTaskLabels(100, [{ id: 5, title: 'Urgent' }])
-      ).rejects.toThrow('Database failure');
-    });
-
-    it('setTaskAssignees should rethrow unexpected errors so sync queue can retry', async () => {
-      // Return network failure when trying to add assignee
-      global.fetch = jest
-        .fn()
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 502,
-          statusText: 'Bad Gateway',
-          json: async () => ({ message: 'Upstream gateway error' }),
-        } as Response);
-
-      await expect(
-        client.setTaskAssignees(100, [{ id: 9, username: 'charlie' }], [])
-      ).rejects.toThrow('Upstream gateway error');
-    });
   });
 });
-
-

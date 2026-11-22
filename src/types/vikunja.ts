@@ -108,6 +108,7 @@ export interface Task {
   position?: number;
   percent_done?: number;
   color?: string;
+  hex_color?: string;
   labels?: Label[];
   assignees?: User[];
   created?: string;
@@ -117,11 +118,14 @@ export interface Task {
 export interface CreateTaskInput {
   title: string;
   description?: string;
+  done?: boolean;
+  done_at?: string | null;
   due_date?: string | null;
   start_date?: string | null;
   end_date?: string | null;
   priority?: number;
   project_id: number;
+  position?: number;
   labels?: Label[];
   assignees?: User[];
   percent_done?: number;

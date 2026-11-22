@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 # Zero Telemetry / Privacy: strictly disable all metrics, analytics, and phone-home heartbeats
 export EXPO_NO_TELEMETRY=1
@@ -9,7 +12,7 @@ export DO_NOT_TRACK=1
 echo "=== Building Guanaco Android App Bundle (.aab) Locally ==="
 
 # Auto-detect Android SDK if not set
-if [ -z "$ANDROID_HOME" ] || [ ! -d "$ANDROID_HOME" ]; then
+if [ -z "${ANDROID_HOME:-}" ] || [ ! -d "${ANDROID_HOME:-}" ]; then
   if [ -d "/opt/homebrew/share/android-commandlinetools" ]; then
     export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"
   elif [ -d "$HOME/Library/Android/sdk" ]; then
@@ -23,41 +26,64 @@ fi
 
 echo "Using Android SDK: $ANDROID_HOME"
 
-# Generate native android directory if missing
-if [ ! -d "android" ]; then
-  echo "1. Generating Android native project via Expo Prebuild..."
-  npx expo prebuild --platform android
+# Verify tracked native android project exists
+if [ ! -d "android" ] || [ ! -f "android/app/build.gradle" ]; then
+  echo "❌ Error: Tracked android/ directory or android/app/build.gradle is missing."
+  exit 1
 fi
 
-# Ensure release keystore is in android/app
-if [ -f "guanaco-release.keystore" ] && [ ! -f "android/app/guanaco-release.keystore" ]; then
+# Ensure release keystore is available in android/app when placed at repo root
+if [ -z "${GUANACO_KEYSTORE_FILE:-}" ] && [ -f "guanaco-release.keystore" ] && [ ! -f "android/app/guanaco-release.keystore" ]; then
   echo "Copying guanaco-release.keystore to android/app/..."
   cp guanaco-release.keystore android/app/guanaco-release.keystore
 fi
 
-# Sync version and versionCode from app.json to android/app/build.gradle
-node -e "
-const fs = require('fs');
-const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-const version = appJson.expo.version;
-const versionCode = appJson.expo.android.versionCode;
-let gradle = fs.readFileSync('android/app/build.gradle', 'utf8');
-gradle = gradle.replace(/versionCode \d+/, 'versionCode ' + versionCode);
-gradle = gradle.replace(/versionName \".*\"/, 'versionName \"' + version + '\"');
-fs.writeFileSync('android/app/build.gradle', gradle);
-console.log('Synced build.gradle to version ' + version + ' (' + versionCode + ')');
-"
+# Sync and validate version and versionCode from app.json to android/app/build.gradle
+node -e '
+const fs = require("fs");
+const appJson = JSON.parse(fs.readFileSync("app.json", "utf8"));
+const version = appJson?.expo?.version;
+const versionCode = appJson?.expo?.android?.versionCode;
 
-echo "2. Building release bundle (.aab)..."
-cd android
-./gradlew bundleRelease
+if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+  console.error("❌ Invalid expo.version in app.json:", version);
+  process.exit(1);
+}
+if (!Number.isInteger(versionCode) || versionCode < 1) {
+  console.error("❌ Invalid expo.android.versionCode in app.json:", versionCode);
+  process.exit(1);
+}
 
-cp app/build/outputs/bundle/release/app-release.aab ../guanaco-release.aab
-cd ..
+const gradlePath = "android/app/build.gradle";
+const original = fs.readFileSync(gradlePath, "utf8");
+if (!/versionCode \d+/.test(original) || !/versionName "[^"]+"/.test(original)) {
+  console.error("❌ Could not find versionCode/versionName in android/app/build.gradle");
+  process.exit(1);
+}
+
+const updated = original
+  .replace(/versionCode \d+/, `versionCode ${versionCode}`)
+  .replace(/versionName "[^"]+"/, `versionName "${version}"`);
+
+if (updated !== original) {
+  fs.writeFileSync(gradlePath, updated);
+  console.log(`Synced build.gradle to version ${version} (${versionCode})`);
+} else {
+  console.log(`Verified build.gradle matches version ${version} (${versionCode})`);
+}
+'
+
+echo "Building release bundle (.aab)..."
+(
+  cd android
+  ./gradlew bundleRelease
+)
+
+cp android/app/build/outputs/bundle/release/app-release.aab guanaco-release.aab
 
 GIT_REV=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || git describe --tags --always 2>/dev/null || echo "untagged")
-GIT_DIRTY=$(git status --porcelain 2>/dev/null)
+GIT_DIRTY=$(git status --porcelain 2>/dev/null || true)
 
 echo ""
 echo "=== Build Complete! ==="

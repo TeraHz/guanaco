@@ -14,16 +14,20 @@ describe('userSuggestions utility', () => {
   ];
 
   describe('extractMentionQuery', () => {
-    it('extracts partial username when user types @', () => {
+    it('extracts partial username when user types @ (including Unicode)', () => {
       expect(extractMentionQuery('Task for @al')).toBe('al');
       expect(extractMentionQuery('Meeting with @')).toBe('');
       expect(extractMentionQuery('@tera')).toBe('tera');
+      expect(extractMentionQuery('Задача за @гео')).toBe('гео');
     });
 
-    it('returns null if there is no active mention query', () => {
+    it('returns null if there is no active mention query, email, or @today/@tomorrow/@tonight shorthand', () => {
       expect(extractMentionQuery('Buy milk for mom')).toBeNull();
       expect(extractMentionQuery('Meeting at 5pm')).toBeNull();
       expect(extractMentionQuery('test@example.com is an email')).toBeNull();
+      expect(extractMentionQuery('Submit @today')).toBeNull();
+      expect(extractMentionQuery('Call @tomorrow')).toBeNull();
+      expect(extractMentionQuery('Read @tonight')).toBeNull();
     });
   });
 
@@ -35,11 +39,9 @@ describe('userSuggestions utility', () => {
 
     it('filters users by username or name prefix case-insensitively', () => {
       const suggestions = getUserSuggestions('al', mockUsers);
-      // Matches 'alex' and 'alice'
       expect(suggestions.map((u) => u.username)).toEqual(['alex', 'alice']);
 
       const geo = getUserSuggestions('geo', mockUsers);
-      // Matches 'terahz' by name 'Georgi Todorov'
       expect(geo.map((u) => u.username)).toEqual(['terahz']);
     });
 
@@ -58,6 +60,11 @@ describe('userSuggestions utility', () => {
     it('works when @ is at the beginning of input', () => {
       const result = replaceMentionQuery('@t', 'terahz');
       expect(result).toBe('@terahz ');
+    });
+
+    it('quotes chosen usernames containing spaces or magic delimiters', () => {
+      expect(replaceMentionQuery('Assign @j', 'Jane Doe')).toBe('Assign @"Jane Doe" ');
+      expect(replaceMentionQuery('Assign @b', 'ops+bot')).toBe('Assign @"ops+bot" ');
     });
   });
 });

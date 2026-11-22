@@ -1,15 +1,19 @@
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, cleanup } from '@testing-library/react-native';
+import { Modal } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { ProjectDrawer } from '../ProjectDrawer';
 import { useTaskStore } from '../../store/taskStore';
 
 describe('ProjectDrawer', () => {
+  const initialStoreState = useTaskStore.getState();
   const mockOnClose = jest.fn();
 
   beforeEach(() => {
     useTaskStore.setState({
+      ...initialStoreState,
       projects: [
-        { id: 1, title: 'Inbox', hex_color: '#3498db' },
+        { id: 1, title: 'Inbox', hex_color: '3498db' },
         { id: 2, title: 'Work', hex_color: '#e74c3c' },
         { id: 3, title: 'Personal', hex_color: '#2ecc71' },
       ],
@@ -25,7 +29,22 @@ describe('ProjectDrawer', () => {
     jest.clearAllMocks();
   });
 
-  it('renders all lists/projects and their active task counts', () => {
+  afterEach(() => {
+    cleanup();
+    useTaskStore.setState(initialStoreState, true);
+    jest.restoreAllMocks();
+  });
+
+  it('skips rendering completely when visible=false and inline=false with no sub-modals open', () => {
+    const { queryByText } = render(
+      <ProjectDrawer visible={false} inline={false} onClose={mockOnClose} />
+    );
+
+    expect(queryByText('Lists')).toBeNull();
+    expect(queryByText('All Tasks')).toBeNull();
+  });
+
+  it('renders all active lists and their active task counts', () => {
     const { getByText, getByTestId } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
@@ -33,37 +52,30 @@ describe('ProjectDrawer', () => {
     expect(getByText('Inbox')).toBeTruthy();
     expect(getByText('Work')).toBeTruthy();
     expect(getByText('Personal')).toBeTruthy();
-
-    // Inbox has 1 active task (1 is done)
     expect(getByTestId('drawer-count-1').props.children).toBe(1);
-    // Work has 1 active task
     expect(getByTestId('drawer-count-2').props.children).toBe(1);
   });
 
-  it('renders "All Tasks" item with total active count across all lists and allows selecting it', () => {
-    const { getByTestId, getByText } = render(
-      <ProjectDrawer visible={true} onClose={mockOnClose} />
-    );
-
-    expect(getByText('All Tasks')).toBeTruthy();
-    // 2 active tasks total (1 inbox, 1 work)
-    expect(getByTestId('drawer-count-all').props.children).toBe(2);
-
-    const allTasksItem = getByTestId('drawer-project-all');
-    fireEvent.press(allTasksItem);
-
-    expect(useTaskStore.getState().selectedProjectId).toBeNull();
-    expect(mockOnClose).toHaveBeenCalled();
-  });
-
-  it('renders "My Open Tasks" item with active count assigned to current user and allows selecting it', () => {
+  it('renders "All Tasks" and "My Open Tasks" views and allows selecting them', () => {
     useTaskStore.setState({
       currentUser: { id: 101, username: 'terahz' },
       tasks: [
-        { id: 10, title: 'Task for me', done: false, priority: 1, project_id: 1, assignees: [{ id: 101, username: 'terahz' }] },
-        { id: 11, title: 'Done task for me', done: true, priority: 1, project_id: 1, assignees: [{ id: 101, username: 'terahz' }] },
-        { id: 20, title: 'Task for alex', done: false, priority: 2, project_id: 2, assignees: [{ id: 102, username: 'alex' }] },
-        { id: 30, title: 'Unassigned task', done: false, priority: 0, project_id: 1 },
+        {
+          id: 10,
+          title: 'Task for me',
+          done: false,
+          priority: 1,
+          project_id: 1,
+          assignees: [{ id: 101, username: 'terahz' }],
+        },
+        {
+          id: 20,
+          title: 'Task for alex',
+          done: false,
+          priority: 2,
+          project_id: 2,
+          assignees: [{ id: 102, username: 'alex' }],
+        },
       ],
     });
 
@@ -71,90 +83,133 @@ describe('ProjectDrawer', () => {
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
-    expect(getByText('My Open Tasks')).toBeTruthy();
-    // 1 active task assigned to current user (id 10)
+    expect(getByText('All Tasks')).toBeTruthy();
+    expect(getByTestId('drawer-count-all').props.children).toBe(2);
     expect(getByTestId('drawer-count-my-tasks').props.children).toBe(1);
 
-    const myTasksItem = getByTestId('drawer-project-my-tasks');
-    fireEvent.press(myTasksItem);
-
+    fireEvent.press(getByTestId('drawer-project-my-tasks'));
     expect(useTaskStore.getState().selectedProjectId).toBe(-1);
+
+    fireEvent.press(getByTestId('drawer-project-all'));
+    expect(useTaskStore.getState().selectedProjectId).toBeNull();
     expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it('switches active project when a list item is selected', () => {
-    const { getByTestId } = render(
+  it('renders collapsible Archived Lists section and allows unarchiving in 1 tap', async () => {
+    const mockArchiveProject = jest.fn().mockResolvedValue({ id: 9, is_archived: false });
+    useTaskStore.setState({
+      archiveProject: mockArchiveProject,
+      projects: [
+        { id: 1, title: 'Inbox', hex_color: '#3498db' },
+        { id: 9, title: '2025 Taxes', hex_color: '#8e8e93', is_archived: true },
+      ],
+    });
+
+    const { getByTestId, queryByText, getByText } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
-    const workItem = getByTestId('drawer-project-2');
-    fireEvent.press(workItem);
+    // Collapsed by default
+    expect(getByTestId('drawer-archived-toggle')).toBeTruthy();
+    expect(queryByText(/2025 Taxes/)).toBeNull();
 
-    expect(useTaskStore.getState().selectedProjectId).toBe(2);
-    expect(mockOnClose).toHaveBeenCalled();
+    // Expand Archived Lists
+    fireEvent.press(getByTestId('drawer-archived-toggle'));
+    expect(getByText(/2025 Taxes/)).toBeTruthy();
+
+    // Tap Unarchive button
+    fireEvent.press(getByTestId('drawer-unarchive-9'));
+    await waitFor(() => {
+      expect(mockArchiveProject).toHaveBeenCalledWith(9, false);
+    });
   });
 
-  it('calls onClose when close button is pressed', () => {
-    const { getByTestId } = render(
+  it('never nests or shows two visible <Modal> components simultaneously on iOS when opening Settings -> Manage Labels or Action Sheet -> Edit List', async () => {
+    const { getByTestId, UNSAFE_getAllByType } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
-    const closeBtn = getByTestId('drawer-close-btn');
-    fireEvent.press(closeBtn);
+    const countVisibleModals = () =>
+      UNSAFE_getAllByType(Modal).filter((m) => m.props.visible === true).length;
 
-    expect(mockOnClose).toHaveBeenCalled();
-  });
+    // 1. Only Drawer Modal is visible initially
+    expect(countVisibleModals()).toBe(1);
 
-  it('renders settings button in footer and opens SettingsModal when pressed', () => {
-    const { getByTestId, getByText } = render(
-      <ProjectDrawer visible={true} onClose={mockOnClose} />
-    );
-
-    const settingsBtn = getByTestId('drawer-settings-btn');
-    expect(settingsBtn).toBeTruthy();
-
-    fireEvent.press(settingsBtn);
-
-    // SettingsModal opens with close button
+    // 2. Open Settings -> Drawer Modal closes, SettingsModal opens (still exactly 1 visible Modal!)
+    fireEvent.press(getByTestId('drawer-settings-btn'));
+    await waitFor(() => {
+      expect(LocalAuthentication.hasHardwareAsync).toHaveBeenCalled();
+    });
     expect(getByTestId('close-settings-btn')).toBeTruthy();
+    expect(countVisibleModals()).toBe(1);
+
+    // 3. From Settings -> Open Manage Labels -> SettingsModal closes, LabelManagementModal opens (still 1!)
+    fireEvent.press(getByTestId('settings-manage-labels-btn'));
+    expect(getByTestId('close-label-management-btn')).toBeTruthy();
+    expect(countVisibleModals()).toBe(1);
+
+    // Close LabelManagementModal -> returns to Drawer (1 visible Modal)
+    fireEvent.press(getByTestId('close-label-management-btn'));
+    expect(countVisibleModals()).toBe(1);
+
+    // 4. Long-press list -> Action Sheet opens (1 visible Modal) -> tap Edit List -> ProjectEditorModal opens (1 visible Modal)
+    fireEvent(getByTestId('drawer-project-1'), 'longPress');
+    expect(getByTestId('drawer-option-edit')).toBeTruthy();
+    expect(countVisibleModals()).toBe(1);
+
+    fireEvent.press(getByTestId('drawer-option-edit'));
+    expect(getByTestId('project-modal-title-input')).toBeTruthy();
+    expect(countVisibleModals()).toBe(1);
   });
 
-  it('opens ProjectEditorModal when "New List" button is pressed', () => {
-    const { getByTestId, getByText } = render(
+  it('switches active project and calls onClose when a list item is tapped', () => {
+    const { getByTestId } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
-    const addListBtn = getByTestId('drawer-add-list-btn');
-    fireEvent.press(addListBtn);
+    fireEvent.press(getByTestId('drawer-project-2'));
+    expect(useTaskStore.getState().selectedProjectId).toBe(2);
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
 
+  it('calls onClose when drawer-close-btn is pressed', () => {
+    const { getByTestId } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    fireEvent.press(getByTestId('drawer-close-btn'));
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens ProjectEditorModal when drawer-add-list-btn ("New List") is pressed', () => {
+    const { getByTestId } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    fireEvent.press(getByTestId('drawer-add-list-btn'));
     expect(getByTestId('project-modal-title-input')).toBeTruthy();
     expect(getByTestId('project-modal-save-btn')).toBeTruthy();
   });
 
-  it('opens project options action sheet when list options button is pressed', () => {
-    const { getByTestId, getByText } = render(
+  it('opens project options action sheet when list options button (⋯) is pressed', () => {
+    const { getByTestId } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
-    const optionsBtn = getByTestId('drawer-project-options-1');
-    fireEvent.press(optionsBtn);
-
+    fireEvent.press(getByTestId('drawer-project-options-1'));
     expect(getByTestId('drawer-option-edit')).toBeTruthy();
     expect(getByTestId('drawer-option-share')).toBeTruthy();
     expect(getByTestId('drawer-option-favorite')).toBeTruthy();
   });
 
-  it('opens project options action sheet when list item is long-pressed', () => {
+  it('opens project options action sheet when a list item is long-pressed', () => {
     const { getByTestId } = render(
       <ProjectDrawer visible={true} onClose={mockOnClose} />
     );
 
-    const projectItem = getByTestId('drawer-project-1');
-    fireEvent(projectItem, 'longPress');
-
+    fireEvent(getByTestId('drawer-project-1'), 'longPress');
     expect(getByTestId('drawer-option-edit')).toBeTruthy();
     expect(getByTestId('drawer-option-share')).toBeTruthy();
     expect(getByTestId('drawer-option-favorite')).toBeTruthy();
   });
 });
-

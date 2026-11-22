@@ -1,16 +1,21 @@
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { render, fireEvent, waitFor, act, cleanup } from '@testing-library/react-native';
 import { AppUpdatePromptModal } from '../AppUpdatePromptModal';
 import { useUpdateStore } from '../../store/updateStore';
 
 describe('AppUpdatePromptModal', () => {
-  beforeEach(() => {
-    useUpdateStore.setState({
-      updateInfo: null,
-      installProgress: null,
-      isPromptVisible: false,
-    });
+  const initialStoreState = useUpdateStore.getState();
+
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+    useUpdateStore.setState(initialStoreState, true);
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+    useUpdateStore.setState(initialStoreState, true);
   });
 
   it('renders nothing when not visible and not downloaded', () => {
@@ -44,8 +49,8 @@ describe('AppUpdatePromptModal', () => {
     expect(getByTestId('update-prompt-store-btn')).toBeTruthy();
   });
 
-  it('handles Update Now button press', () => {
-    const mockStartUpdate = jest.fn();
+  it('handles Update Now button press (flexible when allowed, immediate when flexible disallowed)', async () => {
+    const mockStartUpdate = jest.fn().mockResolvedValue(undefined);
     useUpdateStore.setState({
       isPromptVisible: true,
       updateInfo: {
@@ -63,13 +68,34 @@ describe('AppUpdatePromptModal', () => {
     });
 
     const { getByTestId } = render(<AppUpdatePromptModal />);
-    fireEvent.press(getByTestId('update-prompt-primary-btn'));
-
+    await act(async () => {
+      fireEvent.press(getByTestId('update-prompt-primary-btn'));
+    });
     expect(mockStartUpdate).toHaveBeenCalledWith('flexible');
+
+    mockStartUpdate.mockClear();
+    act(() => {
+      useUpdateStore.setState({
+        updateInfo: {
+          isAvailable: true,
+          availableVersionCode: 20,
+          currentVersionCode: 16,
+          updateAvailability: 3,
+          isImmediateAllowed: true,
+          isFlexibleAllowed: false,
+          clientVersionStalenessDays: 5,
+          updatePriority: 4,
+          inProgress: true,
+        },
+      });
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('update-prompt-primary-btn'));
+    });
+    expect(mockStartUpdate).toHaveBeenCalledWith('immediate');
   });
 
-  it('handles Remind Me Tomorrow button press', () => {
-    const mockDismissPrompt = jest.fn();
+  it('handles Remind Me Tomorrow button press using real store action and hides modal', async () => {
     useUpdateStore.setState({
       isPromptVisible: true,
       updateInfo: {
@@ -83,17 +109,21 @@ describe('AppUpdatePromptModal', () => {
         updatePriority: 0,
         inProgress: false,
       },
-      dismissPrompt: mockDismissPrompt,
     });
 
-    const { getByTestId } = render(<AppUpdatePromptModal />);
-    fireEvent.press(getByTestId('update-prompt-dismiss-btn'));
+    const { getByTestId, queryByTestId } = render(<AppUpdatePromptModal />);
+    await act(async () => {
+      fireEvent.press(getByTestId('update-prompt-dismiss-btn'));
+    });
 
-    expect(mockDismissPrompt).toHaveBeenCalledWith(24);
+    await waitFor(() => {
+      expect(queryByTestId('app-update-prompt-modal')).toBeNull();
+    });
+    expect(useUpdateStore.getState().isPromptVisible).toBe(false);
   });
 
-  it('handles Play Store Listing button press', () => {
-    const mockOpenStore = jest.fn();
+  it('handles Play Store Listing button press and hides prompt when store opens', async () => {
+    const mockOpenStore = jest.fn().mockResolvedValue(true);
     useUpdateStore.setState({
       isPromptVisible: true,
       updateInfo: {
@@ -110,15 +140,48 @@ describe('AppUpdatePromptModal', () => {
       openStore: mockOpenStore,
     });
 
-    const { getByTestId } = render(<AppUpdatePromptModal />);
-    fireEvent.press(getByTestId('update-prompt-store-btn'));
+    const { getByTestId, queryByTestId } = render(<AppUpdatePromptModal />);
+    await act(async () => {
+      fireEvent.press(getByTestId('update-prompt-store-btn'));
+    });
 
     expect(mockOpenStore).toHaveBeenCalled();
+    expect(useUpdateStore.getState().isPromptVisible).toBe(false);
+    expect(queryByTestId('app-update-prompt-modal')).toBeNull();
   });
 
-  it('renders downloading state with percentage', () => {
+  it('treats PENDING status as active backgroundable download without re-triggering startUpdate', async () => {
+    const mockStartUpdate = jest.fn();
     useUpdateStore.setState({
       isPromptVisible: true,
+      startUpdate: mockStartUpdate,
+      installProgress: {
+        status: 'PENDING',
+        bytesDownloaded: 0,
+        totalBytesToDownload: 0,
+        errorCode: 0,
+      },
+    });
+
+    const { getByTestId, getByText, queryByTestId } = render(<AppUpdatePromptModal />);
+    expect(getByText('Downloading Update...')).toBeTruthy();
+    expect(getByText('Continue in Background')).toBeTruthy();
+    expect(queryByTestId('update-prompt-store-btn')).toBeNull();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('update-prompt-primary-btn'));
+    });
+
+    expect(mockStartUpdate).not.toHaveBeenCalled();
+    expect(useUpdateStore.getState().isPromptVisible).toBe(false);
+    expect(queryByTestId('app-update-prompt-modal')).toBeNull();
+  });
+
+  it('renders downloading state with percentage and hides modal on "Continue in Background" without re-calling startUpdate', async () => {
+    const mockStartUpdate = jest.fn();
+    useUpdateStore.setState({
+      isPromptVisible: true,
+      startUpdate: mockStartUpdate,
       updateInfo: {
         isAvailable: true,
         availableVersionCode: 20,
@@ -138,15 +201,25 @@ describe('AppUpdatePromptModal', () => {
       },
     });
 
-    const { getByText } = render(<AppUpdatePromptModal />);
+    const { getByTestId, getByText, queryByTestId } = render(<AppUpdatePromptModal />);
     expect(getByText('Downloading Update...')).toBeTruthy();
     expect(getByText(/50%/)).toBeTruthy();
+    expect(getByText('Continue in Background')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('update-prompt-primary-btn'));
+    });
+
+    expect(mockStartUpdate).not.toHaveBeenCalled();
+    expect(useUpdateStore.getState().isPromptVisible).toBe(false);
+    expect(queryByTestId('app-update-prompt-modal')).toBeNull();
   });
 
-  it('renders ready to install state when status is DOWNLOADED and restarts on press', () => {
-    const mockComplete = jest.fn();
+  it('renders ready to install state when status is DOWNLOADED and restarts on primary press', async () => {
+    const mockComplete = jest.fn().mockResolvedValue(true);
     useUpdateStore.setState({
       isPromptVisible: false,
+      isDownloadedDismissed: false,
       installProgress: {
         status: 'DOWNLOADED',
         bytesDownloaded: 100,
@@ -160,7 +233,36 @@ describe('AppUpdatePromptModal', () => {
     expect(getByText('Update Ready to Install')).toBeTruthy();
     expect(getByText('Restart & Apply Update')).toBeTruthy();
 
-    fireEvent.press(getByTestId('update-prompt-primary-btn'));
+    await act(async () => {
+      fireEvent.press(getByTestId('update-prompt-primary-btn'));
+    });
     expect(mockComplete).toHaveBeenCalled();
+  });
+
+  it('dismisses cleanly when tapping "Later" in DOWNLOADED state (never an undismissable brick)', async () => {
+    useUpdateStore.setState({
+      isPromptVisible: true,
+      isDownloadedDismissed: false,
+      installProgress: {
+        status: 'DOWNLOADED',
+        bytesDownloaded: 100,
+        totalBytesToDownload: 100,
+        errorCode: 0,
+      },
+    });
+
+    const { getByTestId, getByText, queryByTestId } = render(<AppUpdatePromptModal />);
+    expect(getByText('Update Ready to Install')).toBeTruthy();
+    expect(getByText('Later')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('update-prompt-dismiss-btn'));
+    });
+
+    await waitFor(() => {
+      expect(queryByTestId('app-update-prompt-modal')).toBeNull();
+    });
+    expect(useUpdateStore.getState().isPromptVisible).toBe(false);
+    expect(useUpdateStore.getState().isDownloadedDismissed).toBe(true);
   });
 });

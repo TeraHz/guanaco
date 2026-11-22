@@ -1,15 +1,16 @@
 import React from 'react';
-import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { render, fireEvent, waitFor, act, cleanup } from '@testing-library/react-native';
+import { Alert, Platform } from 'react-native';
 import { ProjectEditorModal } from '../ProjectEditorModal';
 import { useTaskStore } from '../../store/taskStore';
 import { Project } from '../../types/vikunja';
 
-jest.spyOn(Alert, 'alert');
-
 describe('ProjectEditorModal', () => {
+  const initialStoreState = useTaskStore.getState();
+  const originalOS = Platform.OS;
+
   const mockProjects: Project[] = [
-    { id: 1, title: 'Parent List', hex_color: '#3498db' },
+    { id: 1, title: 'Parent List', hex_color: '3498db' },
     { id: 2, title: 'Child List', hex_color: '#e74c3c', parent_project_id: 1 },
     { id: 3, title: 'Grandchild List', hex_color: '#2ecc71', parent_project_id: 2 },
     { id: 4, title: 'Other List', hex_color: '#9b59b6' },
@@ -25,36 +26,41 @@ describe('ProjectEditorModal', () => {
   const mockOnDeleted = jest.fn();
 
   beforeEach(() => {
+    Platform.OS = originalOS;
     jest.clearAllMocks();
+    jest.spyOn(Alert, 'alert');
     useTaskStore.setState({
+      ...initialStoreState,
       createProject: mockCreateProject,
       updateProject: mockUpdateProject,
       deleteProject: mockDeleteProject,
       archiveProject: mockArchiveProject,
       duplicateProject: mockDuplicateProject,
       projects: mockProjects,
-    } as any);
+    });
+  });
+
+  afterEach(() => {
+    Platform.OS = originalOS;
+    cleanup();
+    useTaskStore.setState(initialStoreState, true);
+    jest.restoreAllMocks();
   });
 
   describe('Create Mode', () => {
     it('renders empty form with "New List" heading', () => {
       const { getByText, getByTestId, queryByTestId } = render(
-        <ProjectEditorModal
-          visible={true}
-          onClose={mockOnClose}
-          allProjects={mockProjects}
-        />
+        <ProjectEditorModal visible={true} onClose={mockOnClose} allProjects={mockProjects} />
       );
 
       expect(getByText('New List')).toBeTruthy();
       expect(getByTestId('project-modal-title-input').props.value).toBe('');
-      // In create mode, archive and delete should not appear
       expect(queryByTestId('project-modal-delete-btn')).toBeNull();
       expect(queryByTestId('project-modal-archive-btn')).toBeNull();
     });
 
     it('submits new project and calls onSaved and onClose', async () => {
-      const newProj: Project = { id: 10, title: 'Groceries', hex_color: '#3498db' };
+      const newProj: Project = { id: 10, title: 'Groceries', hex_color: '#0A84FF' };
       mockCreateProject.mockResolvedValueOnce(newProj);
 
       const { getByTestId } = render(
@@ -73,6 +79,7 @@ describe('ProjectEditorModal', () => {
         expect(mockCreateProject).toHaveBeenCalledWith(
           expect.objectContaining({
             title: 'Groceries',
+            hex_color: '#0A84FF',
           })
         );
         expect(mockOnSaved).toHaveBeenCalledWith(newProj);
@@ -81,14 +88,12 @@ describe('ProjectEditorModal', () => {
     });
 
     it('shows error banner when createProject throws (e.g. offline)', async () => {
-      mockCreateProject.mockRejectedValueOnce(new Error('Network connection required to manage lists.'));
+      mockCreateProject.mockRejectedValueOnce(
+        new Error('Network connection required to manage lists.')
+      );
 
       const { getByTestId, getByText } = render(
-        <ProjectEditorModal
-          visible={true}
-          onClose={mockOnClose}
-          allProjects={mockProjects}
-        />
+        <ProjectEditorModal visible={true} onClose={mockOnClose} allProjects={mockProjects} />
       );
 
       fireEvent.changeText(getByTestId('project-modal-title-input'), 'Offline List');
@@ -105,12 +110,12 @@ describe('ProjectEditorModal', () => {
       id: 2,
       title: 'Work Project',
       description: 'Important work',
-      hex_color: '#e74c3c',
+      hex_color: '0A84FF', // un-prefixed hex from Vikunja
       is_favorite: true,
       is_archived: false,
     };
 
-    it('pre-populates existing project fields', () => {
+    it('pre-populates existing project fields and normalizes un-prefixed hex_color', () => {
       const { getByText, getByTestId } = render(
         <ProjectEditorModal
           visible={true}
@@ -123,12 +128,15 @@ describe('ProjectEditorModal', () => {
       expect(getByText('Edit List')).toBeTruthy();
       expect(getByTestId('project-modal-title-input').props.value).toBe('Work Project');
       expect(getByTestId('project-modal-desc-input').props.value).toBe('Important work');
+      expect(getByTestId('project-color-dot-#0A84FF').props.accessibilityState).toEqual({
+        selected: true,
+      });
       expect(getByTestId('project-modal-delete-btn')).toBeTruthy();
       expect(getByTestId('project-modal-archive-btn')).toBeTruthy();
     });
 
-    it('updates project on save', async () => {
-      const updated: Project = { ...editProj, title: 'Work Project Updated' };
+    it('updates project on save with normalized #hex_color', async () => {
+      const updated: Project = { ...editProj, title: 'Work Project Updated', hex_color: '#0A84FF' };
       mockUpdateProject.mockResolvedValueOnce(updated);
 
       const { getByTestId } = render(
@@ -149,6 +157,7 @@ describe('ProjectEditorModal', () => {
           2,
           expect.objectContaining({
             title: 'Work Project Updated',
+            hex_color: '#0A84FF',
           })
         );
         expect(mockOnSaved).toHaveBeenCalledWith(updated);
@@ -176,8 +185,8 @@ describe('ProjectEditorModal', () => {
       });
     });
 
-    it('prompts confirmation and deletes project', async () => {
-      mockDeleteProject.mockResolvedValueOnce(undefined);
+    it('prompts confirmation and deletes project on native and on Web', async () => {
+      mockDeleteProject.mockResolvedValue(undefined);
 
       const { getByTestId } = render(
         <ProjectEditorModal
@@ -197,9 +206,10 @@ describe('ProjectEditorModal', () => {
         expect.any(Array)
       );
 
-      // Trigger confirm action in alert
       const alertCall = (Alert.alert as jest.Mock).mock.calls[0];
-      const confirmButton = alertCall[2].find((btn: any) => btn.style === 'destructive' || btn.text === 'Delete');
+      const confirmButton = alertCall[2].find(
+        (btn: any) => btn.style === 'destructive' || btn.text === 'Delete'
+      );
       await act(async () => {
         await confirmButton.onPress();
       });
@@ -207,6 +217,27 @@ describe('ProjectEditorModal', () => {
       expect(mockDeleteProject).toHaveBeenCalledWith(2);
       expect(mockOnDeleted).toHaveBeenCalledWith(2);
       expect(mockOnClose).toHaveBeenCalled();
+
+      // Verify Web window.confirm fallback (Alert.alert is a no-op on react-native-web!)
+      jest.clearAllMocks();
+      Platform.OS = 'web';
+      const origWindow = (global as any).window;
+      const confirmMock = jest.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+      (global as any).window = { ...(origWindow || {}), confirm: confirmMock };
+
+      try {
+        fireEvent.press(getByTestId('project-modal-delete-btn'));
+        expect(confirmMock).toHaveBeenCalledTimes(1);
+        expect(mockDeleteProject).not.toHaveBeenCalled();
+
+        await act(async () => {
+          fireEvent.press(getByTestId('project-modal-delete-btn'));
+        });
+        expect(confirmMock).toHaveBeenCalledTimes(2);
+        expect(mockDeleteProject).toHaveBeenCalledWith(2);
+      } finally {
+        (global as any).window = origWindow;
+      }
     });
 
     it('duplicates project when duplicate button is pressed', async () => {
@@ -226,6 +257,48 @@ describe('ProjectEditorModal', () => {
       await waitFor(() => {
         expect(mockDuplicateProject).toHaveBeenCalledWith(2);
         expect(mockOnClose).toHaveBeenCalled();
+      });
+    });
+
+    it('treats Vikunja unset "000000" hex_color as default #0A84FF swatch and excludes archived parent lists', async () => {
+      const uncoloredProj: Project = {
+        id: 5,
+        title: 'Uncolored List',
+        hex_color: '000000',
+      };
+      const projectsWithArchived: Project[] = [
+        ...mockProjects,
+        uncoloredProj,
+        { id: 6, title: 'Hidden Archived Parent', hex_color: '000000', is_archived: true },
+      ];
+      mockUpdateProject.mockResolvedValueOnce({ ...uncoloredProj, hex_color: '#0A84FF' });
+
+      const { getByTestId, queryByText } = render(
+        <ProjectEditorModal
+          visible={true}
+          project={uncoloredProj}
+          onClose={mockOnClose}
+          allProjects={projectsWithArchived}
+        />
+      );
+
+      // Default #0A84FF swatch is selected instead of saving #000000 black
+      expect(getByTestId('project-color-dot-#0A84FF').props.accessibilityState).toEqual({
+        selected: true,
+      });
+
+      // Open parent dropdown -> archived list is excluded
+      fireEvent.press(getByTestId('project-modal-parent-selector'));
+      expect(queryByText('Hidden Archived Parent')).toBeNull();
+
+      fireEvent.press(getByTestId('project-modal-save-btn'));
+      await waitFor(() => {
+        expect(mockUpdateProject).toHaveBeenCalledWith(
+          5,
+          expect.objectContaining({
+            hex_color: '#0A84FF',
+          })
+        );
       });
     });
   });

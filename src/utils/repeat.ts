@@ -1,12 +1,15 @@
 import { RepeatMode } from '../types/vikunja';
 
-export type TimeUnit = 'hours' | 'days' | 'weeks' | 'months';
+export type TimeUnit = 'seconds' | 'minutes' | 'hours' | 'days' | 'weeks' | 'months' | 'years';
 
 const UNIT_SECONDS: Record<TimeUnit, number> = {
+  seconds: 1,
+  minutes: 60,
   hours: 3600,
   days: 86400,
   weeks: 604800,
   months: 2592000, // 30 days
+  years: 31536000, // 365 days
 };
 
 export interface RepeatInterval {
@@ -15,55 +18,95 @@ export interface RepeatInterval {
 }
 
 export function intervalToSeconds(amount: number, unit: TimeUnit): number {
-  if (amount <= 0) return 0;
-  return amount * (UNIT_SECONDS[unit] || 86400);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const unitSec = Object.prototype.hasOwnProperty.call(UNIT_SECONDS, unit)
+    ? UNIT_SECONDS[unit]
+    : 86400;
+  return Math.round(amount * unitSec);
 }
 
-export function secondsToInterval(seconds?: number | null): RepeatInterval | null {
-  if (!seconds || seconds <= 0) return null;
+export function secondsToInterval(
+  seconds?: number | null,
+  repeatMode?: RepeatMode
+): RepeatInterval | null {
+  if (repeatMode === RepeatMode.Monthly) {
+    if (!seconds || !Number.isFinite(seconds) || seconds <= 0) {
+      return { amount: 1, unit: 'months' };
+    }
+    const wholeMonthly = Math.max(1, Math.round(seconds));
+    if (wholeMonthly % UNIT_SECONDS.months === 0) {
+      return { amount: Math.floor(wholeMonthly / UNIT_SECONDS.months), unit: 'months' };
+    }
+    return { amount: 1, unit: 'months' };
+  }
 
-  if (seconds % UNIT_SECONDS.months === 0) {
-    return { amount: Math.floor(seconds / UNIT_SECONDS.months), unit: 'months' };
-  }
-  if (seconds % UNIT_SECONDS.weeks === 0) {
-    return { amount: Math.floor(seconds / UNIT_SECONDS.weeks), unit: 'weeks' };
-  }
-  if (seconds % UNIT_SECONDS.days === 0) {
-    return { amount: Math.floor(seconds / UNIT_SECONDS.days), unit: 'days' };
-  }
-  if (seconds % UNIT_SECONDS.hours === 0) {
-    return { amount: Math.floor(seconds / UNIT_SECONDS.hours), unit: 'hours' };
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return null;
+
+  const wholeSeconds = Math.max(1, Math.round(seconds));
+
+  if (wholeSeconds % UNIT_SECONDS.years === 0) {
+    return { amount: Math.floor(wholeSeconds / UNIT_SECONDS.years), unit: 'years' };
   }
 
-  // Default to days
-  return { amount: Math.max(1, Math.round(seconds / 86400)), unit: 'days' };
+  // Check weeks BEFORE months when not in RepeatMode.Monthly so 30 weeks (210 days)
+  // is reported as 30 weeks rather than 7 months, while 30 days (2592000s) still maps to 1 month.
+  if (wholeSeconds % UNIT_SECONDS.weeks === 0) {
+    return { amount: Math.floor(wholeSeconds / UNIT_SECONDS.weeks), unit: 'weeks' };
+  }
+
+  if (wholeSeconds % UNIT_SECONDS.months === 0) {
+    return { amount: Math.floor(wholeSeconds / UNIT_SECONDS.months), unit: 'months' };
+  }
+
+  if (wholeSeconds % UNIT_SECONDS.days === 0) {
+    return { amount: Math.floor(wholeSeconds / UNIT_SECONDS.days), unit: 'days' };
+  }
+
+  if (wholeSeconds % UNIT_SECONDS.hours === 0) {
+    return { amount: Math.floor(wholeSeconds / UNIT_SECONDS.hours), unit: 'hours' };
+  }
+
+  if (wholeSeconds % UNIT_SECONDS.minutes === 0) {
+    return { amount: Math.floor(wholeSeconds / UNIT_SECONDS.minutes), unit: 'minutes' };
+  }
+
+  return { amount: wholeSeconds, unit: 'seconds' };
 }
 
 export const REPEAT_PRESETS = [
-  { label: 'Never', seconds: 0, repeatMode: 0 as RepeatMode },
-  { label: 'Daily', seconds: 86400, repeatMode: 0 as RepeatMode },
-  { label: 'Weekly', seconds: 604800, repeatMode: 0 as RepeatMode },
-  { label: 'Monthly', seconds: 2592000, repeatMode: 1 as RepeatMode },
-  { label: 'Custom...', seconds: -1, repeatMode: 0 as RepeatMode },
+  { label: 'Never', seconds: 0, repeatMode: RepeatMode.FromDueDate },
+  { label: 'Daily', seconds: 86400, repeatMode: RepeatMode.FromDueDate },
+  { label: 'Weekly', seconds: 604800, repeatMode: RepeatMode.FromDueDate },
+  { label: 'Monthly', seconds: 2592000, repeatMode: RepeatMode.Monthly },
+  { label: 'Custom...', seconds: -1, repeatMode: RepeatMode.FromDueDate },
 ];
 
 export function formatRepeatDescription(
   repeatAfter?: number | null,
-  repeatMode: RepeatMode = 0
+  repeatMode: RepeatMode = RepeatMode.FromDueDate
 ): string {
-  if (!repeatAfter || repeatAfter <= 0) {
+  // Vikunja's RepeatMode.Monthly (1) repeats on the same calendar day each month even when repeat_after is 0
+  if (repeatMode === RepeatMode.Monthly) {
+    if (repeatAfter && Number.isFinite(repeatAfter) && repeatAfter > 0) {
+      const whole = Math.round(repeatAfter);
+      if (whole > UNIT_SECONDS.months && whole % UNIT_SECONDS.months === 0) {
+        return `Every ${Math.floor(whole / UNIT_SECONDS.months)} months`;
+      }
+    }
+    return 'Monthly';
+  }
+
+  if (!repeatAfter || !Number.isFinite(repeatAfter) || repeatAfter <= 0) {
     return 'Never';
   }
 
   let base = '';
-  if (repeatMode === 1 && repeatAfter === 2592000) {
-    base = 'Monthly';
-  } else if (repeatAfter === 86400) {
+  if (repeatAfter === UNIT_SECONDS.days) {
     base = 'Daily';
-  } else if (repeatAfter === 604800) {
+  } else if (repeatAfter === UNIT_SECONDS.weeks) {
     base = 'Weekly';
   } else {
-    const parsed = secondsToInterval(repeatAfter);
+    const parsed = secondsToInterval(repeatAfter, repeatMode);
     if (parsed) {
       if (parsed.amount === 1) {
         const singularUnit = parsed.unit.replace(/s$/, '');
@@ -72,11 +115,11 @@ export function formatRepeatDescription(
         base = `Every ${parsed.amount} ${parsed.unit}`;
       }
     } else {
-      base = `Every ${repeatAfter}s`;
+      base = `Every ${Math.round(repeatAfter)} seconds`;
     }
   }
 
-  if (repeatMode === 2) {
+  if (repeatMode === RepeatMode.FromCompletion) {
     return `${base} (from completion)`;
   }
 
