@@ -19,6 +19,7 @@ import { MY_TASKS_PROJECT_ID } from '../utils/taskFilters';
 import {
   getStoredAuth,
   setStoredAuth,
+  setStoredRefreshToken,
   isPersonalApiToken,
   STORAGE_KEY_USERNAME,
   STORAGE_KEY_SAVED_USERNAME,
@@ -255,7 +256,7 @@ export interface TaskState {
   taskItemTextScale: number; // Percentage: 100, 125, 150, 175, 200 (default: 100)
 
   // Actions
-  initialize: (baseUrl: string, token?: string) => Promise<void>;
+  initialize: (baseUrl: string, token?: string, refreshToken?: string | null) => Promise<void>;
   loadCachedData: () => Promise<void>;
   setReenableStaples: (enabled: boolean) => Promise<void>;
   setLargeTaskItems: (enabled: boolean) => Promise<void>;
@@ -431,7 +432,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
     taskItemScale: 100,
     taskItemTextScale: 100,
 
-    initialize: async (baseUrl: string, token?: string) => {
+    initialize: async (baseUrl: string, token?: string, refreshToken?: string | null) => {
       // Flush any pending debounced task/project cache writes from an active session
       // before advancing sessionEpoch so loadCachedData() never reads stale disk state during re-auth.
       if (get().client !== null) {
@@ -467,6 +468,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       const client = new VikunjaClient({
         baseUrl,
         token,
+        refreshToken: refreshToken ?? null,
         sessionSignal: controller.signal,
       });
       const syncQueue = new SyncQueue(client);
@@ -531,6 +533,12 @@ export const useTaskStore = create<TaskState>((set, get) => {
         });
       };
 
+      // Immediately persist rotated `vikunja_refresh_token` to SecureStore BEFORE resolving refreshPromise
+      client.onRefreshTokenUpdated = async (nextRefreshToken) => {
+        if (epoch !== sessionEpoch) return;
+        await setStoredRefreshToken(nextRefreshToken);
+      };
+
       client.onTokenRefresh = async () => {
         lastRefreshTransient = false;
         const activeToken = client.getToken();
@@ -544,8 +552,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
 
           if (auth?.token) {
             const stored = await getStoredAuth();
+            if (epoch !== sessionEpoch) return null;
             const usernameToKeep = stored.username || get().currentUser?.username || undefined;
-            await setStoredAuth(auth.token, stored.serverUrl || baseUrl, usernameToKeep);
+            await setStoredAuth(auth.token, stored.serverUrl || baseUrl, usernameToKeep, {
+              refreshToken: client.getRefreshToken(),
+            });
             client.setToken(auth.token);
             set({ authRequired: false });
             return auth.token;
@@ -561,6 +572,16 @@ export const useTaskStore = create<TaskState>((set, get) => {
         return null;
       };
 
+      client.onTransientRefreshFailure = () => {
+        if (epoch !== sessionEpoch) return;
+        lastRefreshTransient = false;
+        set({
+          authRequired: false,
+          syncStatus: 'offline',
+          error: 'Connection lost while renewing session. Offline changes are safe.',
+        });
+      };
+
       client.onUnauthorized = () => {
         if (epoch !== sessionEpoch) return;
 
@@ -568,6 +589,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
         if (lastRefreshTransient) {
           lastRefreshTransient = false;
           set({
+            authRequired: false,
             syncStatus: 'offline',
             error: 'Connection lost while renewing session. Offline changes are safe.',
           });
@@ -583,6 +605,15 @@ export const useTaskStore = create<TaskState>((set, get) => {
       };
 
       set({ client, syncQueue, authRequired: false, error: null });
+
+      if (refreshToken === undefined && token && !isPersonalApiToken(token)) {
+        const stored = await getStoredAuth().catch(() => null);
+        if (epoch !== sessionEpoch) return;
+        if (stored?.refreshToken && !client.getRefreshToken()) {
+          client.setRefreshToken(stored.refreshToken);
+        }
+      }
+
       await syncQueue.loadFromStorage();
       if (epoch !== sessionEpoch) return;
 

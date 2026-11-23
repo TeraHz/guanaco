@@ -1,9 +1,23 @@
 # Guanaco — Roadmap & TODOs
 
 ## 📌 Status Summary
-- **Current Version:** `1.3.1` (Build 20)
+- **Current Version:** `1.3.2` (Build 21)
 - **License:** GNU General Public License v3.0 (`GPL-3.0-or-later`)
 - **Tracks:** Internal Testing & Closed Testing (`alpha`) deployed
+
+---
+
+## 🔐 Phase 10.2: Vikunja 2.0 Rotating Refresh Tokens & Proactive Session Renewal (v1.3.2)
+
+### 1. Rotating Refresh-Token Protocol & Proactive JWT Renewal
+- [x] **Singleflight Refresh Rotation & Pre-2.0 Fallback (`client.ts`, `biometrics.ts`, `taskStore.ts`, `App.tsx`)**:
+  - Added multi-cookie `Set-Cookie` parsing (`extractRefreshTokenFromHeaders`), hardware-backed `SecureStore` persistence (`vikunja_refresh_token`), and singleflight `POST /api/v1/user/token/refresh` rotation (`_omitAuthHeader: true`, `credentials: 'include'`) persisted before resolving concurrent callers, with fallback to `POST /api/v1/user/token` on pre-2.0 Vikunja servers (`404`/`405`).
+  - Implemented Hermes-safe pure-JS Base64URL JWT `exp` decoding (`getJwtExpirationMs`) for proactive pre-expiry renewal (`<= 90s` remaining or expired after sleep/cold restart), keeping `authRequired: false` and `SyncQueue` intact across transient offline errors.
+
+### 2. Native Cookie Isolation & Clean Session Logout
+- [x] **Android/iOS Native Cookie Merge & Logout Purge (`MainApplication.kt`, `plugins/withIosRefreshCookieMerge.js`, `biometrics.ts`, `App.tsx`)**:
+  - Added Android OkHttp `RefreshCookieCaptureInterceptor` + host-bound `RefreshCookieMergeInterceptor` and an Expo iOS `RCTSetCustomHTTPRequestInterceptor` config plugin so `SecureStore`-backed `vikunja_refresh_token` stays authoritative without clobbering reverse-proxy cookies (`CF_Authorization`, Authelia) or comma-folding `Cookie` headers on iOS.
+  - Ordered best-effort `POST /api/v1/user/logout` ahead of native `RCTNetworking.clearCookies` and `SecureStore` teardown on logout and account/`tk_` Personal API Token switches.
 
 ---
 

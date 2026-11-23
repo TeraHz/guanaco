@@ -5,6 +5,8 @@ import * as SecureStore from 'expo-secure-store';
 
 export const STORAGE_KEY_AUTH_TOKEN = '@vikunja_auth_token';
 export const SECURE_KEY_AUTH_TOKEN = 'vikunja_auth_token';
+export const STORAGE_KEY_REFRESH_TOKEN = '@vikunja_refresh_token';
+export const SECURE_KEY_REFRESH_TOKEN = 'vikunja_refresh_token';
 export const SECURE_KEY_USERNAME = 'vikunja_auth_username';
 /** Legacy key — NEVER written; actively purged on read, write, and logout. */
 export const SECURE_KEY_PASSWORD = 'vikunja_auth_password';
@@ -107,16 +109,22 @@ export async function setBiometricEnabled(enabled: boolean): Promise<void> {
 
 export interface StoredAuth {
   token: string | null;
+  refreshToken: string | null;
   serverUrl: string | null;
   username: string | null;
   /** Always null — plaintext passwords are never persisted. Kept for backward compatibility. */
   password: null;
 }
 
+export interface SetStoredAuthOptions {
+  refreshToken?: string | null;
+}
+
 export async function getStoredAuth(): Promise<StoredAuth> {
   try {
     const serverUrl = await AsyncStorage.getItem(STORAGE_KEY_SERVER_URL);
     let token: string | null = null;
+    let refreshToken: string | null = null;
     let username: string | null = null;
 
     const secureAvailable = await isSecureStoreAvailable();
@@ -125,9 +133,11 @@ export async function getStoredAuth(): Promise<StoredAuth> {
     if (secureAvailable) {
       try {
         token = await SecureStore.getItemAsync(SECURE_KEY_AUTH_TOKEN);
+        refreshToken = await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN);
         username = await SecureStore.getItemAsync(SECURE_KEY_USERNAME);
       } catch (_) {
         token = null;
+        refreshToken = null;
         username = null;
       }
 
@@ -142,8 +152,22 @@ export async function getStoredAuth(): Promise<StoredAuth> {
           } catch (_) {}
         }
       }
+
+      if (!refreshToken) {
+        const fallbackRefreshToken = await AsyncStorage.getItem(STORAGE_KEY_REFRESH_TOKEN);
+        if (fallbackRefreshToken) {
+          refreshToken = fallbackRefreshToken;
+          try {
+            await setSecureItem(SECURE_KEY_REFRESH_TOKEN, fallbackRefreshToken);
+            await AsyncStorage.removeItem(STORAGE_KEY_REFRESH_TOKEN);
+          } catch (_) {}
+        }
+      }
     } else {
       token = await AsyncStorage.getItem(STORAGE_KEY_AUTH_TOKEN);
+      if (Platform.OS !== 'web') {
+        refreshToken = await AsyncStorage.getItem(STORAGE_KEY_REFRESH_TOKEN);
+      }
       username = await AsyncStorage.getItem(STORAGE_KEY_USERNAME);
     }
 
@@ -156,29 +180,61 @@ export async function getStoredAuth(): Promise<StoredAuth> {
 
     return {
       token: token || null,
+      refreshToken: refreshToken || null,
       serverUrl: serverUrl || null,
       username: username || null,
       password: null,
     };
   } catch (_) {
-    return { token: null, serverUrl: null, username: null, password: null };
+    return { token: null, refreshToken: null, serverUrl: null, username: null, password: null };
   }
 }
 
 /**
- * Persists the authentication token, server URL, and optional username.
- * Plaintext passwords are NEVER stored (any 4th legacy parameter is ignored and legacy keys are purged).
+ * Persists or clears the rotating refresh token in hardware-backed SecureStore on Native.
+ * On Web (`Platform.OS === 'web'`), browsers manage the `HttpOnly` `vikunja_refresh_token` cookie directly.
+ */
+export async function setStoredRefreshToken(refreshToken: string | null): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    const secureAvailable = await isSecureStoreAvailable();
+    if (secureAvailable) {
+      if (refreshToken) {
+        await setSecureItem(SECURE_KEY_REFRESH_TOKEN, refreshToken);
+      } else {
+        await SecureStore.deleteItemAsync(SECURE_KEY_REFRESH_TOKEN);
+      }
+      await AsyncStorage.removeItem(STORAGE_KEY_REFRESH_TOKEN);
+    } else {
+      if (refreshToken) {
+        await AsyncStorage.setItem(STORAGE_KEY_REFRESH_TOKEN, refreshToken);
+      } else {
+        await AsyncStorage.removeItem(STORAGE_KEY_REFRESH_TOKEN);
+      }
+    }
+  } catch (_) {}
+}
+
+/**
+ * Persists the authentication token, server URL, optional username, and optional native refresh token.
+ * Plaintext passwords are NEVER stored (any 4th string legacy parameter is ignored and legacy keys are purged).
  */
 export async function setStoredAuth(
   token: string,
   serverUrl: string,
   username?: string,
-  _legacyPasswordIgnored?: string
+  legacyPasswordOrOptions?: string | SetStoredAuthOptions,
+  refreshTokenArg?: string | null
 ): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEY_SERVER_URL, serverUrl);
     const secureAvailable = await isSecureStoreAvailable();
     await purgeLegacyPasswords(secureAvailable);
+
+    const resolvedRefreshToken =
+      typeof legacyPasswordOrOptions === 'object' && legacyPasswordOrOptions !== null
+        ? legacyPasswordOrOptions.refreshToken
+        : refreshTokenArg;
 
     if (secureAvailable) {
       if (token) {
@@ -202,9 +258,61 @@ export async function setStoredAuth(
       }
     }
 
+    if (isPersonalApiToken(token)) {
+      await setStoredRefreshToken(null);
+    } else if (resolvedRefreshToken !== undefined) {
+      await setStoredRefreshToken(resolvedRefreshToken || null);
+    }
+
     if (username) {
       await AsyncStorage.setItem(STORAGE_KEY_USERNAME, username);
       await AsyncStorage.setItem(STORAGE_KEY_SAVED_USERNAME, username);
+    }
+  } catch (_) {}
+}
+
+/**
+ * Purges native OS HTTP cookies (`Android WebView CookieManager` / `iOS NSHTTPCookieStorage`)
+ * via React Native's `RCTNetworking.clearCookies`. Includes a safe no-op/timeout guard for Jest mocks.
+ */
+export async function clearNativeCookies(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const rctNetworkingMod = require('react-native/Libraries/Network/RCTNetworking');
+    const rctNetworking = rctNetworkingMod?.default ?? rctNetworkingMod;
+    if (rctNetworking && typeof rctNetworking.clearCookies === 'function') {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        const guardTimer = setTimeout(finish, 50);
+        if (typeof (guardTimer as any)?.unref === 'function') {
+          (guardTimer as any).unref();
+        }
+        try {
+          const fn = rctNetworking.clearCookies as any;
+          const isBareJestMock =
+            Boolean(fn?._isMockFunction) &&
+            typeof fn?.getMockImplementation === 'function' &&
+            !fn.getMockImplementation();
+          rctNetworking.clearCookies(() => {
+            clearTimeout(guardTimer);
+            finish();
+          });
+          if (isBareJestMock) {
+            clearTimeout(guardTimer);
+            finish();
+          }
+        } catch (_) {
+          clearTimeout(guardTimer);
+          finish();
+        }
+      });
     }
   } catch (_) {}
 }
@@ -216,15 +324,19 @@ export async function clearStoredAuth(): Promise<void> {
 
     if (secureAvailable) {
       await SecureStore.deleteItemAsync(SECURE_KEY_AUTH_TOKEN);
+      await SecureStore.deleteItemAsync(SECURE_KEY_REFRESH_TOKEN);
       await SecureStore.deleteItemAsync(SECURE_KEY_USERNAME);
       await SecureStore.deleteItemAsync(SECURE_KEY_PASSWORD);
     }
 
     await AsyncStorage.multiRemove([
       STORAGE_KEY_AUTH_TOKEN,
+      STORAGE_KEY_REFRESH_TOKEN,
       LEGACY_STORAGE_KEY_PASSWORD,
       STORAGE_KEY_USERNAME,
       STORAGE_KEY_SAVED_USERNAME,
     ]);
+
+    await clearNativeCookies();
   } catch (_) {}
 }

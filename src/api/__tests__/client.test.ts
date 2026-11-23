@@ -3,7 +3,19 @@ import {
   VikunjaApiError,
   parseAndValidateServerUrl,
   isTotpRequiredError,
+  getJwtExpirationMs,
+  extractRefreshTokenFromHeaders,
 } from '../client';
+
+function buildTestJwt(payload: Record<string, any>): string {
+  const toBase64Url = (obj: Record<string, any>) =>
+    Buffer.from(JSON.stringify(obj), 'utf8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  return `${toBase64Url({ alg: 'HS256', typ: 'JWT' })}.${toBase64Url(payload)}.sig_test_123`;
+}
 
 describe('VikunjaClient & URL Security', () => {
   let client: VikunjaClient;
@@ -1341,21 +1353,287 @@ describe('VikunjaClient & URL Security', () => {
       expect(client.getToken()).toBe('long-lived-jwt-token');
     });
 
-    it('renewToken should send POST to /user/token and update token', async () => {
-      client.setToken('old-token');
+    it('renewToken calls POST /user/token/refresh without Authorization header, sends Cookie on native, and rotates refreshToken', async () => {
+      const onRefreshTokenUpdated = jest.fn();
+      const rotatingClient = new VikunjaClient({
+        baseUrl: mockBaseUrl,
+        token: 'expired-short-jwt',
+        refreshToken: 'rt_1',
+        onRefreshTokenUpdated,
+      });
+
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'set-cookie'
+              ? 'vikunja_refresh_token=rt_2; Path=/api/v1/user/token; Max-Age=2592000; HttpOnly; SameSite=Lax'
+              : k.toLowerCase() === 'content-type'
+              ? 'application/json'
+              : null,
+        },
         json: async () => ({ token: 'refreshed-jwt-token' }),
-      } as Response);
+      } as unknown as Response);
+
+      const res = await rotatingClient.renewToken();
+      expect(res.token).toBe('refreshed-jwt-token');
+      expect(rotatingClient.getToken()).toBe('refreshed-jwt-token');
+      expect(rotatingClient.getRefreshToken()).toBe('rt_2');
+      expect(onRefreshTokenUpdated).toHaveBeenCalledWith('rt_2');
+
+      const [calledUrl, calledOpts] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(calledUrl).toBe('https://try.vikunja.io/api/v1/user/token/refresh');
+      expect(calledOpts.method).toBe('POST');
+      expect(calledOpts.credentials).toBe('include');
+      // MUST NOT send expired Authorization: Bearer header on /user/token/refresh!
+      expect(calledOpts.headers.Authorization).toBeUndefined();
+      expect(calledOpts.headers.Cookie).toBe('vikunja_refresh_token=rt_1');
+    });
+
+    it('falls back cleanly to pre-2.0 POST /user/token ONLY when /user/token/refresh returns 404 or 405', async () => {
+      client.setToken('pre-v2-unexpired-jwt');
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          json: async () => ({ message: 'Not Found' }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ token: 'pre-v2-renewed-jwt' }),
+        } as Response);
 
       const res = await client.renewToken();
-      expect(res.token).toBe('refreshed-jwt-token');
-      expect(client.getToken()).toBe('refreshed-jwt-token');
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/user/token',
-        expect.objectContaining({ method: 'POST' })
+      expect(res.token).toBe('pre-v2-renewed-jwt');
+      expect(client.getToken()).toBe('pre-v2-renewed-jwt');
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect((global.fetch as jest.Mock).mock.calls[0][0]).toBe(
+        'https://try.vikunja.io/api/v1/user/token/refresh'
       );
+      expect((global.fetch as jest.Mock).mock.calls[0][1].headers.Authorization).toBeUndefined();
+      expect((global.fetch as jest.Mock).mock.calls[1][0]).toBe(
+        'https://try.vikunja.io/api/v1/user/token'
+      );
+      expect((global.fetch as jest.Mock).mock.calls[1][1].headers.Authorization).toBe(
+        'Bearer pre-v2-unexpired-jwt'
+      );
+
+      // When /user/token/refresh returns 401 (revoked/expired refresh token on Vikunja 2.0+), do NOT call /user/token!
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Invalid refresh token' }),
+      } as Response);
+      await expect(client.renewToken()).rejects.toThrow('Invalid refresh token');
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('parses JWT exp in pure JS even when globalThis.atob and Buffer are absent (Hermes safety) and parses folded Set-Cookie headers', () => {
+      const expSec = 1_890_000_123;
+      const jwtWithUtf8AndUrlChars = buildTestJwt({
+        sub: '42',
+        name: 'René 🦙 ???>>>',
+        exp: expSec,
+      });
+
+      const origAtob = (globalThis as any).atob;
+      const origBuffer = (globalThis as any).Buffer;
+      try {
+        delete (globalThis as any).atob;
+        delete (globalThis as any).Buffer;
+
+        expect(getJwtExpirationMs(jwtWithUtf8AndUrlChars)).toBe(expSec * 1000);
+        expect(getJwtExpirationMs('tk_personal_token_123')).toBeNull();
+        expect(getJwtExpirationMs('opaque-non-jwt')).toBeNull();
+        expect(getJwtExpirationMs('')).toBeNull();
+      } finally {
+        (globalThis as any).atob = origAtob;
+        (globalThis as any).Buffer = origBuffer;
+      }
+
+      // Multi-cookie folded header containing commas inside `Expires=Wed, ...` AND another cookie
+      const foldedHeader =
+        '__cf_bm=xyz123; Path=/; Expires=Wed, 23 Dec 2026 04:21:01 GMT; HttpOnly; Secure, ' +
+        'other_vikunja_refresh_token=wrong_cookie; Path=/, ' +
+        'vikunja_refresh_token=rt_folded_ok_99; Path=/api/v1/user/token; Expires=Fri, 22 Jan 2027 00:00:00 GMT; HttpOnly; SameSite=Lax';
+      expect(
+        extractRefreshTokenFromHeaders({
+          get: (k: string) => (k.toLowerCase() === 'set-cookie' ? foldedHeader : null),
+        })
+      ).toBe('rt_folded_ok_99');
+
+      // Node/Undici getSetCookie() array with clearing cookie followed by new cookie
+      expect(
+        extractRefreshTokenFromHeaders({
+          getSetCookie: () => [
+            'vikunja_refresh_token=; Path=/; Max-Age=0; HttpOnly',
+            'vikunja_refresh_token=rt_from_array_77; Path=/api/v1/user/token; HttpOnly',
+          ],
+          get: () => null,
+        })
+      ).toBe('rt_from_array_77');
+    });
+
+    it('proactively refreshes near-expiry or expired 10-minute JWT via singleflight refreshPromise across parallel requests and rotates refresh tokens', async () => {
+      const nowMs = Date.now();
+      const nearExpiryJwt = buildTestJwt({ sub: '1', exp: Math.floor((nowMs + 45_000) / 1000) });
+      const freshJwt1 = buildTestJwt({ sub: '1', exp: Math.floor((nowMs + 600_000) / 1000) });
+      const freshJwt2 = buildTestJwt({ sub: '1', exp: Math.floor((nowMs + 1_200_000) / 1000) });
+
+      const persistedRefreshTokens: (string | null)[] = [];
+      const v2Client = new VikunjaClient({
+        baseUrl: mockBaseUrl,
+        token: nearExpiryJwt,
+        refreshToken: 'rt_1',
+        onRefreshTokenUpdated: async (rt) => {
+          persistedRefreshTokens.push(rt);
+        },
+      });
+      v2Client.onTokenRefresh = async () => {
+        const res = await v2Client.renewToken();
+        return res.token;
+      };
+
+      let refreshCalls = 0;
+      const seenCookiesOnRefresh: (string | undefined)[] = [];
+      const seenBearerOnApi: (string | undefined)[] = [];
+
+      global.fetch = jest.fn().mockImplementation(async (url: string, opts: any) => {
+        if (url.endsWith('/user/token/refresh')) {
+          refreshCalls++;
+          seenCookiesOnRefresh.push(opts?.headers?.Cookie);
+          expect(opts?.headers?.Authorization).toBeUndefined();
+          await new Promise((r) => setTimeout(r, 15));
+          const nextRt = refreshCalls === 1 ? 'rt_2' : 'rt_3';
+          const nextJwt = refreshCalls === 1 ? freshJwt1 : freshJwt2;
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              get: (k: string) =>
+                k.toLowerCase() === 'set-cookie'
+                  ? `vikunja_refresh_token=${nextRt}; Path=/api/v1/user/token; HttpOnly`
+                  : 'application/json',
+            },
+            json: async () => ({ token: nextJwt }),
+          } as unknown as Response;
+        }
+        seenBearerOnApi.push(opts?.headers?.Authorization);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [],
+        } as Response;
+      });
+
+      // Fire 4 concurrent API requests while within 90s pre-expiry window:
+      // MUST issue exactly ONE /user/token/refresh request and ZERO 401s!
+      await Promise.all([
+        v2Client.getProjects(),
+        v2Client.getLabels(),
+        v2Client.getAllTasks(),
+        v2Client.getTeams(),
+      ]);
+
+      expect(refreshCalls).toBe(1);
+      expect(seenCookiesOnRefresh).toEqual(['vikunja_refresh_token=rt_1']);
+      expect(persistedRefreshTokens).toEqual(['rt_2']);
+      expect(v2Client.getRefreshToken()).toBe('rt_2');
+      expect(seenBearerOnApi.every((h) => h === `Bearer ${freshJwt1}`)).toBe(true);
+
+      // Simulate 10 minutes passing so freshJwt1 is now expired: next refresh MUST send rotated `rt_2`, never `rt_1`!
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(nowMs + 610_000);
+      try {
+        await v2Client.getProjects();
+        expect(refreshCalls).toBe(2);
+        expect(seenCookiesOnRefresh).toEqual([
+          'vikunja_refresh_token=rt_1',
+          'vikunja_refresh_token=rt_2',
+        ]);
+        expect(v2Client.getRefreshToken()).toBe('rt_3');
+        expect(v2Client.getToken()).toBe(freshJwt2);
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
+
+    it('never sets forbidden Cookie header on Web while sending credentials: include on auth endpoints and logoutServer()', async () => {
+      const { Platform } = require('react-native');
+      const prevOS = Platform.OS;
+      try {
+        Platform.OS = 'web';
+        const webClient = new VikunjaClient({
+          baseUrl: mockBaseUrl,
+          token: 'web-jwt',
+          refreshToken: 'rt_should_be_ignored_on_web',
+        });
+
+        global.fetch = jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          url: 'https://try.vikunja.io/api/v1/user/token/refresh',
+          json: async () => ({ token: 'web-renewed-jwt' }),
+        } as unknown as Response);
+
+        await webClient.renewToken();
+        const [, refreshOpts] = (global.fetch as jest.Mock).mock.calls[0];
+        expect(refreshOpts.credentials).toBe('include');
+        expect(refreshOpts.headers.Cookie).toBeUndefined();
+        expect(refreshOpts.headers.Authorization).toBeUndefined();
+
+        global.fetch = jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          url: 'https://try.vikunja.io/api/v1/user/logout',
+          json: async () => ({ message: 'logged out' }),
+        } as unknown as Response);
+        await webClient.logoutServer();
+        const [logoutUrl, logoutOpts] = (global.fetch as jest.Mock).mock.calls[0];
+        expect(logoutUrl).toBe('https://try.vikunja.io/api/v1/user/logout');
+        expect(logoutOpts.credentials).toBe('include');
+        expect(logoutOpts.headers.Cookie).toBeUndefined();
+      } finally {
+        Platform.OS = prevOS;
+      }
+    });
+
+    it('normalizes iOS comma-folded Cookie headers in withIosRefreshCookieMerge Expo plugin so latest SecureStore refresh token wins', () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const withIosRefreshCookieMerge = require('../../../plugins/withIosRefreshCookieMerge');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const appJson = require('../../../app.json');
+
+      expect(appJson.expo.plugins).toContain('./plugins/withIosRefreshCookieMerge');
+      expect(withIosRefreshCookieMerge.OBJC_INTERCEPTOR_SOURCE).toContain(
+        '#import <React/RCTHTTPRequestHandler.h>'
+      );
+      expect(withIosRefreshCookieMerge.OBJC_INTERCEPTOR_SOURCE).toContain(
+        'RCTSetCustomHTTPRequestInterceptor'
+      );
+
+      // Comma-folded iOS RCTNetworking header: NSHTTPCookieStorage `rt_old` + JS header `rt_new`
+      expect(
+        withIosRefreshCookieMerge.normalizeIosCookieHeader(
+          'vikunja_refresh_token=rt_old,vikunja_refresh_token=rt_new'
+        )
+      ).toBe('vikunja_refresh_token=rt_new');
+
+      // Preserves reverse-proxy cookies (`CF_Authorization`, `authelia_session`) with `; ` delimiter
+      expect(
+        withIosRefreshCookieMerge.normalizeIosCookieHeader(
+          'CF_Authorization=cf_jwt_123; vikunja_refresh_token=rt_stale, vikunja_refresh_token=rt_authoritative'
+        )
+      ).toBe('CF_Authorization=cf_jwt_123; vikunja_refresh_token=rt_authoritative');
+
+      // Leaves unrelated Cookie headers without vikunja_refresh_token untouched (returns null)
+      expect(
+        withIosRefreshCookieMerge.normalizeIosCookieHeader('CF_Authorization=cf_jwt_123')
+      ).toBeNull();
     });
 
     it('should invoke onUnauthorized callback when API responds with 401 and no refresh handler', async () => {

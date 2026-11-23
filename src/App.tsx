@@ -27,6 +27,7 @@ import {
   getStoredAuth,
   setStoredAuth,
   clearStoredAuth,
+  clearNativeCookies,
   checkBiometricAvailable,
   isBiometricEnabled,
   authenticateWithBiometrics,
@@ -53,6 +54,7 @@ export default function App() {
   const [pendingStoredSession, setPendingStoredSession] = useState<{
     serverUrl: string;
     token: string;
+    refreshToken: string | null;
     username: string | null;
   } | null>(null);
 
@@ -93,10 +95,15 @@ export default function App() {
   }, []);
 
   const unlockOfflineSession = useCallback(
-    async (sessionOverride?: { serverUrl: string; token: string; username: string | null }) => {
+    async (sessionOverride?: {
+      serverUrl: string;
+      token: string;
+      refreshToken: string | null;
+      username: string | null;
+    }) => {
       const target = sessionOverride || pendingStoredSession;
       if (!isAuthenticated && target) {
-        await initialize(target.serverUrl, target.token);
+        await initialize(target.serverUrl, target.token, target.refreshToken);
         setIsAuthenticated(true);
         setPendingStoredSession(null);
       }
@@ -145,6 +152,7 @@ export default function App() {
         const sessionData = {
           serverUrl: stored.serverUrl,
           token: stored.token,
+          refreshToken: stored.refreshToken,
           username: stored.username,
         };
         setPendingStoredSession(sessionData);
@@ -158,7 +166,7 @@ export default function App() {
           return;
         }
 
-        await initialize(stored.serverUrl, stored.token);
+        await initialize(stored.serverUrl, stored.token, stored.refreshToken);
         if (!mounted) return;
         setPendingStoredSession(null);
         setIsAuthenticated(true);
@@ -168,7 +176,7 @@ export default function App() {
       }
 
       // Biometrics disabled or unavailable on device: restore offline cached data in 0ms
-      await initialize(stored.serverUrl, stored.token);
+      await initialize(stored.serverUrl, stored.token, stored.refreshToken);
       if (!mounted) return;
       setIsAuthenticated(true);
       setIsLocked(false);
@@ -293,6 +301,7 @@ export default function App() {
       options?.authMethod === 'api_token' || isPersonalApiToken(secret);
 
     let activeToken: string;
+    let activeRefreshToken: string | null = null;
     let resolvedUsername = username.trim();
     let authUser: User | null = null;
 
@@ -308,6 +317,7 @@ export default function App() {
       }
       authUser = user;
       activeToken = candidateToken;
+      activeRefreshToken = null;
       if (user.username) {
         resolvedUsername = user.username;
       }
@@ -320,6 +330,7 @@ export default function App() {
         options?.totpPasscode
       );
       activeToken = auth.token;
+      activeRefreshToken = tempClient.getRefreshToken();
       // Best-effort resolve canonical user profile so email <-> username / tk_ re-auth matches accurately
       authUser = await tempClient.getCurrentUser().catch(() => null);
       if (authUser?.username) {
@@ -366,11 +377,16 @@ export default function App() {
       if (isDifferentServer || isDifferentUser) {
         await useTaskStore.getState().clearSession();
       }
+      if (isDifferentServer || isDifferentUser || isTokenAuth) {
+        await clearNativeCookies();
+      }
 
-      // Persist token, normalized server URL, and canonical username ONLY (zero plaintext passwords!)
-      await setStoredAuth(activeToken, normalizedUrl, resolvedUsername || undefined);
+      // Persist token, rotating refresh token, normalized server URL, and canonical username ONLY (zero plaintext passwords!)
+      await setStoredAuth(activeToken, normalizedUrl, resolvedUsername || undefined, {
+        refreshToken: activeRefreshToken,
+      });
 
-      await initialize(normalizedUrl, activeToken);
+      await initialize(normalizedUrl, activeToken, activeRefreshToken);
       if (authUser && authUser.username) {
         useTaskStore.setState({ currentUser: authUser });
       }
@@ -389,8 +405,25 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    // Initiate clearSession() FIRST (synchronously setting store.client = null)
-    // before unmounting authenticated screens so unmount effects never fire mutations!
+    // Capture active client (or locked pending session) to revoke server refresh token best-effort,
+    // while STILL calling `clearSession()` synchronously on tick 0 so `store.client` is immediately `null`
+    // before unmounting authenticated screens!
+    const activeClient = useTaskStore.getState().client;
+    let serverLogoutPromise: Promise<void> = Promise.resolve();
+    if (activeClient && !isPersonalApiToken(activeClient.getToken())) {
+      serverLogoutPromise = activeClient.logoutServer();
+    } else if (
+      !activeClient &&
+      pendingStoredSession?.serverUrl &&
+      !isPersonalApiToken(pendingStoredSession.token)
+    ) {
+      serverLogoutPromise = new VikunjaClient({
+        baseUrl: pendingStoredSession.serverUrl,
+        token: pendingStoredSession.token,
+        refreshToken: pendingStoredSession.refreshToken,
+      }).logoutServer();
+    }
+
     const clearPromise = useTaskStore.getState().clearSession();
     setIsDrawerOpen(false);
     setShowReauthLogin(false);
@@ -399,6 +432,7 @@ export default function App() {
     setIsLocked(false);
     setPendingStoredSession(null);
     setIsAuthenticated(false);
+    await serverLogoutPromise;
     await Promise.all([clearStoredAuth(), clearPromise]);
   };
 

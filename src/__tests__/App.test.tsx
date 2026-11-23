@@ -11,9 +11,20 @@ import {
   setStoredAuth,
   setBiometricEnabled,
   SECURE_KEY_AUTH_TOKEN,
+  SECURE_KEY_REFRESH_TOKEN,
   SECURE_KEY_USERNAME,
   SECURE_KEY_PASSWORD,
 } from '../utils/biometrics';
+
+function makeAppTestJwt(expSec: number): string {
+  const b64 = (o: any) =>
+    Buffer.from(JSON.stringify(o))
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: '1', exp: expSec })}.sig`;
+}
 
 describe('App Root Integration, Offline Biometric Gate & Session Security', () => {
   let originalFetch: typeof global.fetch;
@@ -23,6 +34,7 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
     await useTaskStore.getState().clearSession();
     await AsyncStorage.clear();
     await SecureStore.deleteItemAsync(SECURE_KEY_AUTH_TOKEN);
+    await SecureStore.deleteItemAsync(SECURE_KEY_REFRESH_TOKEN);
     await SecureStore.deleteItemAsync(SECURE_KEY_USERNAME);
     await SecureStore.deleteItemAsync(SECURE_KEY_PASSWORD);
 
@@ -526,5 +538,146 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
       ([u, o]) => String(u).includes('/tasks/404') && o?.method === 'DELETE'
     );
     expect(deleteCalls).toHaveLength(0);
+  });
+
+  it('captures Set-Cookie vikunja_refresh_token on password login and persists it to SecureStore', async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const initial10mJwt = makeAppTestJwt(nowSec + 600);
+
+    global.fetch = jest.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith('/login')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: {
+            get: (k: string) =>
+              k.toLowerCase() === 'set-cookie'
+                ? 'vikunja_refresh_token=rt_login_1; Path=/api/v1/user/token; HttpOnly; SameSite=Lax'
+                : 'application/json',
+          },
+          json: async () => ({ token: initial10mJwt }),
+        } as unknown as Response;
+      }
+      if (url.endsWith('/user')) {
+        return { ok: true, status: 200, json: async () => ({ id: 1, username: 'alice' }) } as Response;
+      }
+      if (url.includes('/projects')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 1, title: 'Vikunja 2.0 List' }],
+        } as Response;
+      }
+      return { ok: true, status: 200, json: async () => [] } as Response;
+    });
+
+    const { getByPlaceholderText, getByTestId, findByText } = render(<App />);
+    fireEvent.changeText(
+      getByPlaceholderText('https://vikunja.example.com'),
+      'https://try.vikunja.io'
+    );
+    fireEvent.changeText(getByPlaceholderText('Username'), 'alice');
+    fireEvent.changeText(getByPlaceholderText('Password'), 'correct-horse-battery');
+    fireEvent.press(getByTestId('login-submit-btn'));
+
+    expect(await findByText('Vikunja 2.0 List')).toBeTruthy();
+    expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBe('rt_login_1');
+  });
+
+  it('seamlessly renews expired 10-min JWT after 2h cold restart without Session expired banner, and runs clearCookies strictly after /user/logout', async () => {
+    const rctNetworkingMod = require('react-native/Libraries/Network/RCTNetworking');
+    const rctNetworking = rctNetworkingMod?.default ?? rctNetworkingMod;
+    const origClearCookies = rctNetworking.clearCookies;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Stored 10-minute JWT whose `exp` is 2 hours in the past (cold restart after phone sleep)
+    const expired2hAgoJwt = makeAppTestJwt(nowSec - 7200);
+    const rotated10mJwt = makeAppTestJwt(nowSec + 600);
+
+    await setStoredAuth(expired2hAgoJwt, 'https://try.vikunja.io', 'alice', {
+      refreshToken: 'rt_login_1',
+    });
+
+    let refreshRequests = 0;
+    let logoutCookieHeader: string | undefined;
+    const logoutLifecycleEvents: string[] = [];
+
+    rctNetworking.clearCookies = jest.fn((cb?: (cleared: boolean) => void) => {
+      logoutLifecycleEvents.push('clearCookies');
+      cb?.(true);
+    });
+
+    try {
+      global.fetch = jest.fn().mockImplementation(async (url: string, opts?: any) => {
+        if (url.endsWith('/user/token/refresh')) {
+          refreshRequests++;
+          expect(opts?.headers?.Authorization).toBeUndefined();
+          expect(opts?.headers?.Cookie).toBe('vikunja_refresh_token=rt_login_1');
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              get: (k: string) =>
+                k.toLowerCase() === 'set-cookie'
+                  ? 'vikunja_refresh_token=rt_cold_rotated_2; Path=/api/v1/user/token; HttpOnly; SameSite=Lax'
+                  : 'application/json',
+            },
+            json: async () => ({ token: rotated10mJwt }),
+          } as unknown as Response;
+        }
+        if (url.endsWith('/user/logout')) {
+          logoutLifecycleEvents.push('logoutServer_start');
+          logoutCookieHeader = opts?.headers?.Cookie;
+          await new Promise((r) => setTimeout(r, 15));
+          logoutLifecycleEvents.push('logoutServer_end');
+          return { ok: true, status: 200, json: async () => ({ message: 'ok' }) } as Response;
+        }
+        // Reject if any API call ever sent the expired JWT!
+        if (opts?.headers?.Authorization !== `Bearer ${rotated10mJwt}`) {
+          return {
+            ok: false,
+            status: 401,
+            statusText: 'Unauthorized',
+            json: async () => ({ message: 'Expired JWT should never have been sent' }),
+          } as Response;
+        }
+        if (url.endsWith('/user')) {
+          return { ok: true, status: 200, json: async () => ({ id: 1, username: 'alice' }) } as Response;
+        }
+        if (url.includes('/projects')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [{ id: 1, title: 'Renewed After 2 Hours' }],
+          } as Response;
+        }
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      });
+
+      const { findByText, queryByTestId, getByTestId } = render(<App />);
+      expect(await findByText('Renewed After 2 Hours')).toBeTruthy();
+      expect(queryByTestId('auth-required-banner')).toBeNull();
+      expect(refreshRequests).toBe(1);
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBe('rt_cold_rotated_2');
+
+      // Explicit Sign Out revokes rotated refresh token via POST /user/logout BEFORE clearing native cookies & SecureStore
+      logoutLifecycleEvents.length = 0;
+      fireEvent.press(getByTestId('drawer-toggle-btn'));
+      fireEvent.press(getByTestId('drawer-settings-btn'));
+      fireEvent.press(getByTestId('settings-logout-btn'));
+
+      expect(await findByText('Guanaco')).toBeTruthy();
+      await waitFor(() => {
+        expect(logoutLifecycleEvents).toEqual([
+          'logoutServer_start',
+          'logoutServer_end',
+          'clearCookies',
+        ]);
+      });
+      expect(logoutCookieHeader).toBe('vikunja_refresh_token=rt_cold_rotated_2');
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBeNull();
+    } finally {
+      rctNetworking.clearCookies = origClearCookies;
+    }
   });
 });

@@ -1349,6 +1349,119 @@ describe('useTaskStore', () => {
       expect(useTaskStore.getState().syncStatus).toBe('offline');
     });
 
+    it('proactively renews expired 10-minute JWT via rotating refreshToken in syncAll, survives transient offline errors without authRequired, and flags authRequired on 401 refresh rejection while preserving syncQueue', async () => {
+      const {
+        setStoredAuth,
+        getStoredAuth,
+        SECURE_KEY_REFRESH_TOKEN,
+      } = require('../../utils/biometrics');
+      const SecureStore = require('expo-secure-store');
+      const makeJwt = (expSec: number) => {
+        const b64 = (o: any) =>
+          Buffer.from(JSON.stringify(o))
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: '1', exp: expSec })}.sig`;
+      };
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const expired10mJwt = makeJwt(nowSec - 7200); // Expired 2 hours ago!
+      const fresh10mJwt = makeJwt(nowSec + 600);
+
+      await setStoredAuth(expired10mJwt, 'https://try.vikunja.io', 'alice', {
+        refreshToken: 'rt_stored_1',
+      });
+      await useTaskStore
+        .getState()
+        .initialize('https://try.vikunja.io', expired10mJwt, 'rt_stored_1');
+
+      // Queue an offline task while offline: proactive refresh fails transiently -> authRequired MUST remain false!
+      global.fetch = jest.fn().mockRejectedValue(new Error('Network offline'));
+      useTaskStore.getState().addTask({ title: 'Queued While Offline', project_id: 1 });
+      await useTaskStore.getState().syncAll();
+
+      expect(useTaskStore.getState().authRequired).toBe(false);
+      expect(useTaskStore.getState().syncStatus).toBe('offline');
+      expect(useTaskStore.getState().syncQueue?.getQueue()).toHaveLength(1);
+
+      // Reconnect: proactive refresh exchanges rt_stored_1 -> rt_rotated_2 + fresh10mJwt and flushes syncQueue!
+      let refreshCount = 0;
+      global.fetch = jest.fn().mockImplementation(async (url: string, opts?: any) => {
+        if (url.endsWith('/user/token/refresh')) {
+          refreshCount++;
+          expect(opts?.headers?.Authorization).toBeUndefined();
+          expect(opts?.headers?.Cookie).toBe('vikunja_refresh_token=rt_stored_1');
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              get: (k: string) =>
+                k.toLowerCase() === 'set-cookie'
+                  ? 'vikunja_refresh_token=rt_rotated_2; Path=/api/v1/user/token; HttpOnly'
+                  : 'application/json',
+            },
+            json: async () => ({ token: fresh10mJwt }),
+          } as unknown as Response;
+        }
+        if (url.endsWith('/projects/1/tasks') && opts?.method === 'PUT') {
+          expect(opts?.headers?.Authorization).toBe(`Bearer ${fresh10mJwt}`);
+          return {
+            ok: true,
+            status: 201,
+            json: async () => ({
+              id: 301,
+              title: 'Queued While Offline',
+              done: false,
+              priority: 0,
+              project_id: 1,
+            }),
+          } as Response;
+        }
+        if (url.endsWith('/projects')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [{ id: 1, title: 'Inbox' }],
+          } as Response;
+        }
+        if (url.endsWith('/user')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ id: 1, username: 'alice' }),
+          } as Response;
+        }
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      });
+
+      await useTaskStore.getState().syncAll();
+
+      expect(refreshCount).toBe(1);
+      expect(useTaskStore.getState().authRequired).toBe(false);
+      expect(useTaskStore.getState().syncStatus).toBe('synced');
+      expect(useTaskStore.getState().syncQueue?.getQueue()).toHaveLength(0);
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBe('rt_rotated_2');
+      expect((await getStoredAuth()).token).toBe(fresh10mJwt);
+
+      // Now simulate refresh token revoked on server (401 from /user/token/refresh) after JWT expires:
+      const anotherExpiredJwt = makeJwt(nowSec - 60);
+      useTaskStore.getState().client!.setToken(anotherExpiredJwt);
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Refresh token revoked' }),
+      } as Response);
+      useTaskStore.getState().addTask({ title: 'Safe Unsynced Task', project_id: 1 });
+      await useTaskStore.getState().syncAll();
+
+      expect(useTaskStore.getState().authRequired).toBe(true);
+      expect(useTaskStore.getState().syncStatus).toBe('auth_required');
+      expect(useTaskStore.getState().syncQueue?.getQueue()).toHaveLength(1);
+    });
+
     it('wires local notification scheduling & cancellation into toggleTask, updateTaskDetails, reenableTask, deleteTask, and deleteProject', async () => {
       const cancelSpy = jest
         .spyOn(localNotifications, 'cancelTaskReminders')

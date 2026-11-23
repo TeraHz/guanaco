@@ -9,9 +9,12 @@ import {
   setBiometricEnabled,
   getStoredAuth,
   setStoredAuth,
+  setStoredRefreshToken,
   clearStoredAuth,
   isPersonalApiToken,
   SECURE_KEY_AUTH_TOKEN,
+  SECURE_KEY_REFRESH_TOKEN,
+  STORAGE_KEY_REFRESH_TOKEN,
   SECURE_KEY_USERNAME,
   SECURE_KEY_PASSWORD,
   LEGACY_STORAGE_KEY_PASSWORD,
@@ -27,6 +30,7 @@ describe('Biometrics & Auth Persistence', () => {
     (Platform as any).OS = originalPlatformOS;
     await AsyncStorage.clear();
     await SecureStore.deleteItemAsync(SECURE_KEY_AUTH_TOKEN);
+    await SecureStore.deleteItemAsync(SECURE_KEY_REFRESH_TOKEN);
     await SecureStore.deleteItemAsync(SECURE_KEY_USERNAME);
     await SecureStore.deleteItemAsync(SECURE_KEY_PASSWORD);
   });
@@ -106,13 +110,79 @@ describe('Biometrics & Auth Persistence', () => {
       const auth = await getStoredAuth();
       expect(auth).toEqual({
         token: 'jwt-xyz',
+        refreshToken: null,
         serverUrl: 'https://vikunja.myorg.com',
         username: 'alice',
         password: null,
       });
 
       expect(await SecureStore.getItemAsync(SECURE_KEY_PASSWORD)).toBeNull();
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBeNull();
       expect(await AsyncStorage.getItem(LEGACY_STORAGE_KEY_PASSWORD)).toBeNull();
+    });
+
+    it('persists, rotates, and purges vikunja_refresh_token in SecureStore on native while never storing it in Web localStorage', async () => {
+      await setStoredAuth('jwt-10m', 'https://vikunja.myorg.com', 'alice', {
+        refreshToken: 'rt_initial_1',
+      });
+
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBe('rt_initial_1');
+      expect((await getStoredAuth()).refreshToken).toBe('rt_initial_1');
+
+      // Rotate refresh token via setStoredRefreshToken
+      await setStoredRefreshToken('rt_rotated_2');
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBe('rt_rotated_2');
+      expect((await getStoredAuth()).refreshToken).toBe('rt_rotated_2');
+
+      // Switching to a Personal API Token (`tk_...`) automatically purges any old refresh token
+      await setStoredAuth('tk_personal_token_abc', 'https://vikunja.myorg.com', 'alice');
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBeNull();
+      expect((await getStoredAuth()).refreshToken).toBeNull();
+
+      // On Web, browsers manage HttpOnly cookies directly — refresh tokens are never written to storage
+      (Platform as any).OS = 'web';
+      await setStoredAuth('jwt-web', 'https://vikunja.myorg.com', 'alice', {
+        refreshToken: 'rt_should_not_persist_on_web',
+      });
+      expect(await AsyncStorage.getItem(STORAGE_KEY_REFRESH_TOKEN)).toBeNull();
+      expect((await getStoredAuth()).refreshToken).toBeNull();
+    });
+
+    it('migrates fallback refresh token from AsyncStorage to SecureStore and purges on clearStoredAuth()', async () => {
+      await AsyncStorage.setItem(STORAGE_KEY_REFRESH_TOKEN, 'rt_migrated_99');
+      await AsyncStorage.setItem('@vikunja_server_url', 'https://vikunja.example.com');
+
+      const migrated = await getStoredAuth();
+      expect(migrated.refreshToken).toBe('rt_migrated_99');
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBe('rt_migrated_99');
+      expect(await AsyncStorage.getItem(STORAGE_KEY_REFRESH_TOKEN)).toBeNull();
+
+      await clearStoredAuth();
+      expect(await SecureStore.getItemAsync(SECURE_KEY_REFRESH_TOKEN)).toBeNull();
+      expect((await getStoredAuth()).refreshToken).toBeNull();
+    });
+
+    it('purges native OS cookies via RCTNetworking.clearCookies on clearStoredAuth() while skipping on Web', async () => {
+      const rctNetworkingMod = require('react-native/Libraries/Network/RCTNetworking');
+      const rctNetworking = rctNetworkingMod?.default ?? rctNetworkingMod;
+      const origClearCookies = rctNetworking.clearCookies;
+      const clearCookiesSpy = jest.fn((cb?: (cleared: boolean) => void) => cb?.(true));
+      rctNetworking.clearCookies = clearCookiesSpy;
+
+      try {
+        await setStoredAuth('jwt-native', 'https://vikunja.example.com', 'alice', {
+          refreshToken: 'rt_native_cookie',
+        });
+        await clearStoredAuth();
+        expect(clearCookiesSpy).toHaveBeenCalledTimes(1);
+
+        clearCookiesSpy.mockClear();
+        (Platform as any).OS = 'web';
+        await clearStoredAuth();
+        expect(clearCookiesSpy).not.toHaveBeenCalled();
+      } finally {
+        rctNetworking.clearCookies = origClearCookies;
+      }
     });
 
     it('actively purges legacy plaintext passwords from SecureStore and AsyncStorage on read', async () => {

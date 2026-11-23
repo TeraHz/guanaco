@@ -20,10 +20,13 @@ import { isPersonalApiToken } from '../utils/biometrics';
 export interface VikunjaClientConfig {
   baseUrl: string;
   token?: string;
+  refreshToken?: string | null;
   timeoutMs?: number;
   sessionSignal?: AbortSignal;
   onUnauthorized?: () => void;
   onTokenRefresh?: () => Promise<string | null>;
+  onRefreshTokenUpdated?: (refreshToken: string | null) => Promise<void> | void;
+  onTransientRefreshFailure?: () => void;
 }
 
 export class VikunjaApiError extends Error {
@@ -160,10 +163,195 @@ export function isTotpRequiredError(err: unknown): boolean {
 const DEFAULT_PER_PAGE = 50;
 const MAX_PAGINATION_PAGES = 100;
 const MAX_REDIRECT_HOPS = 3;
+/** Renew short-lived (10-minute) access JWTs proactively when <= 90s remain or already expired. */
+export const PROACTIVE_REFRESH_WINDOW_MS = 90_000;
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+/**
+ * Pure-JS RFC 4648 Base64 / Base64URL -> UTF-8 decoder.
+ * Does NOT depend on `atob`, `Buffer`, or `TextDecoder` so Hermes on Android never throws.
+ */
+function decodeBase64UrlToUtf8(b64url: string): string | null {
+  if (!b64url || typeof b64url !== 'string') return null;
+  const normalized = b64url.trim().replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+  if (!normalized || normalized.length % 4 === 1) {
+    return null;
+  }
+
+  const bytes: number[] = [];
+  let buffer = 0;
+  let bitsCollected = 0;
+
+  for (let i = 0; i < normalized.length; i++) {
+    const val = BASE64_ALPHABET.indexOf(normalized.charAt(i));
+    if (val === -1) {
+      return null;
+    }
+    buffer = (buffer << 6) | val;
+    bitsCollected += 6;
+    if (bitsCollected >= 8) {
+      bitsCollected -= 8;
+      bytes.push((buffer >> bitsCollected) & 0xff);
+    }
+  }
+
+  let out = '';
+  let i = 0;
+  while (i < bytes.length) {
+    const b0 = bytes[i++];
+    if (b0 < 0x80) {
+      out += String.fromCharCode(b0);
+    } else if ((b0 & 0xe0) === 0xc0) {
+      if (i >= bytes.length) return null;
+      const b1 = bytes[i++];
+      out += String.fromCharCode(((b0 & 0x1f) << 6) | (b1 & 0x3f));
+    } else if ((b0 & 0xf0) === 0xe0) {
+      if (i + 1 >= bytes.length) return null;
+      const b1 = bytes[i++];
+      const b2 = bytes[i++];
+      out += String.fromCharCode(((b0 & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f));
+    } else if ((b0 & 0xf8) === 0xf0) {
+      if (i + 2 >= bytes.length) return null;
+      const b1 = bytes[i++];
+      const b2 = bytes[i++];
+      const b3 = bytes[i++];
+      const codePoint =
+        (((b0 & 0x07) << 18) | ((b1 & 0x3f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f)) -
+        0x10000;
+      out += String.fromCharCode(0xd800 + (codePoint >> 10), 0xdc00 + (codePoint & 0x3ff));
+    } else {
+      return null;
+    }
+  }
+  return out;
+}
+
+/**
+ * Extracts the JWT `exp` claim in milliseconds since epoch (`exp * 1000`),
+ * or returns `null` if the token is a Personal API Token (`tk_...`), opaque, or lacks `exp`.
+ */
+export function getJwtExpirationMs(token?: string | null): number | null {
+  if (!token || typeof token !== 'string' || isPersonalApiToken(token)) {
+    return null;
+  }
+  const parts = token.trim().split('.');
+  if (parts.length !== 3 || !parts[1]) {
+    return null;
+  }
+  try {
+    const jsonStr = decodeBase64UrlToUtf8(parts[1]);
+    if (!jsonStr) return null;
+    const payload = JSON.parse(jsonStr);
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      typeof payload.exp === 'number' &&
+      Number.isFinite(payload.exp) &&
+      payload.exp > 0
+    ) {
+      return payload.exp * 1000;
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Extracts `vikunja_refresh_token` from `Response.headers`, supporting `getSetCookie()`,
+ * comma/newline-folded `Set-Cookie` strings (including `Expires=Wed, ...` commas), and header maps.
+ */
+export function extractRefreshTokenFromHeaders(headers: any): string | null {
+  if (!headers) return null;
+
+  const rawHeaderValues: string[] = [];
+  try {
+    if (typeof headers.getSetCookie === 'function') {
+      const list = headers.getSetCookie();
+      if (Array.isArray(list)) {
+        for (const entry of list) {
+          if (typeof entry === 'string' && entry) {
+            rawHeaderValues.push(entry);
+          }
+        }
+      }
+    }
+    if (typeof headers.get === 'function') {
+      const single = headers.get('set-cookie') ?? headers.get('Set-Cookie');
+      if (typeof single === 'string' && single) {
+        rawHeaderValues.push(single);
+      }
+    } else if (typeof headers === 'object') {
+      for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() === 'set-cookie' && headers[key]) {
+          if (Array.isArray(headers[key])) {
+            for (const v of headers[key]) {
+              if (v) rawHeaderValues.push(String(v));
+            }
+          } else {
+            rawHeaderValues.push(String(headers[key]));
+          }
+        }
+      }
+    }
+  } catch (_) {
+    return null;
+  }
+
+  let lastNonEmpty: string | null = null;
+  const pattern = /(?:^|[,;\r\n\s])vikunja_refresh_token=([^;\r\n\s,]*)/gi;
+
+  for (const raw of rawHeaderValues) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(raw)) !== null) {
+      const candidate = (match[1] || '').replace(/^"|"$/g, '').trim();
+      if (candidate.length > 0) {
+        lastNonEmpty = candidate;
+      }
+    }
+  }
+
+  return lastNonEmpty;
+}
+
+function isAuthCookieEndpoint(endpoint: string): boolean {
+  return (
+    endpoint === '/login' ||
+    endpoint.startsWith('/login?') ||
+    endpoint === '/user/token/refresh' ||
+    endpoint.startsWith('/user/token/refresh?') ||
+    endpoint === '/user/token' ||
+    endpoint.startsWith('/user/token?') ||
+    endpoint === '/user/logout' ||
+    endpoint.startsWith('/user/logout?')
+  );
+}
+
+function isRefreshCookieConsumerEndpoint(endpoint: string): boolean {
+  return (
+    endpoint === '/user/token/refresh' ||
+    endpoint.startsWith('/user/token/refresh?') ||
+    endpoint === '/user/logout' ||
+    endpoint.startsWith('/user/logout?')
+  );
+}
+
+function isRefreshCookieProducerEndpoint(endpoint: string): boolean {
+  return (
+    endpoint === '/login' ||
+    endpoint.startsWith('/login?') ||
+    endpoint === '/user/token/refresh' ||
+    endpoint.startsWith('/user/token/refresh?')
+  );
+}
 
 interface InternalRequestOptions extends RequestInit {
   _isRetry?: boolean;
   _skipAuthRefresh?: boolean;
+  _omitAuthHeader?: boolean;
+  _timeoutMsOverride?: number;
+  _ignoreSessionSignal?: boolean;
 }
 
 interface ResponseWithMeta<T> {
@@ -175,11 +363,17 @@ export class VikunjaClient {
   private baseApiUrl: string;
   private baseOriginUrl: URL;
   private token: string | null = null;
+  private refreshToken: string | null = null;
   private timeoutMs: number;
   private sessionSignal?: AbortSignal;
   public onUnauthorized?: () => void;
   public onTokenRefresh?: () => Promise<string | null>;
+  public onRefreshTokenUpdated?: (refreshToken: string | null) => Promise<void> | void;
+  public onTransientRefreshFailure?: () => void;
   private refreshPromise: Promise<string | null> | null = null;
+  private lastRefreshOutcome: 'ok' | 'transient_error' | 'auth_error' = 'ok';
+  private lastRefreshError: unknown = null;
+  private failedProactiveRefreshForToken: string | null = null;
   private hasNotifiedUnauthorized = false;
 
   constructor(config: VikunjaClientConfig) {
@@ -188,10 +382,15 @@ export class VikunjaClient {
     if (config.token) {
       this.token = config.token;
     }
+    if (config.refreshToken) {
+      this.refreshToken = config.refreshToken;
+    }
     this.timeoutMs = config.timeoutMs ?? 15000;
     this.sessionSignal = config.sessionSignal;
     this.onUnauthorized = config.onUnauthorized;
     this.onTokenRefresh = config.onTokenRefresh;
+    this.onRefreshTokenUpdated = config.onRefreshTokenUpdated;
+    this.onTransientRefreshFailure = config.onTransientRefreshFailure;
   }
 
   private normalizeUrl(url: string): string {
@@ -205,10 +404,65 @@ export class VikunjaClient {
   public setToken(token: string | null): void {
     this.token = token;
     this.hasNotifiedUnauthorized = false;
+    this.failedProactiveRefreshForToken = null;
   }
 
   public getToken(): string | null {
     return this.token;
+  }
+
+  public setRefreshToken(refreshToken: string | null): void {
+    this.refreshToken = refreshToken || null;
+  }
+
+  public getRefreshToken(): string | null {
+    return this.refreshToken;
+  }
+
+  private classifyRefreshError(err: unknown): 'transient_error' | 'auth_error' {
+    if (
+      err instanceof VikunjaApiError &&
+      (err.status === 400 || err.status === 401 || err.status === 403)
+    ) {
+      return 'auth_error';
+    }
+    const status = (err as any)?.status ?? (err as any)?.response?.status;
+    if (status === 400 || status === 401 || status === 403) {
+      return 'auth_error';
+    }
+    return 'transient_error';
+  }
+
+  private runSingleflightRefresh(): Promise<string | null> {
+    if (!this.onTokenRefresh || isPersonalApiToken(this.token)) {
+      return Promise.resolve(null);
+    }
+    if (!this.refreshPromise) {
+      this.lastRefreshOutcome = 'ok';
+      this.lastRefreshError = null;
+      this.refreshPromise = Promise.resolve()
+        .then(() => this.onTokenRefresh!())
+        .then((newToken) => {
+          if (newToken) {
+            this.lastRefreshOutcome = 'ok';
+            this.lastRefreshError = null;
+            return newToken;
+          }
+          if (this.lastRefreshOutcome === 'ok') {
+            this.lastRefreshOutcome = 'auth_error';
+          }
+          return null;
+        })
+        .catch((err) => {
+          this.lastRefreshOutcome = this.classifyRefreshError(err);
+          this.lastRefreshError = err;
+          return null;
+        })
+        .finally(() => {
+          this.refreshPromise = null;
+        });
+    }
+    return this.refreshPromise;
   }
 
   private isSafeSameOriginTarget(targetUrlStr: string): boolean {
@@ -231,6 +485,85 @@ export class VikunjaClient {
     endpoint: string,
     options: InternalRequestOptions = {}
   ): Promise<ResponseWithMeta<T>> {
+    const isAuthEndpoint = isAuthCookieEndpoint(endpoint);
+    const effectiveTimeoutMs = options._timeoutMsOverride ?? this.timeoutMs;
+
+    const callerSignals: AbortSignal[] = [];
+    if (options.signal) callerSignals.push(options.signal);
+    if (
+      !options._ignoreSessionSignal &&
+      this.sessionSignal &&
+      this.sessionSignal !== options.signal
+    ) {
+      callerSignals.push(this.sessionSignal);
+    }
+
+    if (callerSignals.some((s) => s.aborted)) {
+      const abortErr = new Error('Request aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+
+    // Proactive pre-expiry JWT renewal: renew before sending if <= 90s remain or already expired.
+    // Concurrent callers share a single `this.refreshPromise` so rotating refresh tokens are never reused.
+    if (
+      !options._isRetry &&
+      !options._skipAuthRefresh &&
+      !options._omitAuthHeader &&
+      !isAuthEndpoint &&
+      this.token &&
+      !isPersonalApiToken(this.token) &&
+      this.onTokenRefresh
+    ) {
+      const expMs = getJwtExpirationMs(this.token);
+      const now = Date.now();
+      const isExpired = expMs !== null && expMs <= now;
+      const isNearExpiry = expMs !== null && expMs - now <= PROACTIVE_REFRESH_WINDOW_MS;
+
+      if (
+        this.refreshPromise ||
+        isExpired ||
+        (isNearExpiry && this.failedProactiveRefreshForToken !== this.token)
+      ) {
+        const tokenBeforeRefresh = this.token;
+        const refreshedToken = await this.runSingleflightRefresh();
+
+        if (callerSignals.some((s) => s.aborted)) {
+          const abortErr = new Error('Request aborted');
+          abortErr.name = 'AbortError';
+          throw abortErr;
+        }
+
+        if (refreshedToken) {
+          this.setToken(refreshedToken);
+        } else {
+          const expAfterMs = getJwtExpirationMs(this.token);
+          const stillExpired = expAfterMs !== null && expAfterMs <= Date.now();
+          if (stillExpired) {
+            if (this.lastRefreshOutcome === 'transient_error') {
+              this.onTransientRefreshFailure?.();
+              throw (
+                (this.lastRefreshError instanceof Error ? this.lastRefreshError : null) ??
+                new Error('Network request failed while renewing session')
+              );
+            }
+            this.failedProactiveRefreshForToken = tokenBeforeRefresh;
+            if (this.onUnauthorized && !this.hasNotifiedUnauthorized) {
+              this.hasNotifiedUnauthorized = true;
+              this.onUnauthorized();
+            }
+            throw (
+              (this.lastRefreshError instanceof VikunjaApiError
+                ? this.lastRefreshError
+                : null) ?? new VikunjaApiError(401, 'Session expired')
+            );
+          } else if (this.lastRefreshOutcome === 'auth_error') {
+            this.failedProactiveRefreshForToken = tokenBeforeRefresh;
+          }
+        }
+      }
+    }
+
     const initialUrl = `${this.baseApiUrl}${endpoint}`;
     const hasBody = options.body !== undefined && options.body !== null;
 
@@ -241,19 +574,26 @@ export class VikunjaClient {
     };
 
     const requestToken = this.token;
-    if (requestToken) {
+    if (requestToken && !options._omitAuthHeader) {
       headers['Authorization'] = `Bearer ${requestToken}`;
+    }
+
+    if (Platform.OS === 'web') {
+      // Forbidden request header in browsers; Web relies strictly on `credentials: 'include'`
+      delete headers['Cookie'];
+      delete headers['cookie'];
+    } else if (
+      isRefreshCookieConsumerEndpoint(endpoint) &&
+      this.refreshToken &&
+      !headers['Cookie'] &&
+      !headers['cookie']
+    ) {
+      headers['Cookie'] = `vikunja_refresh_token=${this.refreshToken}`;
     }
 
     const controller = new AbortController();
     let isTimedOut = false;
     let isCallerAborted = false;
-
-    const callerSignals: AbortSignal[] = [];
-    if (options.signal) callerSignals.push(options.signal);
-    if (this.sessionSignal && this.sessionSignal !== options.signal) {
-      callerSignals.push(this.sessionSignal);
-    }
 
     const onCallerAbort = () => {
       isCallerAborted = true;
@@ -272,7 +612,7 @@ export class VikunjaClient {
     const timer = setTimeout(() => {
       isTimedOut = true;
       controller.abort();
-    }, this.timeoutMs);
+    }, effectiveTimeoutMs);
 
     try {
       if (isCallerAborted) {
@@ -281,7 +621,19 @@ export class VikunjaClient {
         throw abortErr;
       }
 
-      const { _isRetry, _skipAuthRefresh, signal: _ignoredSignal, ...fetchInit } = options;
+      const {
+        _isRetry,
+        _skipAuthRefresh,
+        _omitAuthHeader,
+        _timeoutMsOverride,
+        _ignoreSessionSignal,
+        signal: _ignoredSignal,
+        ...fetchInit
+      } = options;
+
+      const resolvedCredentials = isAuthEndpoint
+        ? fetchInit.credentials ?? 'include'
+        : fetchInit.credentials;
 
       let currentUrl = initialUrl;
       let currentMethod = fetchInit.method || 'GET';
@@ -296,6 +648,7 @@ export class VikunjaClient {
 
         response = await fetch(currentUrl, {
           ...fetchInit,
+          ...(resolvedCredentials !== undefined ? { credentials: resolvedCredentials } : {}),
           method: currentMethod,
           body: currentBody,
           headers: hopHeaders,
@@ -362,6 +715,15 @@ export class VikunjaClient {
         throw new Error('No response received');
       }
 
+      // Immediately capture & persist rotated `vikunja_refresh_token` BEFORE parsing JSON or resolving refreshPromise!
+      if (response.ok && Platform.OS !== 'web' && isRefreshCookieProducerEndpoint(endpoint)) {
+        const rotatedRefreshToken = extractRefreshTokenFromHeaders(response.headers);
+        if (rotatedRefreshToken) {
+          this.refreshToken = rotatedRefreshToken;
+          await this.onRefreshTokenUpdated?.(rotatedRefreshToken);
+        }
+      }
+
       let data: any = null;
       const hasHeadersApi = Boolean(response.headers && typeof response.headers.get === 'function');
       const contentType = hasHeadersApi
@@ -396,9 +758,6 @@ export class VikunjaClient {
       }
 
       if (!response.ok) {
-        const isAuthEndpoint =
-          endpoint.startsWith('/login') || endpoint.startsWith('/user/token');
-
         if (
           response.status === 401 &&
           !options._isRetry &&
@@ -413,24 +772,22 @@ export class VikunjaClient {
             });
           }
 
-          // 2. Attempt JWT renewal (never call /user/token for Personal API Tokens `tk_...`)
+          // 2. Attempt singleflight JWT renewal (never for Personal API Tokens `tk_...`)
           if (this.onTokenRefresh && !isPersonalApiToken(this.token)) {
-            try {
-              if (!this.refreshPromise) {
-                this.refreshPromise = this.onTokenRefresh().finally(() => {
-                  this.refreshPromise = null;
-                });
-              }
-              const newToken = await this.refreshPromise;
-              if (newToken) {
-                this.setToken(newToken);
-                return await this.requestWithMeta<T>(endpoint, {
-                  ...options,
-                  _isRetry: true,
-                });
-              }
-            } catch (_) {
-              // Refresh failed — fall through to deduplicated onUnauthorized
+            const newToken = await this.runSingleflightRefresh();
+            if (newToken) {
+              this.setToken(newToken);
+              return await this.requestWithMeta<T>(endpoint, {
+                ...options,
+                _isRetry: true,
+              });
+            }
+            if (this.lastRefreshOutcome === 'transient_error') {
+              this.onTransientRefreshFailure?.();
+              throw (
+                (this.lastRefreshError instanceof Error ? this.lastRefreshError : null) ??
+                new Error('Network request failed while renewing session')
+              );
             }
           }
         }
@@ -458,7 +815,7 @@ export class VikunjaClient {
         throw abortErr;
       }
       if (isTimedOut || err?.name === 'AbortError') {
-        const timeoutErr = new Error(`Request timed out after ${this.timeoutMs}ms`);
+        const timeoutErr = new Error(`Request timed out after ${effectiveTimeoutMs}ms`);
         timeoutErr.name = 'TimeoutError';
         throw timeoutErr;
       }
@@ -507,7 +864,9 @@ export class VikunjaClient {
     const res = await this.request<AuthTokens>('/login', {
       method: 'POST',
       body: JSON.stringify(payload),
+      credentials: 'include',
       _skipAuthRefresh: true,
+      _omitAuthHeader: true,
     });
     if (res?.token) {
       this.setToken(res.token);
@@ -517,16 +876,74 @@ export class VikunjaClient {
 
   public async renewToken(): Promise<AuthTokens> {
     if (isPersonalApiToken(this.token)) {
+      this.lastRefreshOutcome = 'auth_error';
       throw new VikunjaApiError(400, 'Personal API tokens do not support JWT renewal');
     }
-    const res = await this.request<AuthTokens>('/user/token', {
-      method: 'POST',
-      _skipAuthRefresh: true,
-    });
-    if (res?.token) {
-      this.setToken(res.token);
+
+    try {
+      const res = await this.request<AuthTokens>('/user/token/refresh', {
+        method: 'POST',
+        credentials: 'include',
+        _skipAuthRefresh: true,
+        _omitAuthHeader: true,
+      });
+      if (res?.token) {
+        this.setToken(res.token);
+      }
+      this.lastRefreshOutcome = 'ok';
+      this.lastRefreshError = null;
+      return res;
+    } catch (err: any) {
+      // Pre-2.0 Vikunja fallback: ONLY when `/user/token/refresh` is unsupported (404 or 405),
+      // fall back to legacy `POST /user/token` using `Authorization: Bearer <token>`.
+      if (err instanceof VikunjaApiError && (err.status === 404 || err.status === 405)) {
+        try {
+          const legacyRes = await this.request<AuthTokens>('/user/token', {
+            method: 'POST',
+            credentials: 'include',
+            _skipAuthRefresh: true,
+          });
+          if (legacyRes?.token) {
+            this.setToken(legacyRes.token);
+          }
+          this.lastRefreshOutcome = 'ok';
+          this.lastRefreshError = null;
+          return legacyRes;
+        } catch (legacyErr: any) {
+          this.lastRefreshOutcome = this.classifyRefreshError(legacyErr);
+          this.lastRefreshError = legacyErr;
+          throw legacyErr;
+        }
+      }
+      this.lastRefreshOutcome = this.classifyRefreshError(err);
+      this.lastRefreshError = err;
+      throw err;
     }
-    return res;
+  }
+
+  /**
+   * Best-effort server session revocation (`POST /user/logout`) with a short 4s timeout.
+   * Never throws so offline or legacy servers cannot block local sign-out.
+   */
+  public async logoutServer(): Promise<void> {
+    const expMs = getJwtExpirationMs(this.token);
+    const tokenExpired = expMs !== null && expMs <= Date.now();
+    const omitAuth = !this.token || isPersonalApiToken(this.token) || tokenExpired;
+
+    try {
+      await this.request<any>('/user/logout', {
+        method: 'POST',
+        credentials: 'include',
+        _skipAuthRefresh: true,
+        _omitAuthHeader: omitAuth,
+        _timeoutMsOverride: 4000,
+        _ignoreSessionSignal: true,
+      });
+    } catch (_) {
+      // Best-effort server logout
+    } finally {
+      this.refreshToken = null;
+    }
   }
 
   public async getCurrentUser(): Promise<User> {
