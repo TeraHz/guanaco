@@ -454,7 +454,7 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
   // 4d. Bakery & Pantry (strict whole-word \btea\b, \bnut\b, \boat\b, \boil\b, \brice\b!)
   if (
     hasAnyWord(texts, [
-      'bread', 'croissant', 'baguette', 'pastry', 'flour', 'pasta', 'spaghetti', 'noodle', 'rice', 'cereal', 'bagel',
+      'bread', 'sourdough', 'loaf', 'croissant', 'baguette', 'pastry', 'flour', 'pasta', 'spaghetti', 'noodle', 'rice', 'cereal', 'bagel',
       'sauce', 'snack', 'oil', 'olive oil', 'vinegar', 'salt', 'sugar', 'spice', 'bean', 'lentil',
       'honey', 'nut', 'almond', 'walnut', 'cashew', 'peanut', 'pistachio', 'cookie', 'biscuit',
       'chocolate', 'coffee', 'tea', 'oat', 'oatmeal', 'granola', 'jam', 'tortilla', 'cracker',

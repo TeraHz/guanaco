@@ -23,8 +23,9 @@ Guanaco is a fast, private, open-source mobile and tablet app for Vikunja.
 It connects directly to your self-hosted or cloud Vikunja server, works smoothly offline, and includes no ads, trackers, or third-party cloud services.
 
 Features:
-• Works Offline: View lists, check off errands, add tasks, and edit details without a signal — changes sync automatically once you reconnect.
-• Subtasks & Saved Filters: Break tasks into subtasks with progress counts, duplicate task templates, and open your Vikunja Saved Filters from the sidebar.
+• Works Offline: View lists, check off groceries or errands, add tasks, and edit details without a signal — changes sync automatically once you reconnect.
+• Smart Grocery & List Grouping: Automatically sort shopping lists by supermarket aisle (Produce, Dairy, Bakery, Meat) or group travel and home projects right on your device.
+• Subtasks & Saved Filters: Break home projects into subtasks with progress counts, duplicate task templates, and open your Vikunja Saved Filters from the sidebar.
 • Quick One-Line Entry: Add tasks with inline shortcuts for #labels, +lists, !priority, @assignees, due dates, and repeating schedules.
 • Fast Cross-List Search: Search titles, formatted notes, checklists, labels, and assignees across one list or all lists at once.
 • Flexible Schedules & Reminders: Postpone dates in one tap (+1d, +3d, +1w), set custom repeat intervals, and complete or snooze tasks directly from local notifications.

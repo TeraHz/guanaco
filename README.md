@@ -32,10 +32,10 @@
 ## Screenshots
 
 <p align="center">
-  <img src="docs/assets/screenshots/01-tasks-dark.png" width="23%" alt="Dark mode task list" />
-  <img src="docs/assets/screenshots/02-tasks-light.png" width="23%" alt="Light mode with quick-add shortcuts" />
+  <img src="docs/assets/screenshots/01-tasks-dark.png" width="23%" alt="Weekly groceries sorted by store aisle in dark mode" />
+  <img src="docs/assets/screenshots/02-tasks-light.png" width="23%" alt="Honey-do list in light mode with quick-add shortcuts" />
   <img src="docs/assets/screenshots/03-task-detail-subtasks.png" width="23%" alt="Task details with notes and subtasks" />
-  <img src="docs/assets/screenshots/04-global-search-oled.png" width="23%" alt="OLED theme with search across lists" />
+  <img src="docs/assets/screenshots/04-global-search-oled.png" width="23%" alt="Pure black OLED theme with search across lists" />
 </p>
 
 <details>
@@ -44,7 +44,7 @@
   <p align="center">
     <img src="docs/assets/screenshots/05-lists-drawer.png" width="28%" alt="Lists drawer with saved filters and sublists" />
     &nbsp;&nbsp;
-    <img src="docs/assets/screenshots/06-tablet-split-view.png" width="66%" alt="Tablet split-screen layout" />
+    <img src="docs/assets/screenshots/06-tablet-split-view.png" width="66%" alt="Tablet split-screen layout with smart grouping" />
   </p>
 </details>
 

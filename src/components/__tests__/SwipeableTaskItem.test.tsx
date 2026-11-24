@@ -626,4 +626,24 @@ describe('SwipeableTaskItem', () => {
     expect(getByTestId('task-parent-badge-52')).toBeTruthy();
     expect(getByText('↳ Launch Prep')).toBeTruthy();
   });
+
+  it('stacks metadata beneath short titles when 4+ badges are present so the title is never squashed', () => {
+    const badgeRichTask: Task = {
+      ...mockTask,
+      id: 60,
+      title: 'Fix leaky kitchen faucet',
+      percent_done: 0.75,
+      assignees: [{ id: 1, username: 'alex' }],
+    };
+    const { getByText } = render(
+      <SwipeableTaskItem
+        task={badgeRichTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+    expect(getByText('Fix leaky kitchen faucet').props.numberOfLines).toBe(3);
+  });
 });

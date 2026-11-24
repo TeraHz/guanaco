@@ -2,8 +2,11 @@
 /**
  * Generates live high-DPI screenshots of Guanaco from the production web bundle (`dist/`)
  * using headless Google Chrome + Chrome DevTools Protocol (CDP) into `docs/assets/screenshots/`.
- * Note: `docs/assets/social-preview.png` is custom illustrated artwork and is intentionally
- * preserved across `npm run screenshots` runs.
+ *
+ * Output dimensions are Play-Store-ready and GitHub-ready:
+ * - Phone screenshots: 1215x2160 (exact 9:16 at 3x DPR)
+ * - Tablet screenshots: 2240x1260 (exact 16:9 at 2x DPR)
+ * Note: `docs/assets/social-preview.png` is custom illustrated artwork and is preserved.
  */
 
 const fs = require('fs');
@@ -23,276 +26,422 @@ if (!fs.existsSync(CHROME_BIN)) {
   process.exit(1);
 }
 
-if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
+if (process.argv.includes('--rebuild-web') || !fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
   console.log('Building production web bundle (npx expo export -p web)...');
   execFileSync('npx', ['expo', 'export', '-p', 'web'], { cwd: ROOT_DIR, stdio: 'inherit' });
 }
 
 fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 
-// Build realistic, relatable demo dataset relative to "now" so Today / Tomorrow / Overdue render naturally
+// Build warm, everyday household, grocery, and family demo lists relative to "now"
 function buildDemoDataset() {
   const now = new Date();
   const todayEvening = new Date(
     now.getFullYear(),
     now.getMonth(),
     now.getDate(),
-    18,
-    0,
+    17,
+    30,
     0
   ).toISOString();
   const tomorrowMorning = new Date(
     now.getFullYear(),
     now.getMonth(),
     now.getDate() + 1,
-    9,
-    30,
+    10,
+    0,
     0
   ).toISOString();
   const yesterdayDue = new Date(
     now.getFullYear(),
     now.getMonth(),
     now.getDate() - 1,
-    14,
+    15,
     0,
     0
   ).toISOString();
   const nextWeekDue = new Date(
     now.getFullYear(),
     now.getMonth(),
-    now.getDate() + 5,
+    now.getDate() + 4,
     11,
     0,
     0
   ).toISOString();
 
-  const currentUser = { id: 1, username: 'alex', name: 'Alex Rivera' };
-  const teammate = { id: 2, username: 'maya', name: 'Maya Chen' };
+  const currentUser = { id: 1, username: 'alex', name: 'Alex' };
+  const partner = { id: 2, username: 'emma', name: 'Emma' };
 
   const labels = [
-    { id: 1, title: 'homelab', hex_color: '#0A84FF' },
-    { id: 2, title: 'security', hex_color: '#FF453A' },
-    { id: 3, title: 'release', hex_color: '#BF5AF2' },
-    { id: 4, title: 'errands', hex_color: '#30D158' },
-    { id: 5, title: 'docs', hex_color: '#FF9F0A' },
+    { id: 1, title: 'TraderJoes', hex_color: '#FF453A' },
+    { id: 2, title: 'Costco', hex_color: '#0A84FF' },
+    { id: 3, title: 'FarmersMarket', hex_color: '#30D158' },
+    { id: 4, title: 'weekend', hex_color: '#BF5AF2' },
+    { id: 5, title: 'hardware', hex_color: '#FF9F0A' },
+    { id: 6, title: 'garden', hex_color: '#32D74B' },
+    { id: 7, title: 'home', hex_color: '#64D2FF' },
   ];
 
   const projects = [
     {
       id: 1,
-      title: 'Infrastructure & Ops',
-      hex_color: '#0A84FF',
+      title: 'Weekly Groceries',
+      hex_color: '#FF9F0A',
       is_favorite: true,
       views: [{ id: 101, title: 'List', project_id: 1, view_kind: 'list' }],
     },
     {
       id: 2,
-      title: 'Backups & ZFS',
-      parent_project_id: 1,
-      hex_color: '#64D2FF',
+      title: 'Honey-Do & Home',
+      hex_color: '#0A84FF',
+      is_favorite: true,
       views: [{ id: 102, title: 'List', project_id: 2, view_kind: 'list' }],
     },
     {
       id: 3,
-      title: 'Mobile Release',
-      hex_color: '#BF5AF2',
-      is_favorite: true,
+      title: 'Family & Errands',
+      hex_color: '#30D158',
       views: [{ id: 103, title: 'List', project_id: 3, view_kind: 'list' }],
     },
     {
       id: 4,
-      title: 'Personal & Home',
-      hex_color: '#30D158',
+      title: 'Lake Tahoe Family Trip',
+      parent_project_id: 3,
+      hex_color: '#64D2FF',
       views: [{ id: 104, title: 'List', project_id: 4, view_kind: 'list' }],
     },
     {
       id: 5,
-      title: 'Weekly Groceries',
-      parent_project_id: 4,
-      hex_color: '#FF9F0A',
+      title: 'Birthday & Gift Ideas',
+      hex_color: '#BF5AF2',
       views: [{ id: 105, title: 'List', project_id: 5, view_kind: 'list' }],
     },
     {
       id: 6,
-      title: '2025 Migration Archive',
+      title: 'Spring Kitchen Remodel',
       hex_color: '#8E8E93',
       is_archived: true,
     },
     {
       id: -2,
-      title: 'High Priority Queue',
-      hex_color: '#FF453A',
+      title: 'Due This Week',
+      hex_color: '#0A84FF',
       views: [{ id: 201, title: 'List', project_id: -2, view_kind: 'list' }],
     },
     {
       id: -3,
-      title: 'Due This Week',
-      hex_color: '#0A84FF',
+      title: 'Weekend Projects',
+      hex_color: '#FF453A',
       views: [{ id: 202, title: 'List', project_id: -3, view_kind: 'list' }],
     },
   ];
 
   const sub1 = {
-    id: 111,
-    title: 'Export root CA cert to Android trust store',
+    id: 211,
+    title: 'Check Moen cartridge model number',
     done: true,
     priority: 2,
-    project_id: 1,
+    project_id: 2,
     position: 9000,
     related_tasks: {
-      parenttask: [{ id: 101, title: 'Renew internal Caddy TLS & verify mobile sync', done: false, priority: 4, project_id: 1 }],
+      parenttask: [
+        {
+          id: 201,
+          title: 'Fix leaky kitchen faucet',
+          done: false,
+          priority: 4,
+          project_id: 2,
+        },
+      ],
     },
   };
   const sub2 = {
-    id: 112,
-    title: 'Verify rotating refresh cookie renewal over Wi-Fi',
+    id: 212,
+    title: 'Pick up brass O-ring kit at Ace Hardware',
     done: true,
     priority: 2,
-    project_id: 1,
+    project_id: 2,
     position: 9100,
     related_tasks: {
-      parenttask: [{ id: 101, title: 'Renew internal Caddy TLS & verify mobile sync', done: false, priority: 4, project_id: 1 }],
+      parenttask: [
+        {
+          id: 201,
+          title: 'Fix leaky kitchen faucet',
+          done: false,
+          priority: 4,
+          project_id: 2,
+        },
+      ],
     },
   };
   const sub3 = {
-    id: 113,
-    title: 'Audit active Vikunja sessions User-Agent list',
+    id: 213,
+    title: 'Re-caulk around faucet baseplate',
     done: false,
     priority: 2,
-    project_id: 1,
+    project_id: 2,
     position: 9200,
     related_tasks: {
-      parenttask: [{ id: 101, title: 'Renew internal Caddy TLS & verify mobile sync', done: false, priority: 4, project_id: 1 }],
+      parenttask: [
+        {
+          id: 201,
+          title: 'Fix leaky kitchen faucet',
+          done: false,
+          priority: 4,
+          project_id: 2,
+        },
+      ],
     },
   };
 
   const tasks = [
+    // 1. Weekly Groceries (Project 1 — showcases Department / Aisle grouping!)
     {
       id: 101,
-      title: 'Renew internal Caddy TLS & verify mobile sync',
+      title: 'Honeycrisp apples & ripe avocados',
+      done: false,
+      priority: 2,
+      project_id: 1,
+      position: 1000,
+      labels: [labels[0]],
+    },
+    {
+      id: 102,
+      title: 'Fresh basil, lemons & garlic',
+      done: false,
+      priority: 1,
+      project_id: 1,
+      position: 2000,
+      labels: [labels[2], labels[3]],
+    },
+    {
+      id: 103,
+      title: 'Pasture-raised eggs & oat milk',
+      done: false,
+      priority: 3,
+      project_id: 1,
+      position: 3000,
+      due_date: todayEvening,
+      labels: [labels[1]],
+      assignees: [currentUser],
+    },
+    {
+      id: 104,
+      title: 'Greek yogurt & aged sharp cheddar',
+      done: false,
+      priority: 1,
+      project_id: 1,
+      position: 4000,
+      labels: [labels[0]],
+    },
+    {
+      id: 105,
+      title: 'Wild Alaskan salmon fillets',
+      done: false,
+      priority: 2,
+      project_id: 1,
+      position: 5000,
+      labels: [labels[1]],
+      assignees: [partner],
+    },
+    {
+      id: 106,
+      title: 'Warm sourdough loaf & olive oil',
+      done: false,
+      priority: 2,
+      project_id: 1,
+      position: 5500,
+      labels: [labels[2], labels[3]],
+      assignees: [partner],
+    },
+    {
+      id: 107,
+      title: 'Whole-bean espresso roast',
+      done: true,
+      priority: 1,
+      project_id: 1,
+      position: 6000,
+      labels: [labels[1]],
+    },
+
+    // 2. Honey-Do & Home (Project 2 — subtasks, checklist notes, recurring tasks)
+    {
+      id: 201,
+      title: 'Fix leaky kitchen faucet',
       description:
-        '<p>Validate private PKI certificate chain across VLANs.</p>' +
+        '<p>Stop slow drip on cold handle before family visits.</p>' +
         '<ul data-type="taskList">' +
-        '<li data-checked="true"><p>Install internal Root CA on Pixel</p></li>' +
-        '<li data-checked="true"><p>Test offline mutation queue replay</p></li>' +
-        '<li data-checked="false"><p>Confirm firewall rule on port 443</p></li>' +
+        '<li data-checked="true"><p>Shut off valves under sink</p></li>' +
+        '<li data-checked="false"><p>Swap cartridge &amp; rinse aerator</p></li>' +
         '</ul>',
       done: false,
       priority: 4,
       percent_done: 0.75,
-      project_id: 1,
+      project_id: 2,
       position: 1000,
       due_date: todayEvening,
       reminders: [{ relative_to: 'due_date', relative_period: -900 }],
-      labels: [labels[0], labels[1]],
+      labels: [labels[3], labels[4]],
       assignees: [currentUser],
       related_tasks: {
         subtask: [sub1, sub2, sub3],
       },
     },
     {
-      id: 102,
-      title: 'Rotate offsite BorgBackup repository keys',
-      description: '<p>Quarterly key verification and restore drill.</p>',
-      done: false,
-      priority: 3,
-      project_id: 1,
-      position: 2000,
-      due_date: yesterdayDue,
-      labels: [labels[1]],
-      assignees: [currentUser],
-    },
-    {
-      id: 103,
-      title: 'Check weekly ZFS scrub telemetry',
-      description: 'Verify zero checksum errors across storage pools.',
-      done: false,
-      priority: 2,
-      project_id: 1,
-      position: 3000,
-      due_date: tomorrowMorning,
-      repeat_after: 604800,
-      repeat_mode: 0,
-      reminders: [{ relative_to: 'due_date', relative_period: 0 }],
-      labels: [labels[0]],
-    },
-    {
-      id: 104,
-      title: 'Review reverse-proxy rate limit headers',
-      done: false,
-      priority: 1,
-      project_id: 1,
-      position: 4000,
-      due_date: nextWeekDue,
-      labels: [labels[4]],
-      assignees: [teammate],
-    },
-    sub3,
-    {
-      id: 105,
-      title: 'Upgrade Vikunja container to latest 2.x image',
-      done: true,
-      priority: 2,
-      project_id: 1,
-      position: 5000,
-      labels: [labels[0]],
-    },
-    // Other project tasks (shown in All Lists search & drawer badges)
-    {
-      id: 201,
-      title: 'Verify snapshot replication to TrueNAS',
-      description: '<p>Check incremental zfs send bandwidth logs</p>',
+      id: 202,
+      title: 'Hang floating oak shelves in guest room',
+      description: '<p>Find wall studs and level brackets above desk.</p>',
       done: false,
       priority: 3,
       project_id: 2,
-      position: 1000,
-      due_date: todayEvening,
-      labels: [labels[0]],
+      position: 2000,
+      due_date: yesterdayDue,
+      labels: [labels[3], labels[6]],
       assignees: [currentUser],
     },
     {
-      id: 301,
-      title: 'Publish signed Android release bundle',
-      description: '<p>Upload R8 mapping.txt and verify internal track</p>',
+      id: 203,
+      title: 'Water indoor plants & patio herbs',
       done: false,
-      priority: 5,
+      priority: 2,
+      project_id: 2,
+      position: 3000,
+      due_date: tomorrowMorning,
+      repeat_after: 345600, // Every 4 days
+      repeat_mode: 0,
+      reminders: [{ relative_to: 'due_date', relative_period: 0 }],
+      labels: [labels[5]],
+    },
+    {
+      id: 204,
+      title: 'Replace hallway air filter (16x25x1)',
+      done: false,
+      priority: 1,
+      project_id: 2,
+      position: 4000,
+      due_date: nextWeekDue,
+      labels: [labels[6]],
+      assignees: [partner],
+    },
+    sub3,
+
+    // 3. Family & Errands (Project 3 — great for Gemini / Smart Grouping on Tablet!)
+    {
+      id: 301,
+      title: 'Schedule annual dentist checkup for kids',
+      done: false,
+      priority: 3,
       project_id: 3,
       position: 1000,
-      due_date: todayEvening,
-      labels: [labels[2]],
-      assignees: [currentUser],
+      due_date: tomorrowMorning,
+      labels: [labels[6]],
+      assignees: [partner],
     },
     {
       id: 302,
-      title: 'Write user manual & keyboard shortcut reference',
+      title: 'Renew library books & pick up hold',
       done: false,
       priority: 2,
       project_id: 3,
       position: 2000,
-      labels: [labels[4]],
+      due_date: todayEvening,
     },
     {
+      id: 303,
+      title: 'Drop off winter coats at dry cleaner',
+      done: false,
+      priority: 2,
+      project_id: 3,
+      position: 3000,
+      labels: [labels[3]],
+    },
+    {
+      id: 304,
+      title: 'Clean patio grill & refill propane tank',
+      done: false,
+      priority: 2,
+      project_id: 3,
+      position: 4000,
+      due_date: nextWeekDue,
+      labels: [labels[3], labels[4]],
+      assignees: [currentUser],
+    },
+    {
+      id: 305,
+      title: 'Book flight & rental car for Thanksgiving',
+      done: false,
+      priority: 4,
+      project_id: 3,
+      position: 5000,
+      due_date: todayEvening,
+      assignees: [currentUser],
+    },
+
+    // 4. Lake Tahoe Family Trip (Project 4 — showcases Smart Grouping categories on Tablet!)
+    {
       id: 401,
-      title: 'Schedule annual dentist appointment',
+      title: 'Print cabin reservation & trail passes',
+      done: false,
+      priority: 3,
+      project_id: 4,
+      position: 1000,
+      due_date: todayEvening,
+      labels: [labels[3]],
+      assignees: [currentUser],
+    },
+    {
+      id: 402,
+      title: 'Pack hiking boots, fleece jackets & warm socks',
+      done: false,
+      priority: 3,
+      project_id: 4,
+      position: 2000,
+      due_date: nextWeekDue,
+      labels: [labels[3]],
+      assignees: [currentUser, partner],
+    },
+    {
+      id: 403,
+      title: 'Charge camera battery, power bank & headlamps',
       done: false,
       priority: 2,
       project_id: 4,
-      position: 1000,
+      position: 3000,
       due_date: tomorrowMorning,
       labels: [labels[3]],
     },
     {
-      id: 501,
-      title: 'Organic espresso beans & oat milk',
+      id: 404,
+      title: 'Sunscreen, first-aid meds & lip balm',
       done: false,
       priority: 1,
+      project_id: 4,
+      position: 4000,
+      labels: [labels[0]],
+    },
+    {
+      id: 405,
+      title: 'Pack cooler, firewood & s’mores kit',
+      done: false,
+      priority: 2,
+      project_id: 4,
+      position: 5000,
+      labels: [labels[0], labels[3]],
+      assignees: [partner],
+    },
+
+    // 5. Birthday & Gift Ideas (Project 5)
+    {
+      id: 501,
+      title: 'Cast-iron Dutch oven for Mom’s birthday',
+      done: false,
+      priority: 2,
       project_id: 5,
       position: 1000,
-      labels: [labels[3]],
     },
   ];
 
-  return { currentUser, teammate, labels, projects, tasks };
+  return { currentUser, partner, labels, projects, tasks };
 }
 
 const MIME_TYPES = {
@@ -335,17 +484,21 @@ function startDemoServer(dataset) {
         return sendJson(dataset.tasks);
       }
       if (pathname === '/api/v1/users/search') {
-        return sendJson([dataset.currentUser, dataset.teammate]);
+        return sendJson([dataset.currentUser, dataset.partner]);
       }
 
       const projTasksMatch = pathname.match(/^\/api\/v1\/projects\/(-?\d+)\/(?:views\/\d+\/)?tasks$/);
       if (projTasksMatch) {
         const pid = Number(projTasksMatch[1]);
         if (pid === -2) {
-          return sendJson(dataset.tasks.filter((t) => !t.done && t.priority >= 3));
+          return sendJson(dataset.tasks.filter((t) => !t.done && Boolean(t.due_date)));
         }
         if (pid === -3) {
-          return sendJson(dataset.tasks.filter((t) => !t.done && Boolean(t.due_date)));
+          return sendJson(
+            dataset.tasks.filter(
+              (t) => !t.done && (t.labels || []).some((l) => l.title === 'weekend')
+            )
+          );
         }
         return sendJson(dataset.tasks.filter((t) => t.project_id === pid));
       }
@@ -354,14 +507,15 @@ function startDemoServer(dataset) {
       if (projViewsMatch) {
         const pid = Number(projViewsMatch[1]);
         const found = dataset.projects.find((p) => p.id === pid);
-        return sendJson(found?.views || [{ id: 900 + Math.abs(pid), title: 'List', project_id: pid, view_kind: 'list' }]);
+        return sendJson(
+          found?.views || [{ id: 900 + Math.abs(pid), title: 'List', project_id: pid, view_kind: 'list' }]
+        );
       }
 
       if (pathname.startsWith('/api/v1/')) {
         return sendJson({ ok: true });
       }
 
-      // Serve static files from dist/
       let relPath = pathname === '/' ? '/index.html' : pathname;
       let filePath = path.join(DIST_DIR, relPath);
       if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
@@ -497,19 +651,35 @@ async function injectMobilePolishCss(cdp) {
   })()`);
 }
 
-async function seedSessionAndReload(cdp, baseUrl, themeMode = 'dark', width = 390, height = 844) {
+async function seedSessionAndReload(cdp, baseUrl, opts = {}) {
+  const {
+    themeMode = 'dark',
+    projectId = 1,
+    width = 405,
+    height = 720,
+    dpr = 3,
+    enableAiCore = false,
+  } = opts;
+
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width,
     height,
-    deviceScaleFactor: 2,
+    deviceScaleFactor: dpr,
     mobile: width < 768,
   });
   await cdp.send('Emulation.setEmulatedMedia', {
     features: [{ name: 'prefers-color-scheme', value: themeMode === 'light' ? 'light' : 'dark' }],
   });
 
+  // Optional Gemini Nano / AICore mock before scripts execute so Smart Grouping appears on non-shopping lists
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: enableAiCore
+      ? `window.ai = { languageModel: { create: async () => ({ prompt: async () => '' }) } };`
+      : `try { delete window.ai; } catch (_) {}`,
+  });
+
   await cdp.send('Page.navigate', { url: baseUrl });
-  await sleep(700);
+  await sleep(650);
 
   await cdp.evalJs(`(() => {
     localStorage.clear();
@@ -517,17 +687,16 @@ async function seedSessionAndReload(cdp, baseUrl, themeMode = 'dark', width = 39
     localStorage.setItem('@vikunja_auth_token', 'tk_demo_screenshot_session');
     localStorage.setItem('@vikunja_username', 'alex');
     localStorage.setItem('@vikunja_saved_username', 'alex');
-    localStorage.setItem('@vikunja_last_project_id', '1');
+    localStorage.setItem('@vikunja_last_project_id', ${JSON.stringify(String(projectId))});
     localStorage.setItem('@vikunja_theme_mode', ${JSON.stringify(themeMode)});
     localStorage.setItem('@vikunja_reenable_staples', 'true');
   })()`);
 
   await cdp.send('Page.reload', { ignoreCache: true });
-  // Wait for tasks to load & render
   for (let i = 0; i < 30; i++) {
     await sleep(200);
     const ready = await cdp.evalJs(
-      `Boolean(document.querySelector('[data-testid="task-item-101"]'))`
+      `Boolean(document.querySelector('[data-testid^="task-item-"]'))`
     );
     if (ready) break;
   }
@@ -535,12 +704,23 @@ async function seedSessionAndReload(cdp, baseUrl, themeMode = 'dark', width = 39
   await sleep(350);
 }
 
-async function clickTestId(cdp, testId) {
+async function clickSelector(cdp, selector) {
   await cdp.evalJs(`(() => {
-    const el = document.querySelector('[data-testid="${testId}"]');
-    if (!el) throw new Error('Missing testID: ${testId}');
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) throw new Error('Missing selector: ' + ${JSON.stringify(selector)});
     el.click();
   })()`);
+}
+
+async function clickTestId(cdp, testId) {
+  await clickSelector(cdp, `[data-testid="${testId}"]`);
+}
+
+async function selectSortOption(cdp, sortKey) {
+  await clickSelector(cdp, '[aria-label="Sort tasks"]');
+  await sleep(250);
+  await clickTestId(cdp, `sort-option-${sortKey}`);
+  await sleep(350);
 }
 
 async function setInputValue(cdp, testId, value) {
@@ -586,44 +766,94 @@ async function main() {
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
 
-    // 1. Main Task List — Dark Mode
-    await seedSessionAndReload(cdp, baseUrl, 'dark', 390, 844);
+    // 1. Weekly Groceries — Dark Mode + Department / Aisle Smart Sort (1215x2160, 9:16)
+    await seedSessionAndReload(cdp, baseUrl, {
+      themeMode: 'dark',
+      projectId: 1,
+      width: 405,
+      height: 720,
+      dpr: 3,
+      enableAiCore: false,
+    });
+    await selectSortOption(cdp, 'department');
     await saveScreenshot(cdp, '01-tasks-dark.png');
 
-    // 2. Task Detail Modal — HTML Notes + Subtasks (2/3) + Duplicate
-    await clickTestId(cdp, 'task-item-101');
+    // 2. Honey-Do & Home — Light Mode + Subtask Progress + Live Quick-Add Chips (1215x2160, 9:16)
+    await seedSessionAndReload(cdp, baseUrl, {
+      themeMode: 'light',
+      projectId: 2,
+      width: 405,
+      height: 720,
+      dpr: 3,
+      enableAiCore: false,
+    });
+    await setInputValue(
+      cdp,
+      'quick-add-input',
+      'Paint samples #hardware tomorrow'
+    );
+    await sleep(350);
+    await saveScreenshot(cdp, '02-tasks-light.png');
+
+    // 3. Task Detail Modal — Checklist Notes + Subtasks (2/3) on Honey-Do item (Dark Mode)
+    await seedSessionAndReload(cdp, baseUrl, {
+      themeMode: 'dark',
+      projectId: 2,
+      width: 405,
+      height: 720,
+      dpr: 3,
+      enableAiCore: false,
+    });
+    await clickTestId(cdp, 'task-item-201');
     await sleep(450);
     await saveScreenshot(cdp, '03-task-detail-subtasks.png');
     await clickTestId(cdp, 'task-detail-close-btn');
     await sleep(350);
 
-    // 3. Lists Drawer — Nested Hierarchy + Saved Filters + Open Counts
+    // 4. Lists Drawer — Saved Filters, Favorites (Groceries + Honey-Do), Nested Sublists
     await clickTestId(cdp, 'drawer-toggle-btn');
     await sleep(450);
     await saveScreenshot(cdp, '05-lists-drawer.png');
 
-    // 4. Main Task List — Light Mode + Quick-Add NLP Shortcut Entry
-    await seedSessionAndReload(cdp, baseUrl, 'light', 390, 844);
-    await setInputValue(
-      cdp,
-      'quick-add-input',
-      'Audit WireGuard peers #security !high tomorrow at 9am'
-    );
-    await sleep(350);
-    await saveScreenshot(cdp, '02-tasks-light.png');
-
-    // 5. Pure Black OLED Theme + Cross-List Global Search
-    await seedSessionAndReload(cdp, baseUrl, 'oled', 390, 844);
+    // 5. Pure Black OLED Theme + Cross-List Search ("weekend")
+    await seedSessionAndReload(cdp, baseUrl, {
+      themeMode: 'oled',
+      projectId: 2,
+      width: 405,
+      height: 720,
+      dpr: 3,
+      enableAiCore: false,
+    });
     await clickTestId(cdp, 'header-search-btn');
     await sleep(250);
     await clickTestId(cdp, 'search-scope-all-lists');
-    await setInputValue(cdp, 'task-search-input', 'homelab');
+    await setInputValue(cdp, 'task-search-input', 'weekend');
     await sleep(350);
     await saveScreenshot(cdp, '04-global-search-oled.png');
 
-    // 6. Tablet / Foldable Dual-Pane Split-View (Dark Mode)
-    await seedSessionAndReload(cdp, baseUrl, 'dark', 1024, 700);
+    // 6. Tablet Split-Screen — Dark Mode + Smart Grouping on Lake Tahoe Family Trip (2240x1260, 16:9)
+    await seedSessionAndReload(cdp, baseUrl, {
+      themeMode: 'dark',
+      projectId: 4,
+      width: 1120,
+      height: 630,
+      dpr: 2,
+      enableAiCore: true,
+    });
+    await selectSortOption(cdp, 'aiSmart');
     await saveScreenshot(cdp, '06-tablet-split-view.png');
+
+    // 7. Tablet Split-Screen — Light Mode + Weekly Groceries Aisle Sort (2240x1260, 16:9)
+    await seedSessionAndReload(cdp, baseUrl, {
+      themeMode: 'light',
+      projectId: 1,
+      width: 1120,
+      height: 630,
+      dpr: 2,
+      enableAiCore: false,
+    });
+    await selectSortOption(cdp, 'department');
+    await saveScreenshot(cdp, '07-tablet-groceries-light.png');
   } finally {
     cdp?.close();
     proc.kill('SIGKILL');

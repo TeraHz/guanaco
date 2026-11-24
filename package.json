@@ -39,6 +39,7 @@
     "screenshots": "node scripts/generate-screenshots.js",
     "build:bundle": "bash scripts/build-android-bundle.sh",
     "publish:play": "node scripts/publish-play-store.js",
+    "publish:listing": "node scripts/publish-store-listing.js",
     "bump": "node scripts/bump-version.js",
     "deploy": "npm run build:bundle && npm run publish:play"
   },

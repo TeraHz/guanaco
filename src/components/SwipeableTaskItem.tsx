@@ -499,7 +499,16 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
             (task.assignees && task.assignees.length > 0) ||
             (task.labels && task.labels.length > 0)
         );
-        const isLongTitle = (task.title || '').length > 26;
+        const badgeCount =
+          (parentTask && parentTask.title ? 1 : 0) +
+          (subtaskTotal > 0 ? 1 : 0) +
+          (pctDisplay > 0 ? 1 : 0) +
+          (formattedDueDate ? 1 : 0) +
+          (isRepeating ? 1 : 0) +
+          (task.reminders && task.reminders.length > 0 ? 1 : 0) +
+          (task.assignees?.length || 0) +
+          (task.labels?.length || 0);
+        const shouldStackMetadata = (task.title || '').length > 26 || badgeCount >= 4;
 
         const metadataBadges = (
           <>
@@ -727,7 +736,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           </>
         );
 
-        if (hasMetadata && isLongTitle) {
+        if (hasMetadata && shouldStackMetadata) {
           return (
             <View style={styles.contentColumn}>
               <Text
