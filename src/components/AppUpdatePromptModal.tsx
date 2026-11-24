@@ -11,7 +11,7 @@ import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import { useUpdateStore } from '../store/updateStore';
-import { APP_BUILD_NUMBER } from '../constants/version';
+import { APP_VERSION, versionFromCode } from '../constants/version';
 
 export const AppUpdatePromptModal: React.FC = () => {
   const theme = useAppTheme();
@@ -37,8 +37,7 @@ export const AppUpdatePromptModal: React.FC = () => {
     return null;
   }
 
-  const newBuild = updateInfo?.availableVersionCode;
-  const currentBuild = updateInfo?.currentVersionCode || APP_BUILD_NUMBER;
+  const availableVersion = versionFromCode(updateInfo?.availableVersionCode);
 
   const handlePrimaryPress = async () => {
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
@@ -96,12 +95,14 @@ export const AppUpdatePromptModal: React.FC = () => {
     : 'Update Available';
 
   const subtitleText = isDownloaded
-    ? newBuild
-      ? `Build ${newBuild} is ready to install.`
-      : 'Ready to install.'
+    ? availableVersion
+      ? `Version ${availableVersion} is ready to install.`
+      : 'A new version is ready to install.'
     : isDownloading
     ? null
-    : `Build ${newBuild || 'Latest'} is available (installed: ${currentBuild}).`;
+    : availableVersion
+    ? `Version ${availableVersion} is available (current: v${APP_VERSION}).`
+    : `A new version is available (current: v${APP_VERSION}).`;
 
   return (
     <Modal

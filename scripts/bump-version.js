@@ -52,10 +52,16 @@ if (SEMVER_REGEX.test(type)) {
   nextVersion = `${major}.${minor}.${patch}`;
 }
 
-// Read app.json for current versionCode
+// Read app.json for current versionCode and encode Mmmpp (major * 10000 + minor * 100 + patch)
+// so Google Play's availableVersionCode decodes directly back into the semantic version string.
 const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
 const currentVersionCode = Number(appJson.expo?.android?.versionCode || 1);
-const nextVersionCode = currentVersionCode + 1;
+const [nextMajor, nextMinor, nextPatch] = nextVersion.split('-')[0].split('.').map(Number);
+const encodedVersionCode =
+  nextMinor < 100 && nextPatch < 100
+    ? nextMajor * 10000 + nextMinor * 100 + nextPatch
+    : currentVersionCode + 1;
+const nextVersionCode = Math.max(currentVersionCode + 1, encodedVersionCode);
 
 // 1. Update package.json
 pkg.version = nextVersion;
@@ -67,8 +73,16 @@ if (!appJson.expo.android) appJson.expo.android = {};
 appJson.expo.android.versionCode = nextVersionCode;
 fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2) + '\n');
 
-// 3. Update src/constants/version.ts
-const versionTs = `export const APP_VERSION = '${nextVersion}';\nexport const APP_BUILD_NUMBER = ${nextVersionCode};\nexport const APP_NAME = 'Guanaco';\n`;
+// 3. Update src/constants/version.ts (preserving versionFromCode helper)
+const existingVersionTs = fs.existsSync(versionTsPath)
+  ? fs.readFileSync(versionTsPath, 'utf8')
+  : '';
+const helperIdx = existingVersionTs.indexOf('\n/**');
+const helperSuffix =
+  helperIdx !== -1
+    ? existingVersionTs.slice(helperIdx)
+    : `\nexport function versionFromCode(versionCode?: number | null): string | null {\n  if (typeof versionCode !== 'number' || !Number.isInteger(versionCode) || versionCode < 10000) {\n    return null;\n  }\n  const major = Math.floor(versionCode / 10000);\n  const minor = Math.floor((versionCode % 10000) / 100);\n  const patch = versionCode % 100;\n  return \`\${major}.\${minor}.\${patch}\`;\n}\n`;
+const versionTs = `export const APP_VERSION = '${nextVersion}';\nexport const APP_BUILD_NUMBER = ${nextVersionCode};\nexport const APP_NAME = 'Guanaco';${helperSuffix}`;
 fs.writeFileSync(versionTsPath, versionTs);
 
 // 4. Update tracked android/app/build.gradle
@@ -82,4 +96,4 @@ const updatedGradle = gradle
   .replace(/versionName "[^"]+"/, `versionName "${nextVersion}"`);
 fs.writeFileSync(gradlePath, updatedGradle);
 
-console.log(`✅ Bumped version from ${currentVersion} to ${nextVersion} (Build ${nextVersionCode})`);
+console.log(`✅ Bumped version from ${currentVersion} to ${nextVersion} (versionCode ${nextVersionCode})`);

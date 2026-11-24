@@ -215,7 +215,7 @@ async function main() {
     let releaseStatus = 'completed';
     const assignRelease = (status) => {
       const releaseObj = {
-        name: `v${versionName} (${versionCode})`,
+        name: `v${versionName}`,
         versionCodes: [versionCode.toString()],
         status,
       };

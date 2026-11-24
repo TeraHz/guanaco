@@ -1,6 +1,6 @@
 {
   "name": "guanaco",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Fast, private, offline-first mobile and tablet client for self-hosted Vikunja task servers.",
   "homepage": "https://terahz.github.io/guanaco/",
   "repository": {

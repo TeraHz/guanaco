@@ -73,8 +73,11 @@ describe('SettingsModal', () => {
 
     expect(getByText('Settings')).toBeTruthy();
     expect(getByText(/vikunja\.example\.com/)).toBeTruthy();
-    // Version string appears ONCE cleanly in the subtle footer (never repeated 3 times!)
+    // Version string appears ONCE cleanly in the subtle footer without a separate build integer
     expect(getAllByText(new RegExp(APP_VERSION))).toHaveLength(1);
+    expect(getByTestId('settings-version-footer').props.children.join('')).toBe(
+      `Guanaco v${APP_VERSION}`
+    );
     expect(getByText('Task Box Size')).toBeTruthy();
     expect(getByText('Task Text Size')).toBeTruthy();
     expect(queryByText(/Scale box padding/i)).toBeNull();
@@ -100,12 +103,12 @@ describe('SettingsModal', () => {
     const syncBtnStyle = StyleSheet.flatten(getByTestId('settings-reset-sync-btn').props.style);
     expect(checkBtnStyle.backgroundColor).toBe(syncBtnStyle.backgroundColor);
 
-    // Primary CTA ("Update to Build X") uses solid accent blue (never #30D158 green)
+    // Primary CTA ("Update to vX.Y.Z") uses semantic version (never "Build NN") and solid accent blue
     act(() => {
       useUpdateStore.setState({
         updateInfo: {
           isAvailable: true,
-          availableVersionCode: 25,
+          availableVersionCode: 10500,
           isFlexibleAllowed: true,
           isImmediateAllowed: true,
         } as any,
@@ -119,6 +122,8 @@ describe('SettingsModal', () => {
         onOpenLabelManagement={mockOnOpenLabels}
       />
     );
+    expect(getAllByText('v1.5.0')).toHaveLength(1);
+    expect(getAllByText('Update to v1.5.0')).toHaveLength(1);
     const installBtnStyle = StyleSheet.flatten(
       getByTestId('settings-install-update-btn').props.style
     );

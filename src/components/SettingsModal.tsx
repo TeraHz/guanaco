@@ -26,7 +26,7 @@ import {
 } from '../utils/biometrics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as aiCoreModule from '../utils/aiCore';
-import { APP_VERSION, APP_BUILD_NUMBER, APP_NAME } from '../constants/version';
+import { APP_VERSION, APP_NAME, versionFromCode } from '../constants/version';
 import { useUpdateStore } from '../store/updateStore';
 import { isNativeUpdateSupported } from '../services/appUpdateChecker';
 
@@ -1031,30 +1031,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </Text>
 
                 {updateInfo?.isAvailable ? (
-                  <>
-                    <View style={styles.infoRow}>
-                      <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
-                        Available
-                      </Text>
-                      <Text style={[styles.infoValue, { color: theme.colors.text }]}>
-                        Build {updateInfo.availableVersionCode}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      testID="settings-install-update-btn"
-                      style={[styles.primaryActionBtn, { backgroundColor: theme.colors.accent }]}
-                      onPress={() => {
-                        safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-                        startUpdate('flexible');
-                      }}
-                      activeOpacity={0.8}
-                      accessibilityRole="button"
-                    >
-                      <Text style={styles.primaryActionBtnText}>
-                        Update to Build {updateInfo.availableVersionCode}
-                      </Text>
-                    </TouchableOpacity>
-                  </>
+                  (() => {
+                    const nextVer = versionFromCode(updateInfo.availableVersionCode);
+                    return (
+                      <>
+                        <View style={styles.infoRow}>
+                          <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                            Available
+                          </Text>
+                          <Text style={[styles.infoValue, { color: theme.colors.text }]}>
+                            {nextVer ? `v${nextVer}` : 'New version'}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          testID="settings-install-update-btn"
+                          style={[styles.primaryActionBtn, { backgroundColor: theme.colors.accent }]}
+                          onPress={() => {
+                            safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                            startUpdate('flexible');
+                          }}
+                          activeOpacity={0.8}
+                          accessibilityRole="button"
+                        >
+                          <Text style={styles.primaryActionBtnText}>
+                            {nextVer ? `Update to v${nextVer}` : 'Update Now'}
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    );
+                  })()
                 ) : (
                   <TouchableOpacity
                     testID="settings-check-updates-btn"
@@ -1194,7 +1199,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 testID="settings-version-footer"
                 style={[styles.footerVersionText, { color: theme.colors.textSecondary }]}
               >
-                {APP_NAME} v{APP_VERSION} ({APP_BUILD_NUMBER})
+                {APP_NAME} v{APP_VERSION}
               </Text>
             </View>
           </ScrollView>
