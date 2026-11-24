@@ -2,17 +2,25 @@
   "expo": {
     "name": "Guanaco",
     "slug": "guanaco",
-    "version": "1.4.2",
+    "version": "1.5.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.geodar.guanaco"
+      "bundleIdentifier": "com.geodar.guanaco",
+      "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true,
+        "CFBundleLocalizations": [
+          "en",
+          "bg",
+          "es"
+        ]
+      }
     },
     "android": {
       "package": "com.geodar.guanaco",
-      "versionCode": 10402,
+      "versionCode": 10500,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

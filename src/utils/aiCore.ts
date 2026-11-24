@@ -120,21 +120,15 @@ export function getAICacheKey(
 const CANONICAL_CATEGORY_ALIASES: Record<string, string> = {
   produce: '🥦 Produce',
   'fruits & vegetables': '🥦 Produce',
-  'плодове и зеленчуци': '🥦 Produce',
-  зеленчуци: '🥦 Produce',
-  плодове: '🥦 Produce',
   dairy: '🥛 Dairy & Cold',
   'dairy & cold': '🥛 Dairy & Cold',
-  млечни: '🥛 Dairy & Cold',
   meat: '🥩 Meat & Seafood',
   seafood: '🥩 Meat & Seafood',
   'meat & seafood': '🥩 Meat & Seafood',
   bakery: '🍞 Bakery & Pantry',
   pantry: '🍞 Bakery & Pantry',
   'bakery & pantry': '🍞 Bakery & Pantry',
-  пекарна: '🍞 Bakery & Pantry',
   household: '🧼 Household',
-  домакинство: '🧼 Household',
   groceries: '🛒 Groceries',
   'travel & documents': '📄 Travel & Documents',
   'clothes & wearables': '🧳 Clothes & Wearables',
@@ -188,14 +182,14 @@ export function extractCoreSubject(title: string): string {
     cleaned = colonMatch[2];
   }
 
-  // 2. Remove leading quantities & units (English & Bulgarian)
+  // 2. Remove leading quantities & units (English, Bulgarian & Spanish)
   cleaned = cleaned.replace(
-    /^(\d+([.,]\d+)?\s*(кг|г|гр|мл|л|бр|пакет|пакета|кутия|кутии|kg|g|ml|l|lbs?|oz|pcs?|cans?|bottles?|packs?|boxes?)(?:\.|\s+|$)\s*(на\s+|of\s+)?)/iu,
+    /^(\d+([.,]\d+)?\s*(кг|г|гр|мл|л|бр|пакет|пакета|кутия|кутии|kg|g|ml|l|lbs?|oz|pcs?|cans?|bottles?|packs?|boxes?|uds?|paquetes?|cajas?|latas?|botellas?|piezas?)(?:\.|\s+|$)\s*(на\s+|of\s+|de\s+)?)/iu,
     ''
   );
   cleaned = cleaned.replace(/^\d+\s+/, '');
 
-  // 3. Handle prepositional intent clauses: "X for Y", "X за Y", "X with Y"
+  // 3. Handle prepositional intent clauses: "X for Y", "X за Y", "X para Y"
   const prepMatch = cleaned.match(/^(.+?)\s+(for|за|para|pour|с|със|with|con|avec)\s+/iu);
   if (prepMatch && prepMatch[1] && prepMatch[1].trim().length > 1) {
     cleaned = prepMatch[1].trim();
@@ -203,7 +197,7 @@ export function extractCoreSubject(title: string): string {
 
   // 4. Strip common descriptive / preparation adjectives at the start
   const adjRegex =
-    /^(peeled|fresh|frozen|roasted|baked|raw|organic|whole|skim|sliced|chopped|diced|minced|ground|homemade|белен|белени|белено|пресен|пресни|прясно|замразен|замразени|замразено|печен|печени|печено|суров|сурови|сурово|био|пълномаслен|пълномаслено|обезмаслен|обезмаслено|нарязан|нарязани|млян|мляно|мляна|домашен|домашно|домашни)\s+/iu;
+    /^(peeled|fresh|frozen|roasted|baked|raw|organic|whole|skim|sliced|chopped|diced|minced|ground|homemade|белен|белени|белено|пресен|пресни|прясно|замразен|замразени|замразено|печен|печени|печено|суров|сурови|сурово|био|пълномаслен|пълномаслено|обезмаслен|обезмаслено|нарязан|нарязани|млян|мляно|мляна|домашен|домашно|домашни|frescos?|frescas?|congelados?|congeladas?|asados?|asadas?|org[aá]nicos?|org[aá]nicas?|integrales?|integral|desnatados?|desnatadas?|picados?|picadas?|molidos?|molidas?|caseros?|caseras?)\s+/iu;
 
   cleaned = cleaned.replace(adjRegex, '').trim();
 
@@ -279,31 +273,31 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
 
   // 1. Travel / Packing
   const isTravelCtx =
-    /\b(trip|trips|pack|packing|travel|traveling|travelling|vacation|vacations|flight|flights|camp|camping|luggage|itinerary)\b/i.test(ctx) ||
+    /\b(trip|trips|pack|packing|travel|traveling|travelling|vacation|vacations|flight|flights|camp|camping|luggage|itinerary|viajes?|equipaje|maletas?|vacaciones|vuelos?|itinerario)\b/iu.test(ctx) ||
     hasAnyWordStem(ctxTexts, ['пътуван', 'почивк', 'куфар', 'екскурзи', 'ваканци']) ||
     hasAnyWord(ctxTexts, ['път']);
 
   if (isTravelCtx) {
     if (
-      hasAnyWord(texts, ['passport', 'ticket', 'visa', 'doc', 'docs', 'document', 'insurance', 'hotel', 'reservation', 'boarding pass']) ||
+      hasAnyWord(texts, ['passport', 'ticket', 'visa', 'doc', 'docs', 'document', 'insurance', 'hotel', 'reservation', 'boarding pass', 'pasaporte', 'boleto', 'billete', 'documento', 'seguro', 'reserva', 'tarjeta de embarque']) ||
       hasAnyWordStem(texts, ['паспорт', 'билет', 'виза', 'документ', 'резерваци', 'застраховк'])
     ) {
       return '📄 Travel & Documents';
     }
     if (
-      hasAnyWord(texts, ['shirt', 't-shirt', 'pant', 'pants', 'jeans', 'shorts', 'sock', 'shoe', 'boot', 'jacket', 'hat', 'coat', 'underwear', 'clothes', 'clothing', 'dress', 'swimsuit', 'sweater', 'hoodie']) ||
+      hasAnyWord(texts, ['shirt', 't-shirt', 'pant', 'pants', 'jeans', 'shorts', 'sock', 'shoe', 'boot', 'jacket', 'hat', 'coat', 'underwear', 'clothes', 'clothing', 'dress', 'swimsuit', 'sweater', 'hoodie', 'camisa', 'camiseta', 'pantalón', 'pantalon', 'pantalones', 'calcetín', 'calcetines', 'zapato', 'bota', 'chaqueta', 'abrigo', 'ropa', 'vestido', 'bañador', 'suéter']) ||
       hasAnyWordStem(texts, ['дрех', 'тениск', 'риза', 'ризи', 'панталон', 'чорап', 'обувк', 'яке', 'палто', 'бански', 'шапк'])
     ) {
       return '🧳 Clothes & Wearables';
     }
     if (
-      hasAnyWord(texts, ['charger', 'cable', 'phone', 'laptop', 'adapter', 'battery', 'batteries', 'headphone', 'earbuds', 'powerbank', 'power bank', 'camera']) ||
+      hasAnyWord(texts, ['charger', 'cable', 'phone', 'laptop', 'adapter', 'battery', 'batteries', 'headphone', 'earbuds', 'powerbank', 'power bank', 'camera', 'cargador', 'teléfono', 'telefono', 'portátil', 'portatil', 'adaptador', 'batería', 'bateria', 'auriculares', 'cámara', 'camara', 'linterna']) ||
       hasAnyWordStem(texts, ['зарядн', 'кабел', 'телефон', 'лаптоп', 'адаптер', 'батери', 'слушалк'])
     ) {
       return '🔌 Electronics';
     }
     if (
-      hasAnyWord(texts, ['toothbrush', 'hairbrush', 'brush', 'soap', 'shampoo', 'conditioner', 'medicine', 'medication', 'meds', 'pill', 'toothpaste', 'sunscreen', 'towel', 'deodorant', 'razor']) ||
+      hasAnyWord(texts, ['toothbrush', 'hairbrush', 'brush', 'soap', 'shampoo', 'conditioner', 'medicine', 'medication', 'meds', 'pill', 'toothpaste', 'sunscreen', 'towel', 'deodorant', 'razor', 'cepillo', 'jabón', 'jabon', 'champú', 'champu', 'medicamento', 'medicina', 'pastilla', 'protector solar', 'bloqueador', 'toalla', 'desodorante']) ||
       hasAnyWordStem(texts, ['четк', 'сапун', 'шампоан', 'паста за зъби', 'лекарств', 'хапчет', 'кърп', 'дезодорант', 'слънцезащит'])
     ) {
       return '💊 Toiletries & Health';
@@ -314,31 +308,31 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
   // 2. Work / Software / Project Sprint (evaluated BEFORE DIY so "Bug Fix" / "Hotfix" lists stay Engineering;
   // strict word boundaries ensure \bapp\b never matches "Apples" or "Appliances")
   const isWorkDevCtx =
-    /\b(sprint|sprints|dev|devops|developer|development|work|launch|feature|features|qa|tech|engineering|release|code|coding|software|app|apps|backend|frontend|bug|bugs|hotfix|hotfixes)\b/i.test(ctx) ||
+    /\b(sprint|sprints|dev|devops|developer|development|work|launch|feature|features|qa|tech|engineering|release|code|coding|software|app|apps|backend|frontend|bug|bugs|hotfix|hotfixes|trabajo|desarrollo|ingenier[ií]a|lanzamiento|c[oó]digo)\b/iu.test(ctx) ||
     hasAnyWordStem(ctxTexts, ['софтуер', 'разработк']) ||
     hasAnyWord(ctxTexts, ['работа', 'работни']);
 
   if (isWorkDevCtx) {
     if (
-      hasAnyWord(texts, ['api', 'code', 'backend', 'frontend', 'db', 'database', 'bug', 'endpoint', 'auth', 'refactor', 'migration']) ||
+      hasAnyWord(texts, ['api', 'code', 'backend', 'frontend', 'db', 'database', 'bug', 'endpoint', 'auth', 'refactor', 'migration', 'código', 'codigo', 'base de datos', 'migración', 'migracion']) ||
       hasAnyWord(texts, ['код', 'бъг', 'база'])
     ) {
       return '💻 Engineering';
     }
     if (
-      hasAnyWord(texts, ['test', 'testing', 'qa', 'verify', 'verification', 'check', 'audit', 'regression', 'e2e', 'jest']) ||
+      hasAnyWord(texts, ['test', 'testing', 'qa', 'verify', 'verification', 'check', 'audit', 'regression', 'e2e', 'jest', 'prueba', 'auditoría', 'auditoria', 'verificación', 'verificacion']) ||
       hasAnyWordStem(texts, ['тест', 'проверк'])
     ) {
       return '🧪 QA & Testing';
     }
     if (
-      hasAnyWord(texts, ['design', 'figma', 'mockup', 'wireframe', 'asset', 'icon', 'ux', 'ui', 'typography']) ||
+      hasAnyWord(texts, ['design', 'figma', 'mockup', 'wireframe', 'asset', 'icon', 'ux', 'ui', 'typography', 'diseño', 'diseno', 'icono', 'maqueta', 'interfaz']) ||
       hasAnyWordStem(texts, ['дизайн', 'икон', 'макет'])
     ) {
       return '🎨 Design & UX';
     }
     if (
-      hasAnyWord(texts, ['deploy', 'deployment', 'release', 'docker', 'kubernetes', 'server', 'ci', 'cd', 'build', 'pipeline']) ||
+      hasAnyWord(texts, ['deploy', 'deployment', 'release', 'docker', 'kubernetes', 'server', 'ci', 'cd', 'build', 'pipeline', 'despliegue', 'servidor']) ||
       hasAnyWordStem(texts, ['сървър', 'деплой'])
     ) {
       return '🚀 DevOps & Release';
@@ -348,33 +342,33 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
 
   // 3. DIY / Home Renovation / Hardware (no .* regex backtracking)
   const isDiyCtx =
-    /\b(remodel\w*|diy|renovat\w*|plumb\w*|garden\w*|handyman|hardware)\b/i.test(ctx) ||
-    (/\b(home|bedroom|kitchen|bathroom|garage|living\s+room)\b/i.test(ctx) &&
-      /\b(remodel\w*|renovat\w*|fix\w*|repair\w*)\b/i.test(ctx)) ||
-    /\b(fix|repair)\b/i.test(ctx) ||
+    /\b(remodel\w*|diy|renovat\w*|plumb\w*|garden\w*|handyman|hardware|reforma\w*|bricolaje|reparaci[oó]n\w*|jard[ií]n\w*|ferreter[ií]a)\b/iu.test(ctx) ||
+    (/\b(home|bedroom|kitchen|bathroom|garage|living\s+room|casa|hogar|cocina|baño|garaje)\b/iu.test(ctx) &&
+      /\b(remodel\w*|renovat\w*|fix\w*|repair\w*|arregl\w*|repar\w*)\b/iu.test(ctx)) ||
+    /\b(fix|repair|arreglar|reparar)\b/iu.test(ctx) ||
     hasAnyWordStem(ctxTexts, ['ремонт', 'майстор', 'градин']);
 
   if (isDiyCtx) {
     if (
-      hasAnyWord(texts, ['hammer', 'drill', 'screw', 'nail', 'saw', 'tape', 'wrench', 'pliers', 'screwdriver', 'level']) ||
+      hasAnyWord(texts, ['hammer', 'drill', 'screw', 'nail', 'saw', 'tape', 'wrench', 'pliers', 'screwdriver', 'level', 'martillo', 'taladro', 'tornillo', 'clavo', 'sierra', 'llave', 'destornillador', 'nivel']) ||
       hasAnyWordStem(texts, ['чук', 'бормашин', 'винт', 'пирон', 'трион', 'клещи', 'отвертк'])
     ) {
       return '🔨 Tools & Hardware';
     }
     if (
-      hasAnyWord(texts, ['paint', 'primer', 'brush', 'paintbrush', 'roller', 'sandpaper', 'finish', 'stain', 'varnish', 'caulk']) ||
+      hasAnyWord(texts, ['paint', 'primer', 'brush', 'paintbrush', 'roller', 'sandpaper', 'finish', 'stain', 'varnish', 'caulk', 'pintura', 'imprimación', 'brocha', 'rodillo', 'lija', 'barniz', 'silicona']) ||
       hasAnyWordStem(texts, ['боя', 'бои', 'грунд', 'лак', 'четк', 'валяк', 'шкурк'])
     ) {
       return '🎨 Paint & Finishes';
     }
     if (
-      hasAnyWord(texts, ['wire', 'wiring', 'light', 'switch', 'bulb', 'outlet', 'lamp', 'breaker', 'fixture']) ||
+      hasAnyWord(texts, ['wire', 'wiring', 'light', 'switch', 'bulb', 'outlet', 'lamp', 'breaker', 'fixture', 'cableado', 'luz', 'interruptor', 'bombilla', 'enchufe', 'lámpara', 'lampara']) ||
       hasAnyWordStem(texts, ['жица', 'жици', 'лампа', 'лампи', 'крушк', 'контакт', 'осветлени'])
     ) {
       return '💡 Electrical & Lighting';
     }
     if (
-      hasAnyWord(texts, ['pipe', 'faucet', 'drain', 'valve', 'sink', 'plumbing', 'toilet', 'shower', 'gasket']) ||
+      hasAnyWord(texts, ['pipe', 'faucet', 'drain', 'valve', 'sink', 'plumbing', 'toilet', 'shower', 'gasket', 'tubería', 'tuberia', 'grifo', 'desagüe', 'válvula', 'valvula', 'fregadero', 'fontanería', 'fontaneria', 'inodoro', 'ducha']) ||
       hasAnyWordStem(texts, ['тръб', 'кран', 'сифон', 'мивк', 'канал', 'душ', 'тоалетн'])
     ) {
       return '🚰 Plumbing & Fixtures';
@@ -392,12 +386,15 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
       'trash bag', 'garbage bag', 'paper towel', 'toilet paper', 'parchment paper',
       'napkin', 'tissue', 'toothpaste', 'shampoo', 'conditioner', 'bleach', 'aluminum foil', 'tin foil',
       'сапун', 'веро', 'белина', 'фолио',
+      'jabón', 'jabon', 'detergente', 'esponja', 'limpiador', 'bolsa de basura', 'papel higiénico',
+      'papel higienico', 'papel de cocina', 'servilleta', 'pañuelo', 'pasta de dientes', 'dentífrico',
+      'champú', 'champu', 'acondicionador', 'lejía', 'lejia', 'papel de aluminio',
     ]) ||
     hasAnyWordStem(texts, [
       'препарат', 'прах за пране', 'салфетк', 'тоалетна хартия', 'кухненска ролка',
       'паста за зъби', 'шампоан', 'душ гел', 'чували за смет',
     ]) ||
-    (isShoppingCtx && (hasAnyWord(texts, ['paper', 'trash', 'foil', 'хартия']) || hasAnyWordStem(texts, ['чувал'])))
+    (isShoppingCtx && (hasAnyWord(texts, ['paper', 'trash', 'foil', 'хартия', 'papel', 'basura']) || hasAnyWordStem(texts, ['чувал'])))
   ) {
     return '🧼 Household';
   }
@@ -411,6 +408,11 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
       'raspberry', 'blackberry', 'cranberry', 'grape', 'peach', 'pear', 'melon', 'watermelon',
       'broccoli', 'zucchini', 'celery', 'cabbage', 'cauliflower', 'cilantro', 'parsley', 'dill', 'basil',
       'лук', 'чесън', 'зеленчук', 'зеленчуци', 'плод', 'плодове', 'копър', 'магданоз', 'авокадо', 'грозде', 'диня', 'пъпеш', 'зеле',
+      'manzana', 'plátano', 'platano', 'ensalada', 'verdura', 'fruta', 'cebolla', 'ajo', 'tomate',
+      'patata', 'papa', 'pepino', 'pimiento', 'zanahoria', 'espinaca', 'champiñón', 'champiñones',
+      'lechuga', 'aguacate', 'palta', 'naranja', 'limón', 'limon', 'lima', 'cereza', 'fresa', 'frutilla',
+      'arándano', 'arandano', 'frambuesa', 'uva', 'melocotón', 'durazno', 'pera', 'melón', 'sandía', 'sandia',
+      'brócoli', 'brocoli', 'calabacín', 'calabacin', 'apio', 'coliflor', 'perejil', 'eneldo', 'albahaca',
     ]) ||
     hasAnyWordStem(texts, [
       'домат', 'краставиц', 'чушк', 'пипер', 'картоф', 'морков', 'ябълк', 'банан',
@@ -427,6 +429,7 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
       'milk', 'cheese', 'yogurt', 'yoghurt', 'butter', 'cream', 'sour cream', 'cottage cheese',
       'egg', 'tofu', 'kefir', 'mozzarella', 'cheddar', 'parmesan', 'feta',
       'айрян', 'тофу', 'яйце', 'яйца',
+      'leche', 'queso', 'yogur', 'mantequilla', 'nata', 'crema', 'requesón', 'requeson', 'huevo', 'kéfir',
     ]) ||
     hasAnyWordStem(texts, [
       'мляк', 'млек', 'сирен', 'кашкавал', 'краве масл', 'масло', 'сметан', 'йогурт', 'извар',
@@ -441,8 +444,11 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
       'chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'meat', 'turkey', 'lamb', 'shrimp', 'seafood',
       'bacon', 'sausage', 'ham', 'steak', 'patty', 'patties', 'fillet', 'prosciutto', 'salami',
       'пиле', 'месо', 'меса', 'риба', 'риби', 'лаврак', 'ципура', 'бекон', 'суджук', 'яхния',
+      'pollo', 'carne', 'ternera', 'res', 'cerdo', 'pescado', 'salmón', 'atún', 'atun', 'pavo',
+      'cordero', 'gamba', 'camarón', 'camaron', 'marisco', 'tocino', 'panceta', 'salchicha', 'chorizo',
+      'jamón', 'jamon', 'filete', 'bistec', 'lomo',
     ]) ||
-    (isShoppingCtx && hasAnyWord(texts, ['stew'])) ||
+    (isShoppingCtx && hasAnyWord(texts, ['stew', 'estofado'])) ||
     hasAnyWordStem(texts, [
       'свинск', 'телешк', 'говежд', 'пилешк', 'кайм', 'сьомг', 'пъстърв',
       'скарид', 'надениц', 'салам', 'шунк', 'пуешк', 'агнешк', 'кюфте', 'кебапч', 'пържол',
@@ -460,6 +466,10 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
       'chocolate', 'coffee', 'tea', 'oat', 'oatmeal', 'granola', 'jam', 'tortilla', 'cracker',
       'хляб', 'багет', 'ориз', 'олио', 'зехтин', 'оцет', 'сол', 'захар', 'боб', 'леща', 'сос',
       'мед', 'ядки', 'шоколад', 'кафе', 'чай',
+      'pan', 'hogaza', 'cruasán', 'bollería', 'bolleria', 'harina', 'espagueti', 'fideo', 'arroz',
+      'cereales', 'salsa', 'aceite', 'aceite de oliva', 'vinagre', 'sal', 'azúcar', 'azucar', 'especia',
+      'frijol', 'frijoles', 'alubia', 'garbanzo', 'lenteja', 'miel', 'nuez', 'nueces', 'almendra',
+      'cacahuete', 'maní', 'galleta', 'café', 'cafe', 'té', 'avena', 'mermelada',
     ]) ||
     hasAnyWordStem(texts, [
       'кроасан', 'закуск', 'брашн', 'макарон', 'спагет', 'подправк', 'консерв',
@@ -475,24 +485,24 @@ export function inferContextualCategory(title: string, contextTitle?: string): s
 
   // 5. Events / Parties
   const isEventCtx =
-    /\b(party|parties|event|events|dinner|wedding|weddings|birthday|birthdays|celebration)\b/i.test(ctx) ||
+    /\b(party|parties|event|events|dinner|wedding|weddings|birthday|birthdays|celebration|fiestas?|eventos?|cenas?|bodas?|cumpleaños|celebraci[oó]n)\b/iu.test(ctx) ||
     hasAnyWordStem(ctxTexts, ['парти', 'рожден ден', 'сватб', 'празник']);
 
   if (isEventCtx) {
     if (
-      hasAnyWord(texts, ['food', 'drink', 'cake', 'wine', 'beer', 'snack', 'catering', 'champagne', 'dessert']) ||
+      hasAnyWord(texts, ['food', 'drink', 'cake', 'wine', 'beer', 'snack', 'catering', 'champagne', 'dessert', 'comida', 'bebida', 'pastel', 'tarta', 'vino', 'cerveza', 'aperitivo', 'champán', 'postre']) ||
       hasAnyWordStem(texts, ['торта', 'вино', 'бира', 'сок', 'хапван', 'напитк'])
     ) {
       return '🍕 Food & Refreshments';
     }
     if (
-      hasAnyWord(texts, ['invite', 'invitation', 'guest', 'rsvp', 'call', 'email']) ||
+      hasAnyWord(texts, ['invite', 'invitation', 'guest', 'rsvp', 'call', 'email', 'invitación', 'invitacion', 'invitado', 'confirmar']) ||
       hasAnyWordStem(texts, ['покан', 'гости', 'гост'])
     ) {
       return '✉️ Invitations & Guests';
     }
     if (
-      hasAnyWord(texts, ['decor', 'decoration', 'balloon', 'table', 'chair', 'flower', 'light', 'music']) ||
+      hasAnyWord(texts, ['decor', 'decoration', 'balloon', 'table', 'chair', 'flower', 'light', 'music', 'decoración', 'decoracion', 'globo', 'mesa', 'silla', 'flor', 'flores', 'música', 'musica']) ||
       hasAnyWordStem(texts, ['балон', 'цветя', 'украс'])
     ) {
       return '🎉 Decor & Venue';

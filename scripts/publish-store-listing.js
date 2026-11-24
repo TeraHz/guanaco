@@ -15,6 +15,13 @@ const SERVICE_ACCOUNT_PATH = process.env.PLAY_SERVICE_ACCOUNT_PATH
   : path.join(ROOT_DIR, 'play-service-account.json');
 const APP_JSON_PATH = path.join(ROOT_DIR, 'app.json');
 const LISTING_COPY_PATH = path.join(ROOT_DIR, 'assets', 'store_listing', 'listing_copy.md');
+const LOCALIZED_LISTINGS = [
+  { language: 'bg', filePath: path.join(ROOT_DIR, 'assets', 'store_listing', 'listing_copy.bg.md') },
+  {
+    language: 'es-ES',
+    filePath: path.join(ROOT_DIR, 'assets', 'store_listing', 'listing_copy.es-ES.md'),
+  },
+];
 const SCREENSHOTS_DIR = path.join(ROOT_DIR, 'docs', 'assets', 'screenshots');
 const FEATURE_GRAPHIC_PATH = path.join(
   ROOT_DIR,
@@ -113,7 +120,7 @@ async function main() {
   const editId = edit.id;
   console.log(`\n📝 Opened Play edit session: ${editId}`);
 
-  // 1. Update en-US store listing text
+  // 1. Update en-US store listing text + localized text translations (bg, es-ES)
   await publisher.edits.listings.update({
     packageName,
     editId,
@@ -126,6 +133,26 @@ async function main() {
     },
   });
   console.log('   ✓ Updated en-US title, shortDescription, and fullDescription');
+
+  for (const loc of LOCALIZED_LISTINGS) {
+    if (fs.existsSync(loc.filePath)) {
+      const locCopy = parseListingCopy(fs.readFileSync(loc.filePath, 'utf8'));
+      await publisher.edits.listings.update({
+        packageName,
+        editId,
+        language: loc.language,
+        requestBody: {
+          language: loc.language,
+          title: locCopy.title,
+          shortDescription: locCopy.shortDescription,
+          fullDescription: locCopy.fullDescription,
+        },
+      });
+      console.log(
+        `   ✓ Updated ${loc.language} title ("${locCopy.title}") and descriptions`
+      );
+    }
+  }
 
   // 2. Replace Feature Graphic (1024x500)
   await replaceImages(publisher, {

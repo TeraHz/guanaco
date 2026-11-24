@@ -114,6 +114,7 @@ export interface TaskRelatedMap {
 }
 
 export type ThemeMode = 'system' | 'light' | 'dark' | 'oled';
+export type LanguagePreference = 'system' | 'en' | 'bg' | 'es';
 export type WeekStartDay = 0 | 1;
 export type AppBadgeMode = 'off' | 'overdue' | 'due_today';
 

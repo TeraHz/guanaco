@@ -16,6 +16,7 @@ import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles } from '../utils/colors';
 import { Label, Task } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
+import { useTranslation } from '../i18n';
 
 interface QuickLabelModalProps {
   visible: boolean;
@@ -37,6 +38,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
   onOpenManageLabels,
 }) => {
   const theme = useAppTheme();
+  const { t } = useTranslation();
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [allLabels, setAllLabels] = useState<string[]>([]);
   const [newLabelText, setNewLabelText] = useState('');
@@ -173,7 +175,9 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
           {/* Unified Header */}
           <View style={[styles.header, { borderBottomColor: theme.colors.cardBorder }]}>
             <View style={styles.headerTextCol}>
-              <Text style={[styles.title, { color: theme.colors.text }]}>Edit Labels</Text>
+              <Text style={[styles.title, { color: theme.colors.text }]}>
+                {t('labels.editLabelsTitle')}
+              </Text>
               <Text
                 style={[styles.taskTitle, { color: theme.colors.textSecondary }]}
                 numberOfLines={1}
@@ -187,9 +191,9 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
               onPress={handleSave}
               activeOpacity={0.7}
               accessibilityRole="button"
-              accessibilityLabel="Save labels"
+              accessibilityLabel={t('labels.saveLabelsA11y')}
             >
-              <Text style={styles.doneBtnText}>Done</Text>
+              <Text style={styles.doneBtnText}>{t('common.done')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -206,7 +210,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
                     borderColor: theme.colors.borderStrong,
                   },
                 ]}
-                placeholder="New label name..."
+                placeholder={t('labels.newLabelPlaceholder')}
                 placeholderTextColor={theme.colors.placeholder}
                 value={newLabelText}
                 onChangeText={setNewLabelText}
@@ -224,9 +228,9 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
                 disabled={!newLabelText.trim()}
                 activeOpacity={0.7}
                 accessibilityRole="button"
-                accessibilityLabel="Add new label"
+                accessibilityLabel={t('labels.addNewLabelA11y')}
               >
-                <Text style={styles.addBtnText}>Add</Text>
+                <Text style={styles.addBtnText}>{t('common.add')}</Text>
               </TouchableOpacity>
             </View>
 
@@ -238,7 +242,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
             >
               {allLabels.length === 0 ? (
                 <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
-                  No labels yet
+                  {t('labels.noLabelsYet')}
                 </Text>
               ) : (
                 allLabels.map((label) => {
@@ -265,7 +269,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
                       activeOpacity={0.7}
                       accessibilityRole="checkbox"
                       accessibilityState={{ checked: isSelected }}
-                      accessibilityLabel={`Label ${label}`}
+                      accessibilityLabel={t('labels.labelChipA11y', { label })}
                     >
                       <Text
                         style={[
@@ -295,7 +299,7 @@ export const QuickLabelModal: React.FC<QuickLabelModalProps> = ({
                 accessibilityRole="button"
               >
                 <Text style={[styles.manageLabelsBtnText, { color: theme.colors.text }]}>
-                  Manage Labels
+                  {t('labels.manageLabels')}
                 </Text>
               </TouchableOpacity>
             )}

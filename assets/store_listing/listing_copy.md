@@ -30,6 +30,7 @@ Features:
 • Fast Cross-List Search: Search titles, formatted notes, checklists, labels, and assignees across one list or all lists at once.
 • Flexible Schedules & Reminders: Postpone dates in one tap (+1d, +3d, +1w), set custom repeat intervals, and complete or snooze tasks directly from local notifications.
 • Comfortable on Any Screen: Choose Light, Dark, or pure black OLED mode, adjust card size and text size separately, and use split-screen view on tablets and foldables.
+• Multilingual: Full interface, natural-language quick-add, and smart grocery aisle grouping in English, Bulgarian (Български), and Spanish (Español).
 • Built for Self-Hosting: Supports password + 2FA login, API tokens, custom home-server certificates on Android, and fingerprint / Face ID lock.
 
 Requirements:

@@ -21,6 +21,7 @@ import { getUserSuggestions } from '../utils/userSuggestions';
 import { htmlToPlainText, serializeDescriptionForServer } from '../utils/htmlDescription';
 import { Label, Project, Task, User, RepeatMode, TaskReminder, WeekStartDay } from '../types/vikunja';
 import { TaskScheduleSection } from './TaskScheduleSection';
+import { useTranslation } from '../i18n';
 
 interface TaskDetailModalProps {
   visible: boolean;
@@ -95,14 +96,15 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   onDuplicateTask,
 }) => {
   const theme = useAppTheme();
+  const { t } = useTranslation();
 
   const priorityLevels = [
-    { value: 0, label: 'None', color: theme.colors.accent },
-    { value: 1, label: 'Low', color: theme.colors.accent },
-    { value: 2, label: 'Medium', color: theme.colors.warning },
-    { value: 3, label: 'High', color: theme.colors.danger },
-    { value: 4, label: 'Urgent', color: theme.isDark ? '#BF5AF2' : '#7E22CE' },
-    { value: 5, label: 'Critical', color: theme.isDark ? '#FF375F' : '#BE123C' },
+    { value: 0, label: t('taskDetail.prioNone'), color: theme.colors.accent },
+    { value: 1, label: t('taskDetail.prioLow'), color: theme.colors.accent },
+    { value: 2, label: t('taskDetail.prioMedium'), color: theme.colors.warning },
+    { value: 3, label: t('taskDetail.prioHigh'), color: theme.colors.danger },
+    { value: 4, label: t('taskDetail.prioUrgent'), color: theme.isDark ? '#BF5AF2' : '#7E22CE' },
+    { value: 5, label: t('taskDetail.prioCritical'), color: theme.isDark ? '#FF375F' : '#BE123C' },
   ];
 
   const [title, setTitle] = useState('');
@@ -267,20 +269,20 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
   const handleSave = () => {
     if (!title.trim()) {
-      setValidationError('Task title cannot be empty.');
+      setValidationError(t('taskDetail.emptyTitleError'));
       return;
     }
 
     const normStart = normalizeVikunjaDate(startDate);
     const normEnd = normalizeVikunjaDate(endDate);
     if (normStart && normEnd && new Date(normEnd).getTime() < new Date(normStart).getTime()) {
-      setValidationError('End date cannot be earlier than start date.');
+      setValidationError(t('taskDetail.endBeforeStartError'));
       return;
     }
 
     if (!task && projectId <= 0 && availableProjects.length === 0) {
       if (!defaultProjectId || defaultProjectId <= 0) {
-        setValidationError('Please create a list before adding tasks.');
+        setValidationError(t('taskDetail.createListFirstError'));
         return;
       }
     }
@@ -425,11 +427,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
   const handleDelete = () => {
     if (!task) return;
-    const message = `Are you sure you want to delete "${task.title}"?`;
+    const message = t('taskDetail.deleteConfirmMessage', { title: task.title });
 
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-        if (window.confirm(`Delete Task\n\n${message}`)) {
+        if (window.confirm(`${t('taskDetail.deleteConfirmTitle')}\n\n${message}`)) {
           performDeleteTask();
         }
       } else {
@@ -438,10 +440,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       return;
     }
 
-    Alert.alert('Delete Task', message, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('taskDetail.deleteConfirmTitle'), message, [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: performDeleteTask,
       },
@@ -541,14 +543,14 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 style={styles.headerBtn}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel="Cancel"
+                accessibilityLabel={t('common.cancel')}
               >
                 <Text style={[styles.cancelText, { color: theme.colors.textSecondary }]}>
-                  Cancel
+                  {t('common.cancel')}
                 </Text>
               </TouchableOpacity>
               <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
-                {task ? 'Task Details' : 'New Task'}
+                {task ? t('taskDetail.titleEdit') : t('taskDetail.titleNew')}
               </Text>
               <TouchableOpacity
                 testID="task-detail-save-btn"
@@ -556,9 +558,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 style={[styles.headerBtn, styles.saveBtn, { backgroundColor: theme.colors.accent }]}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel="Save task"
+                accessibilityLabel={t('taskDetail.saveA11y')}
               >
-                <Text style={styles.saveBtnText}>Save</Text>
+                <Text style={styles.saveBtnText}>{t('common.save')}</Text>
               </TouchableOpacity>
             </View>
 
@@ -594,7 +596,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
-                  Delete "{task.title}"?
+                  {t('taskDetail.deleteWebConfirm', { title: task.title })}
                 </Text>
                 <View style={styles.confirmBannerActions}>
                   <TouchableOpacity
@@ -604,7 +606,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     accessibilityRole="button"
                   >
                     <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
-                      Cancel
+                      {t('common.cancel')}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -613,7 +615,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     onPress={performDeleteTask}
                     accessibilityRole="button"
                   >
-                    <Text style={styles.confirmDeleteBtnText}>Delete</Text>
+                    <Text style={styles.confirmDeleteBtnText}>{t('common.delete')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -654,7 +656,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     }}
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: done }}
-                    accessibilityLabel={done ? 'Mark task incomplete' : 'Mark task complete'}
+                    accessibilityLabel={
+                      done ? t('taskDetail.markIncompleteA11y') : t('taskDetail.markCompleteA11y')
+                    }
                   >
                     {done && <Text style={styles.checkmark}>✓</Text>}
                   </TouchableOpacity>
@@ -671,7 +675,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       setTitle(txt);
                       if (validationError) setValidationError(null);
                     }}
-                    placeholder="Task title"
+                    placeholder={t('taskDetail.titlePlaceholder')}
                     placeholderTextColor={theme.colors.placeholder}
                     multiline
                     autoFocus={task === null}
@@ -691,7 +695,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   ]}
                 >
                   <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                    LIST
+                    {t('taskDetail.listSection')}
                   </Text>
                   <TouchableOpacity
                     testID="task-project-picker-btn"
@@ -707,7 +711,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       ]}
                     />
                     <Text style={[styles.projectPickerText, { color: theme.colors.text }]}>
-                      {selectedProjectObj?.title || 'Select List'}
+                      {selectedProjectObj?.title || t('taskDetail.selectList')}
                     </Text>
                     <Text style={[styles.projectPickerArrow, { color: theme.colors.textSecondary }]}>
                       {showProjectPicker ? '▲' : '▼'}
@@ -792,7 +796,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  NOTES
+                  {t('taskDetail.notesSection')}
                 </Text>
                 <TextInput
                   testID="task-detail-description-input"
@@ -809,7 +813,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     setDescription(txt);
                     setIsDescriptionDirty(true);
                   }}
-                  placeholder="Add notes..."
+                  placeholder={t('taskDetail.notesPlaceholder')}
                   placeholderTextColor={theme.colors.placeholder}
                   multiline
                   numberOfLines={4}
@@ -839,7 +843,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                           { color: theme.colors.textSecondary, marginBottom: 0 },
                         ]}
                       >
-                        SUBTASKS
+                        {t('taskDetail.subtasksSection')}
                       </Text>
                       {totalSubCount > 0 && (
                         <Text
@@ -912,7 +916,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                                 style={styles.removeBadgeBtn}
                                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                                 accessibilityRole="button"
-                                accessibilityLabel={`Delete subtask ${sub.title}`}
+                                accessibilityLabel={t('taskDetail.deleteSubtaskA11y', {
+                                  title: sub.title,
+                                })}
                               >
                                 <Text
                                   style={[
@@ -966,7 +972,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                             borderColor: theme.colors.borderStrong,
                           },
                         ]}
-                        placeholder="Add subtask..."
+                        placeholder={t('taskDetail.addSubtaskPlaceholder')}
                         placeholderTextColor={theme.colors.placeholder}
                         value={newSubtaskText}
                         onChangeText={setNewSubtaskText}
@@ -980,7 +986,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         onPress={handleAddSubtaskSubmit}
                         accessibilityRole="button"
                       >
-                        <Text style={styles.addBtnText}>Add</Text>
+                        <Text style={styles.addBtnText}>{t('common.add')}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -998,7 +1004,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  PRIORITY
+                  {t('taskDetail.prioritySection')}
                 </Text>
                 <View style={styles.chipRow}>
                   {priorityLevels.map((item) => {
@@ -1056,7 +1062,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       { color: theme.colors.textSecondary, marginBottom: 0 },
                     ]}
                   >
-                    PROGRESS
+                    {t('taskDetail.progressSection')}
                   </Text>
                   <Text
                     testID="task-detail-progress-display"
@@ -1115,7 +1121,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  ASSIGNEES
+                  {t('taskDetail.assigneesSection')}
                 </Text>
                 <View style={styles.chipRow}>
                   {assignees.map((user) => (
@@ -1132,7 +1138,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         style={styles.removeBadgeBtn}
                         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                         accessibilityRole="button"
-                        accessibilityLabel={`Remove assignee ${user.username}`}
+                        accessibilityLabel={t('taskDetail.removeAssigneeA11y', {
+                          username: user.username,
+                        })}
                       >
                         <Text
                           style={[styles.removeBadgeIcon, { color: theme.colors.textSecondary }]}
@@ -1156,7 +1164,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         borderColor: theme.colors.borderStrong,
                       },
                     ]}
-                    placeholder="Add @user..."
+                    placeholder={t('taskDetail.addAssigneePlaceholder')}
                     placeholderTextColor={theme.colors.placeholder}
                     value={newAssigneeText}
                     onChangeText={setNewAssigneeText}
@@ -1170,7 +1178,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     onPress={() => handleAddAssignee()}
                     accessibilityRole="button"
                   >
-                    <Text style={styles.addBtnText}>Add</Text>
+                    <Text style={styles.addBtnText}>{t('common.add')}</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -1209,7 +1217,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  LABELS
+                  {t('taskDetail.labelsSection')}
                 </Text>
                 <View style={styles.chipRow}>
                   {labels.map((lbl) => {
@@ -1234,7 +1242,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                           style={styles.removeBadgeBtn}
                           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                           accessibilityRole="button"
-                          accessibilityLabel={`Remove label ${lbl.title}`}
+                          accessibilityLabel={t('taskDetail.removeLabelA11y', {
+                            label: lbl.title,
+                          })}
                         >
                           <Text style={[styles.removeBadgeIcon, { color: badgeStyle.textColor }]}>
                             ✕
@@ -1257,7 +1267,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         borderColor: theme.colors.borderStrong,
                       },
                     ]}
-                    placeholder="Add #label..."
+                    placeholder={t('taskDetail.addLabelPlaceholder')}
                     placeholderTextColor={theme.colors.placeholder}
                     value={newLabelText}
                     onChangeText={setNewLabelText}
@@ -1270,7 +1280,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     onPress={() => handleAddLabel()}
                     accessibilityRole="button"
                   >
-                    <Text style={styles.addBtnText}>Add</Text>
+                    <Text style={styles.addBtnText}>{t('common.add')}</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -1311,7 +1321,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  COLOR
+                  {t('taskDetail.colorSection')}
                 </Text>
                 <View style={styles.chipRow}>
                   <TouchableOpacity
@@ -1334,7 +1344,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     accessibilityRole="button"
                     accessibilityState={{ selected: !color }}
                   >
-                    <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>None</Text>
+                    <Text
+                      style={{ fontSize: 10, color: theme.colors.textSecondary }}
+                      numberOfLines={1}
+                    >
+                      {t('common.none')}
+                    </Text>
                   </TouchableOpacity>
                   {COLOR_PRESETS.map((preset) => {
                     const isSelected =
@@ -1403,7 +1418,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   accessibilityRole="button"
                 >
                   <Text style={[styles.duplicateBtnText, { color: theme.colors.text }]}>
-                    Duplicate Task
+                    {t('taskDetail.duplicateTask')}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -1428,7 +1443,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   accessibilityRole="button"
                 >
                   <Text style={[styles.deleteBtnText, { color: theme.colors.danger }]}>
-                    Delete Task
+                    {t('taskDetail.deleteTask')}
                   </Text>
                 </TouchableOpacity>
               )}

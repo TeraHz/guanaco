@@ -40,6 +40,7 @@ import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles, hexToRgba, normalizeHexColor } from '../utils/colors';
 import { useAppTheme } from '../utils/theme';
 import { CreateTaskInput, Task, Project } from '../types/vikunja';
+import { localizeCategoryName, TranslationKey, useTranslation } from '../i18n';
 
 interface ProjectTasksScreenProps {
   onOpenDrawer?: () => void;
@@ -47,22 +48,16 @@ interface ProjectTasksScreenProps {
   hideDrawerButton?: boolean;
 }
 
-const SORT_LABELS: Record<SortOption, string> = {
-  default: 'Default Order',
-  manual: 'Custom Order',
-  aiSmart: 'Smart Grouping',
-  department: 'Department / Aisle',
-  name: 'Name (A-Z)',
-  label: 'Label / Store',
-  dueDate: 'Due Date',
-  priority: 'Priority',
+const SORT_LABEL_KEYS: Record<SortOption, TranslationKey> = {
+  default: 'sort.default',
+  manual: 'sort.manual',
+  aiSmart: 'sort.aiSmart',
+  department: 'sort.department',
+  name: 'sort.name',
+  label: 'sort.label',
+  dueDate: 'sort.dueDate',
+  priority: 'sort.priority',
 };
-
-function getSortLabel(option: SortOption): string {
-  return Object.prototype.hasOwnProperty.call(SORT_LABELS, option)
-    ? SORT_LABELS[option]
-    : 'Sort';
-}
 
 interface TrackedTaskRef {
   id: number;
@@ -131,6 +126,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   hideDrawerButton = false,
 }) => {
   const theme = useAppTheme();
+  const { t, locale } = useTranslation();
+  const getSortLabel = (option: SortOption): string =>
+    Object.prototype.hasOwnProperty.call(SORT_LABEL_KEYS, option)
+      ? t(SORT_LABEL_KEYS[option])
+      : t('sort.button');
   const {
     client,
     projects,
@@ -305,10 +305,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   };
 
   const handleRequestDeleteProject = (proj: Project) => {
-    const message = `Delete "${proj.title}" and all tasks inside it?`;
+    const message = t('drawer.deleteListConfirm', { title: proj.title });
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-        if (window.confirm(`Delete List\n\n${message}`)) {
+        if (window.confirm(`${t('drawer.deleteList')}\n\n${message}`)) {
           commitDeleteProject(proj.id);
         }
       } else {
@@ -317,10 +317,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       return;
     }
 
-    Alert.alert('Delete List', message, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('drawer.deleteList'), message, [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: () => commitDeleteProject(proj.id),
       },
@@ -557,7 +557,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const handleMoveTaskPosition = useCallback(
     (taskId: number, direction: 'up' | 'down') => {
       if (isVirtualView) {
-        showTemporaryNotice('Open a specific list to reorder tasks manually.');
+        showTemporaryNotice(t('tasks.openSpecificListToReorder'));
         return;
       }
       safeHaptics.selection();
@@ -722,7 +722,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               onPress={onOpenDrawer}
               activeOpacity={0.7}
               accessibilityRole="button"
-              accessibilityLabel="Open lists menu"
+              accessibilityLabel={t('drawer.openA11y')}
             >
               <Text style={[styles.drawerIcon, { color: theme.colors.text }]}>☰</Text>
             </TouchableOpacity>
@@ -754,7 +754,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               ) : null}
               <Text style={[styles.projectTitle, { color: theme.colors.text }]} numberOfLines={1}>
                 {activeProject?.is_favorite ? '★ ' : ''}
-                {activeProject?.title || 'Tasks'}
+                {activeProject?.title || t('tasks.defaultTitle')}
               </Text>
               {activeProject && activeProject.id > 0 && (
                 <Text style={[styles.projectTitleChevron, { color: theme.colors.textSecondary }]}>
@@ -764,7 +764,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               )}
             </View>
             <Text style={[styles.taskCountSubtitle, { color: theme.colors.textSecondary }]}>
-              {activeCount} open
+              {t('tasks.openCount', { count: activeCount })}
             </Text>
           </TouchableOpacity>
 
@@ -779,7 +779,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               }}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityRole="button"
-              accessibilityLabel={`Options for ${activeProject.title}`}
+              accessibilityLabel={t('drawer.optionsForA11y', { title: activeProject.title })}
             >
               <Text style={[styles.headerOptionsIcon, { color: theme.colors.text }]}>⋯</Text>
             </TouchableOpacity>
@@ -809,7 +809,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel={showSearch ? 'Close search' : 'Search tasks'}
+            accessibilityLabel={showSearch ? t('tasks.searchCloseA11y') : t('tasks.searchOpenA11y')}
           >
             <Text
               style={[
@@ -850,12 +850,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             accessibilityRole="button"
             accessibilityLabel={
               syncStatus === 'synced'
-                ? 'Synced'
+                ? t('tasks.syncSyncedA11y')
                 : syncStatus === 'syncing'
-                ? 'Syncing'
+                ? t('tasks.syncSyncingA11y')
                 : (syncStatus as string) === 'auth_required'
-                ? 'Re-authentication required'
-                : `Offline with ${pendingSyncCount} pending changes. Tap to retry sync`
+                ? t('tasks.syncReauthA11y')
+                : t('tasks.syncOfflineA11y', { count: pendingSyncCount })
             }
           >
             <Text
@@ -872,12 +872,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               ]}
             >
               {syncStatus === 'synced'
-                ? '● Synced'
+                ? t('tasks.syncSynced')
                 : syncStatus === 'syncing'
-                ? '◌ Syncing'
+                ? t('tasks.syncSyncing')
                 : (syncStatus as string) === 'auth_required'
-                ? `● Sign In (${pendingSyncCount})`
-                : `● Offline (${pendingSyncCount})`}
+                ? t('tasks.syncSignIn', { count: pendingSyncCount })
+                : t('tasks.syncOffline', { count: pendingSyncCount })}
             </Text>
           </TouchableOpacity>
         </View>
@@ -908,8 +908,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 style={[styles.searchInput, { color: theme.colors.text }]}
                 placeholder={
                   searchAllLists
-                    ? 'Search all lists, notes, #labels, @users...'
-                    : `Search in ${activeProject?.title || 'list'}...`
+                    ? t('tasks.searchAllPlaceholder')
+                    : activeProject?.title
+                    ? t('tasks.searchInListPlaceholder', { title: activeProject.title })
+                    : t('tasks.searchInListFallback')
                 }
                 placeholderTextColor={theme.colors.placeholder}
                 value={searchQuery}
@@ -923,7 +925,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   onPress={() => setSearchQuery('')}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   accessibilityRole="button"
-                  accessibilityLabel="Clear search text"
+                  accessibilityLabel={t('tasks.searchClearA11y')}
                 >
                   <Text style={[styles.clearLabelText, { color: theme.colors.textSecondary }]}>
                     ✕
@@ -956,7 +958,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     { color: searchAllLists ? '#FFFFFF' : theme.colors.textSecondary },
                   ]}
                 >
-                  All Lists
+                  {t('tasks.scopeAllLists')}
                 </Text>
               </TouchableOpacity>
 
@@ -984,7 +986,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     { color: dueFilter === 'overdue' ? '#FFFFFF' : theme.colors.textSecondary },
                   ]}
                 >
-                  Overdue
+                  {t('tasks.filterOverdue')}
                 </Text>
               </TouchableOpacity>
 
@@ -1012,7 +1014,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     { color: dueFilter === 'today' ? '#FFFFFF' : theme.colors.textSecondary },
                   ]}
                 >
-                  Today
+                  {t('tasks.filterToday')}
                 </Text>
               </TouchableOpacity>
 
@@ -1040,7 +1042,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     { color: dueFilter === 'no_due' ? '#FFFFFF' : theme.colors.textSecondary },
                   ]}
                 >
-                  No Date
+                  {t('tasks.filterNoDate')}
                 </Text>
               </TouchableOpacity>
 
@@ -1068,7 +1070,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     { color: minPriority >= 3 ? '#FFFFFF' : theme.colors.textSecondary },
                   ]}
                 >
-                  High+
+                  {t('tasks.filterHighPlus')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1107,7 +1109,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     },
                   ]}
                 >
-                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                  {f === 'active'
+                    ? t('tasks.tabActive')
+                    : f === 'done'
+                    ? t('tasks.tabDone')
+                    : t('tasks.tabAll')}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -1133,7 +1139,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             }}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel="Sort tasks"
+            accessibilityLabel={t('sort.buttonA11y')}
           >
             <Text
               style={[
@@ -1144,7 +1150,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 },
               ]}
             >
-              ⇅ {sortBy === 'default' ? 'Sort' : getSortLabel(sortBy)}
+              ⇅ {sortBy === 'default' ? t('sort.button') : getSortLabel(sortBy)}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1180,7 +1186,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     onPress={() => setSelectedLabel(null)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     accessibilityRole="button"
-                    accessibilityLabel={`Clear label filter ${selectedLabel}`}
+                    accessibilityLabel={t('tasks.clearLabelFilterA11y', { label: selectedLabel })}
                   >
                     <Text style={[styles.clearLabelText, { color: badgeStyle.textColor }]}>✕</Text>
                   </TouchableOpacity>
@@ -1215,7 +1221,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 setShowEditor(true);
               }}
             >
-              <Text style={styles.warningActionBtnText}>+ Create List</Text>
+              <Text style={styles.warningActionBtnText}>{t('tasks.createListBtn')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -1251,8 +1257,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           >
             <Text style={[styles.reorderBannerText, { color: theme.colors.text }]}>
               {selectedLabel
-                ? `↕ Drag items by ☰ to reorder (#${selectedLabel} filter active)`
-                : '↕ Drag items by ☰ to reorder'}
+                ? t('tasks.dragToReorderFiltered', { label: selectedLabel })
+                : t('tasks.dragToReorder')}
             </Text>
             <View style={styles.reorderBannerActions}>
               {selectedLabel && (
@@ -1268,7 +1274,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   onPress={() => setSelectedLabel(null)}
                 >
                   <Text style={[styles.reorderSecondaryBtnText, { color: theme.colors.text }]}>
-                    Show All
+                    {t('tasks.showAll')}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -1282,7 +1288,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 activeOpacity={0.7}
                 accessibilityRole="button"
               >
-                <Text style={styles.reorderDoneBtnText}>Done</Text>
+                <Text style={styles.reorderDoneBtnText}>{t('common.done')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1358,7 +1364,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                           { color: theme.colors.textSecondary },
                         ]}
                       >
-                        {currentCategory.toUpperCase()}
+                        {localizeCategoryName(currentCategory, locale).toUpperCase()}
                       </Text>
                     </View>
                   ) : null}
@@ -1376,7 +1382,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                       onLongPress={() => {
                         safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
                         if (isVirtualView) {
-                          showTemporaryNotice('Open a specific list to reorder tasks manually.');
+                          showTemporaryNotice(t('tasks.openSpecificListToReorder'));
                           return;
                         }
                         const hasPositions = visibleTasks.some(
@@ -1415,10 +1421,10 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               <View style={styles.emptyView}>
                 <Text style={[styles.emptyTitle, { color: theme.colors.textSecondary }]}>
                   {selectedLabel
-                    ? `No tasks matching #${selectedLabel}`
+                    ? t('tasks.emptyMatchingLabel', { label: selectedLabel })
                     : filter === 'done'
-                    ? 'No completed tasks'
-                    : 'No open tasks'}
+                    ? t('tasks.emptyCompleted')
+                    : t('tasks.emptyOpen')}
                 </Text>
               </View>
             }
@@ -1442,7 +1448,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               style={[styles.undoBannerText, { color: theme.colors.text }]}
               numberOfLines={1}
             >
-              Duplicated "{liveDuplicatedTask.title}"
+              {t('tasks.duplicatedToast', { title: liveDuplicatedTask.title })}
             </Text>
             <View style={styles.undoBannerActions}>
               <TouchableOpacity
@@ -1464,9 +1470,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   });
                 }}
                 accessibilityRole="button"
-                accessibilityLabel="Open duplicated task"
+                accessibilityLabel={t('tasks.openDuplicatedA11y')}
               >
-                <Text style={styles.undoBtnText}>Open</Text>
+                <Text style={styles.undoBtnText}>{t('common.open')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.undoDismissBtn}
@@ -1478,7 +1484,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   setDuplicatedTaskRef(null);
                 }}
                 accessibilityRole="button"
-                accessibilityLabel="Dismiss duplicated notification"
+                accessibilityLabel={t('tasks.dismissDuplicatedA11y')}
               >
                 <Text style={[styles.undoDismissText, { color: theme.colors.textSecondary }]}>
                   ✕
@@ -1505,7 +1511,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               style={[styles.undoBannerText, { color: theme.colors.text }]}
               numberOfLines={1}
             >
-              Deleted "{livePendingDeleteTask.title}"
+              {t('tasks.deletedToast', { title: livePendingDeleteTask.title })}
             </Text>
             <View style={styles.undoBannerActions}>
               <TouchableOpacity
@@ -1513,16 +1519,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 style={[styles.undoBtn, { backgroundColor: theme.colors.accent }]}
                 onPress={handleUndoDelete}
                 accessibilityRole="button"
-                accessibilityLabel="Undo delete task"
+                accessibilityLabel={t('tasks.undoDeleteA11y')}
               >
-                <Text style={styles.undoBtnText}>Undo</Text>
+                <Text style={styles.undoBtnText}>{t('common.undo')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 testID="undo-commit-btn"
                 style={styles.undoDismissBtn}
                 onPress={flushPendingDelete}
                 accessibilityRole="button"
-                accessibilityLabel="Dismiss undo notification"
+                accessibilityLabel={t('tasks.dismissUndoA11y')}
               >
                 <Text style={[styles.undoDismissText, { color: theme.colors.textSecondary }]}>
                   ✕
@@ -1558,7 +1564,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   : defaultTargetProjectId;
               if (!targetPid || targetPid <= 0) {
                 safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
-                setNoProjectWarning('Create a list first before adding tasks.');
+                setNoProjectWarning(t('tasks.createListFirstWarning'));
                 return;
               }
               setNoProjectWarning(null);
@@ -1575,11 +1581,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               });
             }}
             onReenableTask={(taskId) => reenableTask(taskId)}
-            placeholder={`Add a task to ${activeProject.title}...`}
+            placeholder={t('quickAdd.placeholderToProject', { title: activeProject.title })}
             onDetailedAdd={() => {
               safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
               if (defaultTargetProjectId <= 0 && safeProjects.length === 0) {
-                setNoProjectWarning('Create a list first before adding tasks.');
+                setNoProjectWarning(t('tasks.createListFirstWarning'));
                 closeAllModals();
                 setEditorProjectId(null);
                 setShowEditor(true);
@@ -1684,7 +1690,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               : defaultTargetProjectId;
 
           if (!resolvedProjectId || resolvedProjectId <= 0) {
-            setNoProjectWarning('Create a list first before adding tasks.');
+            setNoProjectWarning(t('tasks.createListFirstWarning'));
             return;
           }
 
@@ -1757,12 +1763,14 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             ]}
           >
             <View style={styles.sortModalHeader}>
-              <Text style={[styles.sortModalTitle, { color: theme.colors.text }]}>Sort Tasks</Text>
+              <Text style={[styles.sortModalTitle, { color: theme.colors.text }]}>
+                {t('sort.title')}
+              </Text>
               <TouchableOpacity
                 onPress={() => setShowSortModal(false)}
                 style={styles.sortCloseBtn}
                 accessibilityRole="button"
-                accessibilityLabel="Close sort menu"
+                accessibilityLabel={t('sort.closeA11y')}
               >
                 <Text style={[styles.sortCloseText, { color: theme.colors.textSecondary }]}>✕</Text>
               </TouchableOpacity>
@@ -1864,7 +1872,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     { color: theme.colors.accent, fontWeight: '700' },
                   ]}
                 >
-                  ↕ Reorder Tasks Manually
+                  {t('sort.reorderManually')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -1933,7 +1941,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   {confirmingProjectDelete ? (
                     <View style={styles.inlineConfirmContainer}>
                       <Text style={[styles.inlineConfirmText, { color: theme.colors.text }]}>
-                        Delete "{actionSheetProject.title}" and all tasks inside?
+                        {t('drawer.deleteListInlineConfirm', { title: actionSheetProject.title })}
                       </Text>
                       <View style={styles.inlineConfirmActions}>
                         <TouchableOpacity
@@ -1950,7 +1958,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                           accessibilityRole="button"
                         >
                           <Text style={[styles.inlineConfirmBtnText, { color: theme.colors.text }]}>
-                            Cancel
+                            {t('common.cancel')}
                           </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
@@ -1963,7 +1971,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                           accessibilityRole="button"
                         >
                           <Text style={[styles.inlineConfirmBtnText, { color: '#FFFFFF' }]}>
-                            Delete
+                            {t('common.delete')}
                           </Text>
                         </TouchableOpacity>
                       </View>
@@ -1982,7 +1990,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          Edit List
+                          {t('drawer.editList')}
                         </Text>
                       </TouchableOpacity>
 
@@ -1997,7 +2005,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          Share List
+                          {t('drawer.shareList')}
                         </Text>
                       </TouchableOpacity>
 
@@ -2011,7 +2019,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {actionSheetProject.is_favorite ? 'Remove Favorite' : 'Add to Favorites'}
+                          {actionSheetProject.is_favorite
+                            ? t('drawer.removeFavorite')
+                            : t('drawer.addFavorite')}
                         </Text>
                       </TouchableOpacity>
 
@@ -2028,7 +2038,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {actionSheetProject.is_archived ? 'Unarchive List' : 'Archive List'}
+                          {actionSheetProject.is_archived
+                            ? t('drawer.unarchiveList')
+                            : t('drawer.archiveList')}
                         </Text>
                       </TouchableOpacity>
 
@@ -2039,7 +2051,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.danger }]}>
-                          Delete List
+                          {t('drawer.deleteList')}
                         </Text>
                       </TouchableOpacity>
 
@@ -2049,7 +2061,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
-                          Cancel
+                          {t('common.cancel')}
                         </Text>
                       </TouchableOpacity>
                     </>

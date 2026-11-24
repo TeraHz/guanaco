@@ -29,6 +29,8 @@ const args = process.argv.slice(2);
 let track = 'internal';
 let aabPath = DEFAULT_AAB_PATH;
 let releaseNotes = null;
+let releaseNotesBg = null;
+let releaseNotesEs = null;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -53,6 +55,20 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     releaseNotes = val;
+  } else if (arg === '--notes-bg') {
+    const val = args[++i];
+    if (val === undefined) {
+      console.error('❌ Missing text after --notes-bg');
+      process.exit(1);
+    }
+    releaseNotesBg = val;
+  } else if (arg === '--notes-es') {
+    const val = args[++i];
+    if (val === undefined) {
+      console.error('❌ Missing text after --notes-es');
+      process.exit(1);
+    }
+    releaseNotesEs = val;
   } else {
     console.error(`❌ Unknown option: ${arg}`);
     process.exit(1);
@@ -219,13 +235,18 @@ async function main() {
         versionCodes: [versionCode.toString()],
         status,
       };
+      const localizedNotes = [];
       if (releaseNotes) {
-        releaseObj.releaseNotes = [
-          {
-            language: 'en-US',
-            text: releaseNotes,
-          },
-        ];
+        localizedNotes.push({ language: 'en-US', text: releaseNotes });
+      }
+      if (releaseNotesBg) {
+        localizedNotes.push({ language: 'bg', text: releaseNotesBg });
+      }
+      if (releaseNotesEs) {
+        localizedNotes.push({ language: 'es-ES', text: releaseNotesEs });
+      }
+      if (localizedNotes.length > 0) {
+        releaseObj.releaseNotes = localizedNotes;
       }
       return publisher.edits.tracks.update({
         editId,

@@ -21,6 +21,7 @@ import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import { normalizeHexColor } from '../utils/colors';
 import { wouldCreateProjectCycle } from '../utils/projectTree';
+import { useTranslation } from '../i18n';
 
 const PALETTE = [
   '#0A84FF', // Blue
@@ -53,6 +54,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   onDeleted,
 }) => {
   const theme = useAppTheme();
+  const { t } = useTranslation();
   const {
     createProject,
     updateProject,
@@ -113,12 +115,12 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   }, [safeAllProjects, isEditMode, project]);
 
   const parentProjectName =
-    safeAllProjects.find((p) => p.id === parentProjectId)?.title || 'None';
+    safeAllProjects.find((p) => p.id === parentProjectId)?.title || t('common.none');
 
   const handleSave = async () => {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
-      setErrorMessage('List title cannot be empty.');
+      setErrorMessage(t('listEditor.emptyTitleError'));
       return;
     }
 
@@ -151,7 +153,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       onClose();
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err?.message || 'Failed to save list.');
+      setErrorMessage(err?.message || t('listEditor.saveError'));
     } finally {
       setIsLoading(false);
     }
@@ -168,7 +170,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       onClose();
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err?.message || 'Failed to update archive status.');
+      setErrorMessage(err?.message || t('listEditor.archiveError'));
     } finally {
       setIsLoading(false);
     }
@@ -184,7 +186,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       onClose();
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err?.message || 'Failed to duplicate list.');
+      setErrorMessage(err?.message || t('listEditor.duplicateError'));
     } finally {
       setIsLoading(false);
     }
@@ -202,7 +204,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       onClose();
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err?.message || 'Failed to delete list.');
+      setErrorMessage(err?.message || t('listEditor.deleteError'));
     } finally {
       setIsLoading(false);
     }
@@ -210,11 +212,11 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
   const handleDelete = () => {
     if (!project) return;
-    const message = `Are you sure you want to delete "${project.title}"? All tasks inside will be deleted.`;
+    const message = t('listEditor.deleteConfirmMessage', { title: project.title });
 
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-        if (window.confirm(`Delete List\n\n${message}`)) {
+        if (window.confirm(`${t('drawer.deleteList')}\n\n${message}`)) {
           performDeleteProject();
         }
       } else {
@@ -223,10 +225,10 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       return;
     }
 
-    Alert.alert('Delete List', message, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('drawer.deleteList'), message, [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: performDeleteProject,
       },
@@ -272,7 +274,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                 ]}
               >
                 <Text style={[styles.heading, { color: theme.colors.text }]}>
-                  {isEditMode ? 'Edit List' : 'New List'}
+                  {isEditMode ? t('drawer.editList') : t('drawer.newList')}
                 </Text>
                 <TouchableOpacity
                   testID="project-modal-close-btn"
@@ -280,7 +282,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   style={styles.closeBtn}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   accessibilityRole="button"
-                  accessibilityLabel="Close list editor"
+                  accessibilityLabel={t('listEditor.closeA11y')}
                 >
                   <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
                 </TouchableOpacity>
@@ -319,7 +321,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   ]}
                 >
                   <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
-                    Delete "{project.title}" and all its tasks?
+                    {t('listEditor.deleteWebConfirm', { title: project.title })}
                   </Text>
                   <View style={styles.confirmBannerActions}>
                     <TouchableOpacity
@@ -329,7 +331,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       accessibilityRole="button"
                     >
                       <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
-                        Cancel
+                        {t('common.cancel')}
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -338,7 +340,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       onPress={performDeleteProject}
                       accessibilityRole="button"
                     >
-                      <Text style={styles.confirmDeleteBtnText}>Delete</Text>
+                      <Text style={styles.confirmDeleteBtnText}>{t('common.delete')}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -350,7 +352,9 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                 keyboardShouldPersistTaps="handled"
               >
                 {/* Name Input */}
-                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>NAME</Text>
+                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>
+                  {t('listEditor.nameLabel')}
+                </Text>
                 <TextInput
                   testID="project-modal-title-input"
                   style={[
@@ -361,7 +365,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       borderColor: theme.colors.borderStrong,
                     },
                   ]}
-                  placeholder="List name"
+                  placeholder={t('listEditor.namePlaceholder')}
                   placeholderTextColor={theme.colors.placeholder}
                   value={title}
                   onChangeText={setTitle}
@@ -370,7 +374,9 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                 />
 
                 {/* Description Input */}
-                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>DESCRIPTION</Text>
+                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>
+                  {t('listEditor.descriptionLabel')}
+                </Text>
                 <TextInput
                   testID="project-modal-desc-input"
                   style={[
@@ -382,7 +388,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       borderColor: theme.colors.borderStrong,
                     },
                   ]}
-                  placeholder="Optional notes"
+                  placeholder={t('listEditor.descriptionPlaceholder')}
                   placeholderTextColor={theme.colors.placeholder}
                   value={description}
                   onChangeText={setDescription}
@@ -391,7 +397,9 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                 />
 
                 {/* Color Swatches */}
-                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>COLOR</Text>
+                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>
+                  {t('listEditor.colorLabel')}
+                </Text>
                 <View style={styles.paletteRow}>
                   {PALETTE.map((color) => {
                     const isSelected =
@@ -416,7 +424,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                         }}
                         accessibilityRole="button"
                         accessibilityState={{ selected: isSelected }}
-                        accessibilityLabel={`Select color ${color}`}
+                        accessibilityLabel={t('listEditor.selectColorA11y', { color })}
                       >
                         {isSelected && (
                           <Text
@@ -434,7 +442,9 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                 </View>
 
                 {/* Parent Project Picker */}
-                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>PARENT LIST</Text>
+                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>
+                  {t('listEditor.parentListLabel')}
+                </Text>
                 <TouchableOpacity
                   testID="project-modal-parent-selector"
                   style={[
@@ -479,7 +489,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                           !parentProjectId && styles.dropdownOptionSelected,
                         ]}
                       >
-                        None
+                        {t('common.none')}
                       </Text>
                     </TouchableOpacity>
                     {validParentProjects.map((p) => {
@@ -521,7 +531,9 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
                 {/* Favorite Toggle */}
                 <View style={styles.switchRow}>
-                  <Text style={[styles.switchLabel, { color: theme.colors.text }]}>Favorite List</Text>
+                  <Text style={[styles.switchLabel, { color: theme.colors.text }]}>
+                    {t('listEditor.favoriteList')}
+                  </Text>
                   <Switch
                     testID="project-modal-favorite-switch"
                     value={isFavorite}
@@ -545,7 +557,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       accessibilityRole="button"
                     >
                       <Text style={[styles.secondaryBtnText, { color: theme.colors.text }]}>
-                        Duplicate List
+                        {t('listEditor.duplicateList')}
                       </Text>
                     </TouchableOpacity>
 
@@ -557,7 +569,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       accessibilityRole="button"
                     >
                       <Text style={[styles.secondaryBtnText, { color: theme.colors.text }]}>
-                        {project?.is_archived ? 'Unarchive List' : 'Archive List'}
+                        {project?.is_archived ? t('drawer.unarchiveList') : t('drawer.archiveList')}
                       </Text>
                     </TouchableOpacity>
 
@@ -579,7 +591,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       accessibilityRole="button"
                     >
                       <Text style={[styles.destructiveBtnText, { color: theme.colors.danger }]}>
-                        Delete List
+                        {t('drawer.deleteList')}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -604,7 +616,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                     <ActivityIndicator color="#FFFFFF" size="small" />
                   ) : (
                     <Text style={styles.saveBtnText}>
-                      {isEditMode ? 'Save Changes' : 'Create List'}
+                      {isEditMode ? t('listEditor.saveChanges') : t('listEditor.createList')}
                     </Text>
                   )}
                 </TouchableOpacity>

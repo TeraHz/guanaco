@@ -15,6 +15,7 @@ const SHOPPING_PATTERNS: RegExp[] = [
   /\btarget\b/i,
   /\bstore\b/i,
   /\bfood(?:s)?\b/i,
+  /\b(?:supermercado|compras?|mercado|despensa|mercadona|carrefour|alcampo|eroski|tienda|comida|alimentaci[oó]n)\b/iu,
   /(?:^|[^\p{L}])(пазар|покупк|магазин|хран|супермаркет)/iu,
 ];
 
@@ -48,6 +49,14 @@ const IGNORED_COLON_PREFIXES = new Set([
   'info',
   'бележка',
   'забележка',
+  'nota',
+  'notas',
+  'aviso',
+  'recordatorio',
+  'paso',
+  'parte',
+  'capítulo',
+  'capitulo',
 ]);
 
 /**

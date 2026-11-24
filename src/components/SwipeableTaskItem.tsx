@@ -19,6 +19,7 @@ import {
 import { useAppTheme, ThemeTokens } from '../utils/theme';
 import { useTaskStore } from '../store/taskStore';
 import { Label, Task } from '../types/vikunja';
+import { useTranslation } from '../i18n';
 
 interface SwipeableTaskItemProps {
   task: Task;
@@ -90,6 +91,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
   textScale: textScaleProp,
 }) => {
   const theme = useAppTheme();
+  const { t } = useTranslation();
   const storeBoxScale = useTaskStore((state) => state.taskItemScale);
   const storeTextScale = useTaskStore((state) => state.taskItemTextScale);
   const storeLarge = useTaskStore((state) => state.largeTaskItems);
@@ -99,10 +101,10 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
     scaleProp !== undefined
       ? scaleProp
       : isLargeProp !== undefined
-      ? isLargeProp
-        ? 150
-        : 100
-      : storeBoxScale ?? (storeLarge ? 150 : 100);
+        ? isLargeProp
+          ? 150
+          : 100
+        : storeBoxScale ?? (storeLarge ? 150 : 100);
   const boxScale = (boxScalePercent || 100) / 100;
   const isLarge = boxScale > 1.0;
 
@@ -110,10 +112,10 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
     textScaleProp !== undefined
       ? textScaleProp
       : isLargeProp !== undefined
-      ? isLargeProp
-        ? 150
-        : 100
-      : storeTextScale ?? 100;
+        ? isLargeProp
+          ? 150
+          : 100
+        : storeTextScale ?? 100;
   const textScale = (textScalePercent || 100) / 100;
 
   const dynamicStyles = React.useMemo(() => {
@@ -316,7 +318,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           onPress={handleMove}
           activeOpacity={0.8}
           accessibilityRole="button"
-          accessibilityLabel={`Move ${task.title} to another list`}
+          accessibilityLabel={t('tasks.cardMoveA11y', { title: task.title })}
         >
           <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
             <Text
@@ -326,7 +328,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                 dynamicStyles?.swipeActionText,
               ]}
             >
-              Move
+              {t('tasks.moveSwipe')}
             </Text>
           </Animated.View>
         </TouchableOpacity>
@@ -342,7 +344,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           onPress={handleDelete}
           activeOpacity={0.8}
           accessibilityRole="button"
-          accessibilityLabel={`Delete ${task.title}`}
+          accessibilityLabel={t('tasks.cardDeleteA11y', { title: task.title })}
         >
           <Animated.View style={[styles.swipeInnerContent, { transform: [{ scale: actionScale }] }]}>
             <Text
@@ -352,7 +354,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                 dynamicStyles?.swipeActionText,
               ]}
             >
-              Delete
+              {t('common.delete')}
             </Text>
           </Animated.View>
         </TouchableOpacity>
@@ -388,7 +390,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
               dynamicStyles?.swipeActionText,
             ]}
           >
-            {task.done ? 'Undo' : 'Done'}
+            {task.done ? t('common.undo') : t('common.done')}
           </Text>
         </Animated.View>
       </View>
@@ -409,14 +411,14 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
             ? theme.isOled
               ? '#050507'
               : theme.isDark
-              ? '#161618'
-              : '#FFFFFF'
+                ? '#161618'
+                : '#FFFFFF'
             : theme.colors.cardBackground,
           borderColor: isDragging
             ? theme.colors.accent
             : task.done
-            ? theme.colors.border
-            : theme.colors.cardBorder,
+              ? theme.colors.border
+              : theme.colors.cardBorder,
           borderWidth: isDragging ? 1.5 : 1,
         },
         isDragging && styles.cardDragging,
@@ -460,8 +462,8 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
             backgroundColor: task.done
               ? theme.colors.success
               : theme.isDark
-              ? 'rgba(255, 255, 255, 0.03)'
-              : 'transparent',
+                ? 'rgba(255, 255, 255, 0.03)'
+                : 'transparent',
             borderColor: task.done ? theme.colors.success : theme.colors.checkboxBorder,
           },
         ]}
@@ -470,7 +472,9 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         accessibilityRole="checkbox"
         accessibilityState={{ checked: Boolean(task.done) }}
         accessibilityLabel={
-          task.done ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`
+          task.done
+            ? t('tasks.cardMarkIncompleteA11y', { title: task.title })
+            : t('tasks.cardMarkCompleteA11y', { title: task.title })
         }
       >
         {task.done && (
@@ -491,13 +495,13 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         const parentTask = task.related_tasks?.parenttask?.[0] || null;
         const hasMetadata = Boolean(
           pctDisplay > 0 ||
-            subtaskTotal > 0 ||
-            parentTask ||
-            formattedDueDate ||
-            isRepeating ||
-            (task.reminders && task.reminders.length > 0) ||
-            (task.assignees && task.assignees.length > 0) ||
-            (task.labels && task.labels.length > 0)
+          subtaskTotal > 0 ||
+          parentTask ||
+          formattedDueDate ||
+          isRepeating ||
+          (task.reminders && task.reminders.length > 0) ||
+          (task.assignees && task.assignees.length > 0) ||
+          (task.labels && task.labels.length > 0)
         );
         const badgeCount =
           (parentTask && parentTask.title ? 1 : 0) +
@@ -718,7 +722,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                     onPress={() => onSelectLabel && onSelectLabel(label.title)}
                     activeOpacity={0.7}
                     accessibilityRole="button"
-                    accessibilityLabel={`Filter by label ${label.title}`}
+                    accessibilityLabel={t('tasks.cardFilterLabelA11y', { label: label.title })}
                   >
                     <Text
                       style={[
@@ -832,7 +836,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
               activeOpacity={0.6}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               accessibilityRole="button"
-              accessibilityLabel={`Drag to reorder ${task.title}`}
+              accessibilityLabel={t('tasks.cardDragA11y', { title: task.title })}
             >
               <Text
                 style={[
@@ -869,7 +873,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                 activeOpacity={0.6}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel={`Move ${task.title} up`}
+                accessibilityLabel={t('tasks.cardMoveUpA11y', { title: task.title })}
               >
                 <Text
                   style={[
@@ -905,7 +909,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                 activeOpacity={0.6}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel={`Move ${task.title} down`}
+                accessibilityLabel={t('tasks.cardMoveDownA11y', { title: task.title })}
               >
                 <Text
                   style={[
@@ -940,7 +944,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel={`Edit labels for ${task.title}`}
+            accessibilityLabel={t('tasks.cardEditLabelsA11y', { title: task.title })}
           >
             <Text
               style={[
@@ -968,7 +972,9 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           accessible={isWeb}
           importantForAccessibility={isWeb ? 'yes' : 'no'}
           accessibilityRole={isWeb ? 'button' : undefined}
-          accessibilityLabel={isWeb ? `Move ${task.title}` : undefined}
+          accessibilityLabel={
+            isWeb ? t('tasks.cardWebMoveA11y', { title: task.title }) : undefined
+          }
           style={
             isWeb
               ? [styles.webActionBtn, { backgroundColor: theme.colors.surfaceSecondary }]
@@ -978,7 +984,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         >
           {isWeb ? (
             <Text style={[styles.webActionText, { color: theme.colors.textSecondary }]}>
-              Move
+              {t('tasks.moveSwipe')}
             </Text>
           ) : null}
         </TouchableOpacity>
@@ -987,13 +993,15 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           accessible={isWeb}
           importantForAccessibility={isWeb ? 'yes' : 'no'}
           accessibilityRole={isWeb ? 'button' : undefined}
-          accessibilityLabel={isWeb ? `Delete ${task.title}` : undefined}
+          accessibilityLabel={
+            isWeb ? t('tasks.cardDeleteA11y', { title: task.title }) : undefined
+          }
           style={
             isWeb
               ? [
-                  styles.webActionBtn,
-                  { backgroundColor: hexToRgba(theme.colors.danger, 0.15) },
-                ]
+                styles.webActionBtn,
+                { backgroundColor: hexToRgba(theme.colors.danger, 0.15) },
+              ]
               : styles.hiddenAction
           }
           onPress={handleDelete}

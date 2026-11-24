@@ -1,4 +1,5 @@
 import { RepeatMode } from '../types/vikunja';
+import { t, TranslationKey } from '../i18n';
 
 export type TimeUnit = 'seconds' | 'minutes' | 'hours' | 'days' | 'weeks' | 'months' | 'years';
 
@@ -81,6 +82,26 @@ export const REPEAT_PRESETS = [
   { label: 'Custom...', seconds: -1, repeatMode: RepeatMode.FromDueDate },
 ];
 
+const SINGULAR_UNIT_KEYS: Record<TimeUnit, TranslationKey> = {
+  seconds: 'schedule.everyOneSecond',
+  minutes: 'schedule.everyOneMinute',
+  hours: 'schedule.everyOneHour',
+  days: 'schedule.everyOneDay',
+  weeks: 'schedule.everyOneWeek',
+  months: 'schedule.everyOneMonth',
+  years: 'schedule.everyOneYear',
+};
+
+const PLURAL_UNIT_KEYS: Record<TimeUnit, TranslationKey> = {
+  seconds: 'schedule.everyNSeconds',
+  minutes: 'schedule.everyNMinutes',
+  hours: 'schedule.everyNHours',
+  days: 'schedule.everyNDays',
+  weeks: 'schedule.everyNWeeks',
+  months: 'schedule.everyNMonths',
+  years: 'schedule.everyNYears',
+};
+
 export function formatRepeatDescription(
   repeatAfter?: number | null,
   repeatMode: RepeatMode = RepeatMode.FromDueDate
@@ -90,37 +111,36 @@ export function formatRepeatDescription(
     if (repeatAfter && Number.isFinite(repeatAfter) && repeatAfter > 0) {
       const whole = Math.round(repeatAfter);
       if (whole > UNIT_SECONDS.months && whole % UNIT_SECONDS.months === 0) {
-        return `Every ${Math.floor(whole / UNIT_SECONDS.months)} months`;
+        return t('schedule.everyNMonths', { count: Math.floor(whole / UNIT_SECONDS.months) });
       }
     }
-    return 'Monthly';
+    return t('schedule.monthly');
   }
 
   if (!repeatAfter || !Number.isFinite(repeatAfter) || repeatAfter <= 0) {
-    return 'Never';
+    return t('schedule.never');
   }
 
   let base = '';
   if (repeatAfter === UNIT_SECONDS.days) {
-    base = 'Daily';
+    base = t('schedule.daily');
   } else if (repeatAfter === UNIT_SECONDS.weeks) {
-    base = 'Weekly';
+    base = t('schedule.weekly');
   } else {
     const parsed = secondsToInterval(repeatAfter, repeatMode);
     if (parsed) {
       if (parsed.amount === 1) {
-        const singularUnit = parsed.unit.replace(/s$/, '');
-        base = `Every ${singularUnit}`;
+        base = t(SINGULAR_UNIT_KEYS[parsed.unit]);
       } else {
-        base = `Every ${parsed.amount} ${parsed.unit}`;
+        base = t(PLURAL_UNIT_KEYS[parsed.unit], { count: parsed.amount });
       }
     } else {
-      base = `Every ${Math.round(repeatAfter)} seconds`;
+      base = t('schedule.everyNSeconds', { count: Math.round(repeatAfter) });
     }
   }
 
   if (repeatMode === RepeatMode.FromCompletion) {
-    return `${base} (from completion)`;
+    return `${base} ${t('schedule.fromCompletionSuffix')}`;
   }
 
   return base;

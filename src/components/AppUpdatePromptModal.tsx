@@ -12,9 +12,11 @@ import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import { useUpdateStore } from '../store/updateStore';
 import { APP_VERSION, versionFromCode } from '../constants/version';
+import { useTranslation } from '../i18n';
 
 export const AppUpdatePromptModal: React.FC = () => {
   const theme = useAppTheme();
+  const { t } = useTranslation();
   const {
     updateInfo,
     installProgress,
@@ -89,20 +91,20 @@ export const AppUpdatePromptModal: React.FC = () => {
   }
 
   const titleText = isDownloaded
-    ? 'Restart to Update'
+    ? t('updates.restartToUpdate')
     : isDownloading
-    ? 'Downloading Update'
-    : 'Update Available';
+    ? t('updates.downloadingUpdate')
+    : t('updates.updateAvailable');
 
   const subtitleText = isDownloaded
     ? availableVersion
-      ? `Version ${availableVersion} is ready to install.`
-      : 'A new version is ready to install.'
+      ? t('updates.versionReady', { version: availableVersion })
+      : t('updates.newVersionReady')
     : isDownloading
     ? null
     : availableVersion
-    ? `Version ${availableVersion} is available (current: v${APP_VERSION}).`
-    : `A new version is available (current: v${APP_VERSION}).`;
+    ? t('updates.versionAvailable', { version: availableVersion, current: APP_VERSION })
+    : t('updates.newVersionAvailable', { current: APP_VERSION });
 
   return (
     <Modal
@@ -195,7 +197,11 @@ export const AppUpdatePromptModal: React.FC = () => {
                 { color: isDownloading ? theme.colors.text : '#FFFFFF' },
               ]}
             >
-              {isDownloaded ? 'Restart Now' : isDownloading ? 'Hide' : 'Update'}
+              {isDownloaded
+                ? t('updates.restartNow')
+                : isDownloading
+                ? t('updates.hide')
+                : t('updates.update')}
             </Text>
           </TouchableOpacity>
 
@@ -215,7 +221,7 @@ export const AppUpdatePromptModal: React.FC = () => {
                 activeOpacity={0.75}
               >
                 <Text style={[styles.secondaryBtnText, { color: theme.colors.text }]}>
-                  Later
+                  {t('updates.later')}
                 </Text>
               </TouchableOpacity>
 
@@ -230,7 +236,7 @@ export const AppUpdatePromptModal: React.FC = () => {
                   <Text
                     style={[styles.storeBtnText, { color: theme.colors.textSecondary }]}
                   >
-                    Google Play
+                    {t('updates.googlePlay')}
                   </Text>
                 </TouchableOpacity>
               )}

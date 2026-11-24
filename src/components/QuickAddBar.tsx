@@ -25,6 +25,7 @@ import { getHistoricalStoreSuggestion } from '../utils/storeSuggestions';
 import { formatRepeatDescription } from '../utils/repeat';
 import { CreateTaskInput, Label, RepeatMode, Task, User } from '../types/vikunja';
 import { useAppTheme, ThemeTokens } from '../utils/theme';
+import { getFormattingLocale, TranslationKey, useTranslation } from '../i18n';
 
 interface QuickAddBarProps {
   activeProjectId: number;
@@ -42,22 +43,27 @@ interface QuickAddBarProps {
 
 function getPriorityControlMeta(
   priority: number,
-  theme: ThemeTokens
+  theme: ThemeTokens,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string
 ): { text: string; color: string; label: string } {
   switch (priority) {
     case 1:
-      return { text: '!', color: theme.colors.accent, label: 'Low' };
+      return { text: '!', color: theme.colors.accent, label: t('taskDetail.prioLow') };
     case 2:
-      return { text: '!!', color: theme.colors.warning, label: 'Medium' };
+      return { text: '!!', color: theme.colors.warning, label: t('taskDetail.prioMedium') };
     case 3:
-      return { text: '!!!', color: theme.colors.danger, label: 'High' };
+      return { text: '!!!', color: theme.colors.danger, label: t('taskDetail.prioHigh') };
     case 4:
-      return { text: '!!!!', color: theme.isDark ? '#BF5AF2' : '#7E22CE', label: 'Urgent' };
+      return {
+        text: '!!!!',
+        color: theme.isDark ? '#BF5AF2' : '#7E22CE',
+        label: t('taskDetail.prioUrgent'),
+      };
     case 5:
-      return { text: '!!!!!', color: theme.colors.danger, label: 'Critical' };
+      return { text: '!!!!!', color: theme.colors.danger, label: t('taskDetail.prioCritical') };
     case 0:
     default:
-      return { text: '!', color: theme.colors.textSecondary, label: 'None' };
+      return { text: '!', color: theme.colors.textSecondary, label: t('taskDetail.prioNone') };
   }
 }
 
@@ -71,10 +77,12 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   reenableStaples = true,
   onAddTask,
   onReenableTask,
-  placeholder = 'Add a task...',
+  placeholder,
   onDetailedAdd,
 }) => {
   const theme = useAppTheme();
+  const { t, locale } = useTranslation();
+  const resolvedPlaceholder = placeholder ?? t('quickAdd.placeholder');
   const [rawText, setRawText] = useState('');
   const [manualPriority, setManualPriority] = useState<number>(0);
   const [lastUsedLabel, setLastUsedLabel] = useState<string>('');
@@ -233,7 +241,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const curPriority = getPriorityControlMeta(effectivePriority, theme);
+  const curPriority = getPriorityControlMeta(effectivePriority, theme, t);
   const canSubmit = Boolean(parsed.title.trim());
   const hasRepeat = Boolean(parsed.repeatAfter && parsed.repeatAfter > 0);
   const hasMagicAttributes =
@@ -326,7 +334,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
               activeOpacity={0.7}
             >
               <Text style={[styles.storeSuggestionText, { color: theme.colors.text }]}>
-                Usually at #{historicalStoreSuggestion.label.title}
+                {t('quickAdd.usuallyAt', { label: historicalStoreSuggestion.label.title })}
               </Text>
             </TouchableOpacity>
           )}
@@ -384,7 +392,9 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
               style={[styles.magicBadge, chipSurface]}
             >
               <Text style={[styles.magicDateBadgeText, { color: theme.colors.textSecondary }]}>
-                Due {new Date(parsed.dueDate).toLocaleDateString()}
+                {t('quickAdd.duePrefix', {
+                  date: new Date(parsed.dueDate).toLocaleDateString(getFormattingLocale(locale)),
+                })}
               </Text>
             </View>
           )}
@@ -430,7 +440,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
             style={[styles.detailedAddBtn, { backgroundColor: theme.colors.accent }]}
             onPress={onDetailedAdd}
             accessibilityRole="button"
-            accessibilityLabel="Create task with details"
+            accessibilityLabel={t('quickAdd.createDetailedA11y')}
             activeOpacity={0.8}
           >
             <Text style={styles.detailedAddIcon}>＋</Text>
@@ -447,7 +457,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
             ref={inputRef}
             testID="quick-add-input"
             style={[styles.input, { color: theme.colors.text }]}
-            placeholder={placeholder}
+            placeholder={resolvedPlaceholder}
             placeholderTextColor={theme.colors.placeholder}
             value={rawText}
             onChangeText={setRawText}
@@ -463,7 +473,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
               onPress={handleCyclePriority}
               activeOpacity={0.7}
               accessibilityRole="button"
-              accessibilityLabel={`Priority: ${curPriority.label}. Tap to cycle priority`}
+              accessibilityLabel={t('quickAdd.priorityCycleA11y', { label: curPriority.label })}
             >
               <Text style={[styles.priorityText, { color: curPriority.color }]}>
                 {curPriority.text}
@@ -486,7 +496,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
               disabled={!canSubmit}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel="Add task"
+              accessibilityLabel={t('quickAdd.addTaskA11y')}
             >
               <Text
                 style={[

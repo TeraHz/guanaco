@@ -18,6 +18,7 @@ import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles, normalizeHexColor } from '../utils/colors';
 import { Label } from '../types/vikunja';
+import { useTranslation } from '../i18n';
 
 interface LabelManagementModalProps {
   visible: boolean;
@@ -40,6 +41,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
   onClose,
 }) => {
   const theme = useAppTheme();
+  const { t } = useTranslation();
   const { labels, createGlobalLabel, updateGlobalLabel, deleteGlobalLabel } = useTaskStore();
 
   const [newTitle, setNewTitle] = useState('');
@@ -64,7 +66,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
     const cleaned = newTitle.trim().replace(/^#+/, '').trim();
     if (!cleaned) return;
     if (safeLabels.some((l) => l.title.toLowerCase() === cleaned.toLowerCase())) {
-      setErrorMessage(`Label "#${cleaned}" already exists.`);
+      setErrorMessage(t('labels.alreadyExistsError', { title: cleaned }));
       return;
     }
     setErrorMessage(null);
@@ -74,7 +76,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
       setNewTitle('');
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err?.message || 'Failed to create label.');
+      setErrorMessage(err?.message || t('labels.createError'));
     }
   };
 
@@ -90,7 +92,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
   const handleSaveEdit = async (labelId: number) => {
     const cleaned = editTitle.trim().replace(/^#+/, '').trim();
     if (!cleaned) {
-      setErrorMessage('Label name cannot be empty.');
+      setErrorMessage(t('labels.emptyNameError'));
       return;
     }
     setErrorMessage(null);
@@ -100,7 +102,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
       setEditingLabelId(null);
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err?.message || 'Failed to update label.');
+      setErrorMessage(err?.message || t('labels.updateError'));
     }
   };
 
@@ -114,17 +116,17 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
       }
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err?.message || 'Failed to delete label.');
+      setErrorMessage(err?.message || t('labels.deleteError'));
     }
   };
 
   const handleDelete = (label: Label) => {
     safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
-    const promptMsg = `Are you sure you want to delete "#${label.title}"? It will be removed from all tasks.`;
+    const promptMsg = t('labels.deleteConfirmMessage', { title: label.title });
 
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-        if (window.confirm(`Delete Label\n\n${promptMsg}`)) {
+        if (window.confirm(`${t('labels.deleteTitle')}\n\n${promptMsg}`)) {
           performDelete(label.id);
         }
       } else {
@@ -133,10 +135,10 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
       return;
     }
 
-    Alert.alert('Delete Label', promptMsg, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('labels.deleteTitle'), promptMsg, [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: () => performDelete(label.id),
       },
@@ -182,14 +184,16 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                 },
               ]}
             >
-              <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Manage Labels</Text>
+              <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
+                {t('labels.manageLabels')}
+              </Text>
               <TouchableOpacity
                 testID="close-label-management-btn"
                 style={styles.closeBtn}
                 onPress={onClose}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel="Close label management"
+                accessibilityLabel={t('labels.closeManagementA11y')}
               >
                 <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
               </TouchableOpacity>
@@ -230,7 +234,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                 ]}
               >
                 <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
-                  Delete #{confirmDeleteLabel.title} from all tasks?
+                  {t('labels.deleteWebConfirm', { title: confirmDeleteLabel.title })}
                 </Text>
                 <View style={styles.confirmBannerActions}>
                   <TouchableOpacity
@@ -240,7 +244,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                     accessibilityRole="button"
                   >
                     <Text style={[styles.secondarySmallBtnText, { color: theme.colors.text }]}>
-                      Cancel
+                      {t('common.cancel')}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -249,7 +253,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                     onPress={() => performDelete(confirmDeleteLabel.id)}
                     accessibilityRole="button"
                   >
-                    <Text style={styles.primarySmallBtnText}>Delete</Text>
+                    <Text style={styles.primarySmallBtnText}>{t('common.delete')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -271,7 +275,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  NEW LABEL
+                  {t('labels.newLabelSection')}
                 </Text>
                 <View style={styles.createInputRow}>
                   <TextInput
@@ -283,7 +287,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                         borderColor: theme.colors.borderStrong,
                       },
                     ]}
-                    placeholder="New label name..."
+                    placeholder={t('labels.newLabelPlaceholder')}
                     placeholderTextColor={theme.colors.placeholder}
                     value={newTitle}
                     onChangeText={(txt) => {
@@ -303,9 +307,9 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                     onPress={handleCreate}
                     disabled={!newTitle.trim()}
                     accessibilityRole="button"
-                    accessibilityLabel="Create label"
+                    accessibilityLabel={t('labels.createLabelA11y')}
                   >
-                    <Text style={styles.createBtnText}>Add</Text>
+                    <Text style={styles.createBtnText}>{t('common.add')}</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -331,7 +335,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                         }}
                         accessibilityRole="button"
                         accessibilityState={{ selected: isSelected }}
-                        accessibilityLabel={`Select color ${c}`}
+                        accessibilityLabel={t('listEditor.selectColorA11y', { color: c })}
                       />
                     );
                   })}
@@ -349,12 +353,12 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  LABELS ({safeLabels.length})
+                  {t('labels.labelsCountSection', { count: safeLabels.length })}
                 </Text>
 
                 {safeLabels.length === 0 ? (
                   <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
-                    No labels yet
+                    {t('labels.noLabelsYet')}
                   </Text>
                 ) : (
                   safeLabels.map((l) => {
@@ -398,16 +402,16 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                               ]}
                               onPress={() => handleSaveEdit(l.id)}
                               accessibilityRole="button"
-                              accessibilityLabel="Save label changes"
+                              accessibilityLabel={t('labels.saveChangesA11y')}
                             >
-                              <Text style={styles.primarySmallBtnText}>Save</Text>
+                              <Text style={styles.primarySmallBtnText}>{t('common.save')}</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                               testID={`cancel-edit-label-${l.id}`}
                               style={[styles.secondarySmallBtn, secondarySurface]}
                               onPress={() => setEditingLabelId(null)}
                               accessibilityRole="button"
-                              accessibilityLabel="Cancel editing label"
+                              accessibilityLabel={t('labels.cancelEditA11y')}
                             >
                               <Text
                                 style={[
@@ -415,7 +419,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                                   { color: theme.colors.text },
                                 ]}
                               >
-                                Cancel
+                                {t('common.cancel')}
                               </Text>
                             </TouchableOpacity>
                           </View>
@@ -444,7 +448,7 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                                   }}
                                   accessibilityRole="button"
                                   accessibilityState={{ selected: isSelected }}
-                                  accessibilityLabel={`Set label color to ${c}`}
+                                  accessibilityLabel={t('labels.setColorA11y', { color: c })}
                                 />
                               );
                             })}
@@ -482,10 +486,10 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                             onPress={() => handleStartEdit(l)}
                             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                             accessibilityRole="button"
-                            accessibilityLabel={`Edit label ${l.title}`}
+                            accessibilityLabel={t('labels.editLabelA11y', { title: l.title })}
                           >
                             <Text style={[styles.rowActionText, { color: theme.colors.text }]}>
-                              Edit
+                              {t('common.edit')}
                             </Text>
                           </TouchableOpacity>
                           <TouchableOpacity
@@ -504,10 +508,10 @@ export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
                             onPress={() => handleDelete(l)}
                             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                             accessibilityRole="button"
-                            accessibilityLabel={`Delete label ${l.title}`}
+                            accessibilityLabel={t('labels.deleteLabelA11y', { title: l.title })}
                           >
                             <Text style={[styles.rowActionText, { color: theme.colors.danger }]}>
-                              Delete
+                              {t('common.delete')}
                             </Text>
                           </TouchableOpacity>
                         </View>

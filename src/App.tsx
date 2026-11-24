@@ -45,12 +45,14 @@ import {
 } from './services/localNotifications';
 import { useUpdateStore } from './store/updateStore';
 import { AppUpdatePromptModal } from './components/AppUpdatePromptModal';
+import { loadStoredLanguagePreference, t as translate, useTranslation } from './i18n';
 
 /** Grace period in milliseconds in background before requiring biometric re-unlock on resume. */
 export const BIOMETRIC_LOCK_GRACE_MS = 15_000;
 
 export default function App() {
   const theme = useAppTheme();
+  const { t } = useTranslation();
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
 
@@ -93,6 +95,14 @@ export default function App() {
 
   useEffect(() => {
     initNotifications().catch(() => {});
+    loadStoredLanguagePreference()
+      .then((pref) => {
+        if (pref !== 'system' && useTaskStore.getState().languagePreference !== pref) {
+          useTaskStore.setState({ languagePreference: pref });
+          return initNotifications();
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Handle interactive local reminder actions (Mark Complete, Snooze 15m) & tap-to-open safely
@@ -157,7 +167,7 @@ export default function App() {
       const seq = ++biometricAttemptSeqRef.current;
       biometricPromptInFlightRef.current = true;
       try {
-        return await authenticateWithBiometrics('Unlock Guanaco', {
+        return await authenticateWithBiometrics(translate('lock.unlockGuanaco'), {
           forceReset: Boolean(options?.forceReset || hadInFlight),
         });
       } finally {
@@ -416,7 +426,7 @@ export default function App() {
   ) => {
     const parsedUrl = parseAndValidateServerUrl(rawServerUrl);
     if (parsedUrl.isInsecureHttp && !options?.allowInsecureHttp) {
-      throw new Error('Insecure HTTP connection requires explicit confirmation.');
+      throw new Error(t('auth.insecureHttpError'));
     }
 
     const normalizedUrl = parsedUrl.serverUrl;
@@ -436,7 +446,7 @@ export default function App() {
       });
       const user = await tempClient.getCurrentUser();
       if (!user || (!user.id && !user.username)) {
-        throw new Error('Invalid Personal API Token');
+        throw new Error(t('auth.invalidApiToken'));
       }
       authUser = user;
       activeToken = candidateToken;
@@ -578,10 +588,11 @@ export default function App() {
       return;
     }
 
-    const message = `You have ${unsyncedCount} unsynced offline change(s). Signing out now will permanently discard them. Sign out anyway?`;
+    const title = t('lock.unsyncedTitle');
+    const message = t('lock.unsyncedSignOutMessage', { count: unsyncedCount });
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-        if (window.confirm(`Unsynced Changes\n\n${message}`)) {
+        if (window.confirm(`${title}\n\n${message}`)) {
           await handleLogout();
         }
       } else {
@@ -590,10 +601,10 @@ export default function App() {
       return;
     }
 
-    Alert.alert('Unsynced Changes', message, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(title, message, [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Sign Out',
+        text: t('auth.signOut'),
         style: 'destructive',
         onPress: () => {
           handleLogout().catch(() => {});
@@ -611,7 +622,7 @@ export default function App() {
       isLockedRef.current = false;
       await unlockOfflineSession();
     } else {
-      setLockError('Authentication failed. Try again.');
+      setLockError(t('lock.authFailedTryAgain'));
     }
   };
 
@@ -699,7 +710,7 @@ export default function App() {
                       { color: theme.colors.text, marginBottom: 10 },
                     ]}
                   >
-                    Discard {pendingLockLogoutCount} unsynced offline change(s) and sign out?
+                    {t('lock.discardUnsyncedBanner', { count: pendingLockLogoutCount })}
                   </Text>
                   <View style={styles.lockConfirmActions}>
                     <TouchableOpacity
@@ -715,7 +726,7 @@ export default function App() {
                       onPress={() => setPendingLockLogoutCount(null)}
                     >
                       <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
-                        Cancel
+                        {t('common.cancel')}
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -730,7 +741,7 @@ export default function App() {
                       }}
                     >
                       <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>
-                        Sign Out
+                        {t('auth.signOut')}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -744,7 +755,7 @@ export default function App() {
                 onPress={handleManualLockUnlock}
                 activeOpacity={0.8}
               >
-                <Text style={styles.unlockButtonText}>Unlock</Text>
+                <Text style={styles.unlockButtonText}>{t('auth.unlock')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -760,7 +771,7 @@ export default function App() {
                     { color: theme.colors.textSecondary },
                   ]}
                 >
-                  Sign Out
+                  {t('auth.signOut')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -784,7 +795,7 @@ export default function App() {
                     onPress={() => setShowReauthLogin(false)}
                   >
                     <Text style={[styles.reauthBackText, { color: theme.colors.accent }]}>
-                      ← Back
+                      {t('common.back')}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -825,7 +836,7 @@ export default function App() {
                       { color: theme.colors.warning },
                     ]}
                   >
-                    Session expired
+                    {t('auth.sessionExpired')}
                   </Text>
                   <TouchableOpacity
                     testID="auth-required-signin-btn"
@@ -836,7 +847,7 @@ export default function App() {
                     ]}
                     onPress={() => setShowReauthLogin(true)}
                   >
-                    <Text style={styles.authRequiredBtnText}>Sign In</Text>
+                    <Text style={styles.authRequiredBtnText}>{t('auth.signIn')}</Text>
                   </TouchableOpacity>
                 </View>
               </SafeAreaView>

@@ -1,6 +1,7 @@
 /**
  * Date normalization, formatting, and preset utilities for Vikunja dates.
  */
+import { getFormattingLocale, getResolvedLocale, t } from '../i18n';
 
 /**
  * Checks whether a date string represents a Vikunja / Go zero-date
@@ -95,26 +96,38 @@ export function formatDateDisplay(
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 
+  const locale = getResolvedLocale();
+  const fmtLocale = getFormattingLocale(locale);
+
   let dayLabel = '';
   if (isSameDay(d, now)) {
-    dayLabel = 'Today';
+    dayLabel = t('schedule.today', undefined, locale);
   } else if (isSameDay(d, tomorrow)) {
-    dayLabel = 'Tomorrow';
+    dayLabel = t('schedule.tomorrow', undefined, locale);
   } else if (isSameDay(d, yesterday)) {
-    dayLabel = 'Yesterday';
+    dayLabel = t('schedule.yesterday', undefined, locale);
   } else {
     const isCurrentYear = d.getFullYear() === now.getFullYear();
-    const monthName = d.toLocaleDateString(undefined, { month: 'short' });
-    dayLabel = isCurrentYear
-      ? `${monthName} ${d.getDate()}`
-      : `${monthName} ${d.getDate()}, ${d.getFullYear()}`;
+    if (locale === 'en') {
+      const monthName = d.toLocaleDateString(fmtLocale, { month: 'short' });
+      dayLabel = isCurrentYear
+        ? `${monthName} ${d.getDate()}`
+        : `${monthName} ${d.getDate()}, ${d.getFullYear()}`;
+    } else {
+      dayLabel = d.toLocaleDateString(
+        fmtLocale,
+        isCurrentYear
+          ? { day: 'numeric', month: 'short' }
+          : { day: 'numeric', month: 'short', year: 'numeric' }
+      );
+    }
   }
 
   const includeTime = options?.includeTime ?? true;
   const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0;
 
   if (includeTime && hasTime) {
-    const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const timeStr = d.toLocaleTimeString(fmtLocale, { hour: 'numeric', minute: '2-digit' });
     return `${dayLabel}, ${timeStr}`;
   }
 

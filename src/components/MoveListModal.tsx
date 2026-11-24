@@ -12,6 +12,7 @@ import { Project } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import { normalizeHexColor } from '../utils/colors';
+import { useTranslation } from '../i18n';
 
 interface MoveListModalProps {
   visible: boolean;
@@ -29,6 +30,7 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
   onClose,
 }) => {
   const theme = useAppTheme();
+  const { t } = useTranslation();
 
   const sortedProjects = React.useMemo(() => {
     const safeList = Array.isArray(projects) ? projects : [];
@@ -67,13 +69,15 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
               ]}
             >
               <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
-                <Text style={[styles.title, { color: theme.colors.text }]}>Move to List</Text>
+                <Text style={[styles.title, { color: theme.colors.text }]}>
+                  {t('moveModal.title')}
+                </Text>
                 <TouchableOpacity
                   testID="move-modal-close"
                   style={styles.closeBtn}
                   onPress={onClose}
                   accessibilityRole="button"
-                  accessibilityLabel="Close move to list dialog"
+                  accessibilityLabel={t('moveModal.closeA11y')}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
@@ -82,7 +86,7 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
 
               {sortedProjects.length === 0 ? (
                 <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
-                  No active lists available
+                  {t('moveModal.empty')}
                 </Text>
               ) : (
                 <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
@@ -104,7 +108,11 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
                         activeOpacity={0.7}
                         accessibilityRole="button"
                         accessibilityState={{ selected: isCurrent }}
-                        accessibilityLabel={`Move to ${proj.title}${isCurrent ? ', current list' : ''}`}
+                        accessibilityLabel={
+                          isCurrent
+                            ? t('moveModal.moveToCurrentA11y', { title: proj.title })
+                            : t('moveModal.moveToA11y', { title: proj.title })
+                        }
                       >
                         <View
                           testID={`move-project-dot-${proj.id}`}
@@ -128,7 +136,7 @@ export const MoveListModal: React.FC<MoveListModalProps> = ({
                         </Text>
                         {isCurrent ? (
                           <Text style={[styles.currentBadge, { color: theme.colors.textSecondary }]}>
-                            Current
+                            {t('moveModal.current')}
                           </Text>
                         ) : null}
                       </TouchableOpacity>

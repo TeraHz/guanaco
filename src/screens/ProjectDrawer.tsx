@@ -24,6 +24,7 @@ import { ProjectSharingModal } from '../components/ProjectSharingModal';
 import { Project } from '../types/vikunja';
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree';
 import { MY_TASKS_PROJECT_ID, isTaskAssignedToUser } from '../utils/taskFilters';
+import { useTranslation } from '../i18n';
 
 interface ProjectDrawerProps {
   visible: boolean;
@@ -41,6 +42,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   inline = false,
 }) => {
   const theme = useAppTheme();
+  const { t } = useTranslation();
   const {
     projects,
     tasks,
@@ -189,10 +191,11 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   };
 
   const handleRequestDeleteProject = (proj: Project) => {
-    const message = `Delete "${proj.title}" and all tasks inside it?`;
+    const title = t('drawer.deleteList');
+    const message = t('drawer.deleteListConfirm', { title: proj.title });
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-        if (window.confirm(`Delete List\n\n${message}`)) {
+        if (window.confirm(`${title}\n\n${message}`)) {
           commitDeleteProject(proj.id);
         }
       } else {
@@ -201,10 +204,10 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
       return;
     }
 
-    Alert.alert('Delete List', message, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(title, message, [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: () => commitDeleteProject(proj.id),
       },
@@ -234,7 +237,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             style={styles.logoImage}
             resizeMode="cover"
           />
-          <Text style={[styles.brandTitle, { color: theme.colors.text }]}>Lists</Text>
+          <Text style={[styles.brandTitle, { color: theme.colors.text }]}>
+            {t('drawer.title')}
+          </Text>
         </View>
         {!inline && (
           <TouchableOpacity
@@ -242,7 +247,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             style={styles.closeBtn}
             onPress={onClose}
             accessibilityRole="button"
-            accessibilityLabel="Close lists drawer"
+            accessibilityLabel={t('drawer.closeA11y')}
           >
             <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
           </TouchableOpacity>
@@ -274,7 +279,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             ]}
             numberOfLines={1}
           >
-            All Tasks
+            {t('drawer.allTasks')}
           </Text>
           <Text
             testID="drawer-count-all"
@@ -312,7 +317,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             ]}
             numberOfLines={1}
           >
-            My Open Tasks
+            {t('drawer.myOpenTasks')}
           </Text>
           <Text
             testID="drawer-count-my-tasks"
@@ -327,7 +332,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           <>
             <View style={styles.sectionHeaderRow}>
               <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
-                SAVED FILTERS
+                {t('drawer.savedFiltersSection')}
               </Text>
             </View>
             {savedFilters.map((sf) => {
@@ -381,7 +386,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         {/* Individual Lists with Tree Hierarchy */}
         <View style={styles.sectionHeaderRow}>
           <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
-            LISTS
+            {t('drawer.listsSection')}
           </Text>
         </View>
 
@@ -455,7 +460,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                 }}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 accessibilityRole="button"
-                accessibilityLabel={`Options for ${proj.title}`}
+                accessibilityLabel={t('drawer.optionsForA11y', { title: proj.title })}
               >
                 <Text style={[styles.optionsBtnText, { color: theme.colors.textSecondary }]}>⋯</Text>
               </TouchableOpacity>
@@ -476,10 +481,12 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityState={{ expanded: showArchived }}
-              accessibilityLabel={`Archived lists (${archivedProjects.length})`}
+              accessibilityLabel={t('drawer.archivedListsA11y', {
+                count: archivedProjects.length,
+              })}
             >
               <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
-                ARCHIVED LISTS ({archivedProjects.length})
+                {t('drawer.archivedListsSection', { count: archivedProjects.length })}
               </Text>
               <Text style={[styles.archivedChevron, { color: theme.colors.textSecondary }]}>
                 {showArchived ? '▾' : '▸'}
@@ -539,10 +546,10 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         archiveProject(proj.id, false).catch(() => {});
                       }}
                       accessibilityRole="button"
-                      accessibilityLabel={`Unarchive ${proj.title}`}
+                      accessibilityLabel={t('drawer.unarchiveA11y', { title: proj.title })}
                     >
                       <Text style={[styles.unarchivePillText, { color: theme.colors.text }]}>
-                        Unarchive
+                        {t('drawer.unarchive')}
                       </Text>
                     </TouchableOpacity>
 
@@ -555,7 +562,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                       }}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                       accessibilityRole="button"
-                      accessibilityLabel={`Options for ${proj.title}`}
+                      accessibilityLabel={t('drawer.optionsForA11y', { title: proj.title })}
                     >
                       <Text style={[styles.optionsBtnText, { color: theme.colors.textSecondary }]}>
                         ⋯
@@ -584,7 +591,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         accessibilityRole="button"
       >
         <Text style={[styles.addListIcon, { color: theme.colors.accent }]}>＋</Text>
-        <Text style={[styles.addListText, { color: theme.colors.accent }]}>New List</Text>
+        <Text style={[styles.addListText, { color: theme.colors.accent }]}>
+          {t('drawer.newList')}
+        </Text>
       </TouchableOpacity>
 
       {/* Settings Section at bottom */}
@@ -605,7 +614,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           activeOpacity={0.7}
           accessibilityRole="button"
         >
-          <Text style={[styles.settingsText, { color: theme.colors.text }]}>Settings</Text>
+          <Text style={[styles.settingsText, { color: theme.colors.text }]}>
+            {t('drawer.settings')}
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -677,7 +688,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                   {confirmingDelete ? (
                     <View style={styles.inlineConfirmContainer}>
                       <Text style={[styles.inlineConfirmText, { color: theme.colors.text }]}>
-                        Delete "{actionSheetProject.title}" and all tasks inside?
+                        {t('drawer.deleteListInlineConfirm', {
+                          title: actionSheetProject.title,
+                        })}
                       </Text>
                       <View style={styles.inlineConfirmActions}>
                         <TouchableOpacity
@@ -694,7 +707,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                           accessibilityRole="button"
                         >
                           <Text style={[styles.inlineConfirmBtnText, { color: theme.colors.text }]}>
-                            Cancel
+                            {t('common.cancel')}
                           </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
@@ -707,7 +720,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                           accessibilityRole="button"
                         >
                           <Text style={[styles.inlineConfirmBtnText, { color: '#FFFFFF' }]}>
-                            Delete
+                            {t('common.delete')}
                           </Text>
                         </TouchableOpacity>
                       </View>
@@ -724,7 +737,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          Edit List
+                          {t('drawer.editList')}
                         </Text>
                       </TouchableOpacity>
 
@@ -738,7 +751,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          Share List
+                          {t('drawer.shareList')}
                         </Text>
                       </TouchableOpacity>
 
@@ -752,7 +765,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {actionSheetProject.is_favorite ? 'Remove Favorite' : 'Add to Favorites'}
+                          {actionSheetProject.is_favorite
+                            ? t('drawer.removeFavorite')
+                            : t('drawer.addFavorite')}
                         </Text>
                       </TouchableOpacity>
 
@@ -769,7 +784,9 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {actionSheetProject.is_archived ? 'Unarchive List' : 'Archive List'}
+                          {actionSheetProject.is_archived
+                            ? t('drawer.unarchiveList')
+                            : t('drawer.archiveList')}
                         </Text>
                       </TouchableOpacity>
 
@@ -780,7 +797,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.danger }]}>
-                          Delete List
+                          {t('drawer.deleteList')}
                         </Text>
                       </TouchableOpacity>
 
@@ -790,7 +807,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetCancelText, { color: theme.colors.textSecondary }]}>
-                          Cancel
+                          {t('common.cancel')}
                         </Text>
                       </TouchableOpacity>
                     </>

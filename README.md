@@ -58,6 +58,7 @@
 - **Fast Search & Effortless Gestures** — Search across every list by title, note, label, or assignee. Swipe left to complete a task, swipe right to move or delete it, or drag items into your own custom order.
 - **Flexible Schedules & Reminders** — Set due dates, postpone tasks by `+1d / +3d / +1w`, configure custom repeat intervals (every few hours, days, weeks, months, or years), and mark tasks complete or snooze them straight from a notification.
 - **Comfortable on Every Screen** — Choose Light, Dark, or pure black OLED mode, adjust card size and text size separately, and enjoy a side-by-side layout on tablets and foldables.
+- **Multilingual (English, Bulgarian & Spanish)** — Full UI, natural-language quick-add parsing, and on-device smart grocery/aisle grouping in **English**, **Български**, and **Español** (follows your system language or can be switched manually).
 - **Home-Server Friendly** — Sign in with your password (including two-factor codes) or an API token, lock the app with Fingerprint or Face ID, and connect to private home servers using custom certificates on Android.
 
 ---

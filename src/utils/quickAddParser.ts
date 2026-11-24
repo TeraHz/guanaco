@@ -12,6 +12,7 @@ export interface ParsedTaskInput {
 }
 
 const WEEKDAYS: Record<string, number> = {
+  // English
   sunday: 0,
   sun: 0,
   monday: 1,
@@ -29,9 +30,45 @@ const WEEKDAYS: Record<string, number> = {
   fri: 5,
   saturday: 6,
   sat: 6,
+  // Bulgarian
+  неделя: 0,
+  нед: 0,
+  понеделник: 1,
+  пон: 1,
+  вторник: 2,
+  вт: 2,
+  сряда: 3,
+  ср: 3,
+  четвъртък: 4,
+  четв: 4,
+  чет: 4,
+  петък: 5,
+  пет: 5,
+  събота: 6,
+  съб: 6,
+  // Spanish
+  domingo: 0,
+  dom: 0,
+  lunes: 1,
+  lun: 1,
+  martes: 2,
+  mar: 2,
+  miércoles: 3,
+  miercoles: 3,
+  mié: 3,
+  mie: 3,
+  jueves: 4,
+  jue: 4,
+  viernes: 5,
+  vie: 5,
+  sábado: 6,
+  sabado: 6,
+  sáb: 6,
+  sab: 6,
 };
 
 const NAMED_PRIORITIES: Record<string, number> = {
+  // English
   low: 1,
   med: 2,
   medium: 2,
@@ -39,6 +76,34 @@ const NAMED_PRIORITIES: Record<string, number> = {
   urgent: 4,
   crit: 5,
   critical: 5,
+  // Bulgarian
+  нисък: 1,
+  ниско: 1,
+  ниска: 1,
+  среден: 2,
+  средно: 2,
+  средна: 2,
+  висок: 3,
+  високо: 3,
+  висока: 3,
+  спешен: 4,
+  спешно: 4,
+  спешна: 4,
+  критичен: 5,
+  критично: 5,
+  критична: 5,
+  // Spanish
+  baja: 1,
+  bajo: 1,
+  media: 2,
+  medio: 2,
+  alta: 3,
+  alto: 3,
+  urgente: 4,
+  crítica: 5,
+  critica: 5,
+  crítico: 5,
+  critico: 5,
 };
 
 const MAX_REPEAT_COUNT = 10000;
@@ -85,8 +150,11 @@ export function parseQuickAdd(rawInput: string, now: Date = new Date()): ParsedT
     return ' ';
   });
 
-  // 3a. Normalize @today / @tomorrow / @tonight date shorthands BEFORE @user extraction
-  text = text.replace(/(?:^|\s)@(today|tomorrow|tonight)(?=\s|$)/gi, (_, dateKw) => ` ${dateKw}`);
+  // 3a. Normalize @today / @tomorrow / @tonight (EN/BG/ES) date shorthands BEFORE @user extraction
+  text = text.replace(
+    /(?:^|\s)@(today|tomorrow|tonight|днес|утре|довечера|hoy|mañana|manana)(?=\s|$)/giu,
+    (_, dateKw) => ` ${dateKw}`
+  );
 
   // 3b. Extract Assignees: @user or @"multi word user"
   text = text.replace(/(?:^|\s)@(?:"([^"]+)"|([^\s*#+@!]+))/g, (_, quoted, unquoted) => {
@@ -102,25 +170,27 @@ export function parseQuickAdd(rawInput: string, now: Date = new Date()): ParsedT
     return ' ';
   });
 
-  // 5. Extract Priority: !1 to !5 OR !low / !medium / !high / !urgent / !critical
-  text = text.replace(
-    /(?:^|\s)!(?:([1-5])|(low|med(?:ium)?|high|urgent|crit(?:ical)?))(?=\s|$)/gi,
-    (_, numStr, wordStr) => {
-      if (numStr) {
-        priority = parseInt(numStr, 10);
-      } else if (wordStr) {
-        const key = wordStr.toLowerCase();
-        if (Object.prototype.hasOwnProperty.call(NAMED_PRIORITIES, key)) {
-          priority = NAMED_PRIORITIES[key];
-        }
-      }
-      return ' ';
-    }
+  // 5. Extract Priority: !1 to !5 OR !low..!critical (EN/BG/ES)
+  const priorityWordsPattern = Object.keys(NAMED_PRIORITIES).join('|');
+  const priorityRegex = new RegExp(
+    `(?:^|\\s)!(?:([1-5])|(${priorityWordsPattern}))(?=\\s|$)`,
+    'giu'
   );
+  text = text.replace(priorityRegex, (_, numStr, wordStr) => {
+    if (numStr) {
+      priority = parseInt(numStr, 10);
+    } else if (wordStr) {
+      const key = wordStr.toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(NAMED_PRIORITIES, key)) {
+        priority = NAMED_PRIORITIES[key];
+      }
+    }
+    return ' ';
+  });
 
-  // 6. Extract Repeat: every [N] hour(s)/day(s)/week(s)/month(s)/year(s) (bounded to safe integers)
+  // 6. Extract Repeat: EN ("every [N] days"), BG ("(на) всеки/всяка [N] дни"), ES ("cada [N] días")
   const repeatRegex =
-    /(?:^|\s)every\s+(?:(\d+)\s+)?(hour|hours|day|days|week|weeks|month|months|year|years)(?=\s|$)/i;
+    /(?:^|\s)(?:every|(?:на\s+)?(?:всеки|всяка|всяко)|cada)\s+(?:(\d+)\s+)?(hours?|days?|weeks?|months?|years?|часа?|часове|ден|дни|дена|седмица|седмици|месеца?|месеци|година|години|horas?|días?|dias?|semanas?|mes(?:es)?|años?|anos?)(?=\s|$)/iu;
   const repeatMatch = text.match(repeatRegex);
   if (repeatMatch) {
     const rawCountStr = repeatMatch[1] || '1';
@@ -128,19 +198,35 @@ export function parseQuickAdd(rawInput: string, now: Date = new Date()): ParsedT
     const unit = repeatMatch[2].toLowerCase();
 
     if (Number.isFinite(count) && count >= 1 && count <= MAX_REPEAT_COUNT) {
-      if (unit.startsWith('hour')) {
+      if (unit.startsWith('hour') || unit.startsWith('час') || unit.startsWith('hora')) {
         repeatAfter = count * 3600;
         repeatMode = RepeatMode.FromDueDate;
-      } else if (unit.startsWith('day')) {
+      } else if (
+        unit.startsWith('day') ||
+        unit === 'ден' ||
+        unit === 'дни' ||
+        unit === 'дена' ||
+        unit.startsWith('día') ||
+        unit.startsWith('dia')
+      ) {
         repeatAfter = count * 86400;
         repeatMode = RepeatMode.FromDueDate;
-      } else if (unit.startsWith('week')) {
+      } else if (
+        unit.startsWith('week') ||
+        unit.startsWith('седмиц') ||
+        unit.startsWith('semana')
+      ) {
         repeatAfter = count * 604800;
         repeatMode = RepeatMode.FromDueDate;
-      } else if (unit.startsWith('month')) {
+      } else if (unit.startsWith('month') || unit.startsWith('месец') || unit.startsWith('mes')) {
         repeatAfter = count * 2592000;
         repeatMode = RepeatMode.Monthly;
-      } else if (unit.startsWith('year')) {
+      } else if (
+        unit.startsWith('year') ||
+        unit.startsWith('годин') ||
+        unit.startsWith('año') ||
+        unit.startsWith('ano')
+      ) {
         repeatAfter = count * 31536000;
         repeatMode = RepeatMode.FromDueDate;
       }
@@ -154,13 +240,21 @@ export function parseQuickAdd(rawInput: string, now: Date = new Date()): ParsedT
   let parsedHour: number | null = null;
   let parsedMinute: number | null = null;
 
-  // Require either :mm OR am/pm so bare store/street numbers ("at 7 Eleven", "at 42 Wallaby") are NEVER eaten!
-  const timeRegex = /(?:^|\s)at\s+(\d{1,2})(?::(\d{2})\s*(am|pm)?|\s*(am|pm))(?=\s|$)/i;
-  const timeMatch = text.match(timeRegex);
-  if (timeMatch) {
-    const rawHour = parseInt(timeMatch[1], 10);
-    const minute = timeMatch[2] !== undefined ? parseInt(timeMatch[2], 10) : 0;
-    const ampm = (timeMatch[3] || timeMatch[4])?.toLowerCase();
+  // Require :mm OR am/pm (EN), :mm OR ч/ч. (BG), or "a la(s) HH(:MM)" (ES) so bare street/store numbers are NEVER eaten!
+  const enTimeMatch = text.match(/(?:^|\s)at\s+(\d{1,2})(?::(\d{2})\s*(am|pm)?|\s*(am|pm))(?=\s|$)/i);
+  const bgTimeMatch = !enTimeMatch
+    ? text.match(/(?:^|\s)в\s+(\d{1,2})(?::(\d{2})(?:\s*ч\.?)?|\s*ч\.?)(?=\s|$)/iu)
+    : null;
+  const esTimeMatch =
+    !enTimeMatch && !bgTimeMatch
+      ? text.match(/(?:^|\s)a\s+las?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?=\s|$)/iu)
+      : null;
+
+  const activeTimeMatch = enTimeMatch || bgTimeMatch || esTimeMatch;
+  if (activeTimeMatch) {
+    const rawHour = parseInt(activeTimeMatch[1], 10);
+    const minute = activeTimeMatch[2] !== undefined ? parseInt(activeTimeMatch[2], 10) : 0;
+    const ampm = (activeTimeMatch[3] || activeTimeMatch[4])?.toLowerCase();
 
     const isMinuteValid = minute >= 0 && minute <= 59;
     const isHourValid = ampm ? rawHour >= 1 && rawHour <= 12 : rawHour >= 0 && rawHour <= 23;
@@ -172,15 +266,16 @@ export function parseQuickAdd(rawInput: string, now: Date = new Date()): ParsedT
 
       parsedHour = hour;
       parsedMinute = minute;
-      text = text.replace(timeMatch[0], ' ');
+      text = text.replace(activeTimeMatch[0], ' ');
     }
   }
 
-  // Date relative patterns (bounded to [0..36500] days so large numbers never throw RangeError)
-  const inDaysRegex = /(?:^|\s)in\s+(\d+)\s+(day|days)(?=\s|$)/i;
+  // Date relative patterns: EN ("in N days"), BG ("след N дни"), ES ("en N días")
+  const inDaysRegex =
+    /(?:^|\s)(?:in\s+(\d+)\s+days?|след\s+(\d+)\s+(?:ден|дни|дена)|en\s+(\d+)\s+(?:días?|dias?))(?=\s|$)/iu;
   const inDaysMatch = text.match(inDaysRegex);
   if (inDaysMatch) {
-    const rawDaysStr = inDaysMatch[1];
+    const rawDaysStr = inDaysMatch[1] || inDaysMatch[2] || inDaysMatch[3] || '';
     const days = rawDaysStr.length <= 6 ? parseInt(rawDaysStr, 10) : NaN;
     if (Number.isFinite(days) && days >= 0 && days <= MAX_IN_DAYS) {
       targetDate = new Date(safeNow.getFullYear(), safeNow.getMonth(), safeNow.getDate() + days);
@@ -189,23 +284,30 @@ export function parseQuickAdd(rawInput: string, now: Date = new Date()): ParsedT
     }
   }
 
-  if (!targetDate && /(?:^|\s)tomorrow(?=\s|$)/i.test(text)) {
+  const tomorrowRegex = /(?:^|\s)(?:tomorrow|утре|mañana|manana)(?=\s|$)/iu;
+  const todayRegex = /(?:^|\s)(?:today|днес|hoy)(?=\s|$)/iu;
+  const tonightRegex = /(?:^|\s)(?:tonight|довечера|тази\s+вечер|esta\s+noche)(?=\s|$)/iu;
+
+  if (!targetDate && tomorrowRegex.test(text)) {
     targetDate = new Date(safeNow.getFullYear(), safeNow.getMonth(), safeNow.getDate() + 1);
-    text = text.replace(/(?:^|\s)tomorrow(?=\s|$)/i, ' ');
-  } else if (!targetDate && /(?:^|\s)today(?=\s|$)/i.test(text)) {
+    text = text.replace(tomorrowRegex, ' ');
+  } else if (!targetDate && todayRegex.test(text)) {
     targetDate = new Date(safeNow.getFullYear(), safeNow.getMonth(), safeNow.getDate());
     isTodayTarget = true;
-    text = text.replace(/(?:^|\s)today(?=\s|$)/i, ' ');
-  } else if (!targetDate && /(?:^|\s)tonight(?=\s|$)/i.test(text)) {
+    text = text.replace(todayRegex, ' ');
+  } else if (!targetDate && tonightRegex.test(text)) {
     targetDate = new Date(safeNow.getFullYear(), safeNow.getMonth(), safeNow.getDate());
     if (parsedHour === null) {
       parsedHour = 20;
       parsedMinute = 0;
     }
-    text = text.replace(/(?:^|\s)tonight(?=\s|$)/i, ' ');
+    text = text.replace(tonightRegex, ' ');
   } else if (!targetDate) {
-    const weekdayRegex =
-      /(?:^|\s)(?:on\s+)?(next\s+)?(monday|mon|tuesday|tues|tue|wednesday|wed|thursday|thurs|thur|thu|friday|fri|saturday|sat|sunday|sun)(?=\s|$)/i;
+    const weekdayKeysPattern = Object.keys(WEEKDAYS).join('|');
+    const weekdayRegex = new RegExp(
+      `(?:^|\\s)(?:(?:on|в|във|el)\\s+)?((?:next|следващия|следващата|другия|другата|próximo|proximo|próxima|proxima)\\s+)?(${weekdayKeysPattern})(?=\\s|$)`,
+      'iu'
+    );
     const weekdayMatch = text.match(weekdayRegex);
     if (weekdayMatch) {
       const hasNext = Boolean(weekdayMatch[1]);

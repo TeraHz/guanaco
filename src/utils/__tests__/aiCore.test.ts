@@ -116,6 +116,24 @@ describe('AICore & On-Device ML Grouping', () => {
       expect(inferContextualCategory('Паста за зъби', 'Пазар')).toBe('🧼 Household');
     });
 
+    it('groups Spanish grocery and travel items accurately', () => {
+      expect(inferContextualCategory('Leche entera para café', 'Lista de compras')).toBe(
+        '🥛 Dairy & Cold'
+      );
+      expect(inferContextualCategory('2 kg tomates frescos', 'Supermercado')).toBe('🥦 Produce');
+      expect(inferContextualCategory('Pechuga de pollo', 'Compras de la semana')).toBe(
+        '🥩 Meat & Seafood'
+      );
+      expect(inferContextualCategory('Pan integral', 'Despensa')).toBe('🍞 Bakery & Pantry');
+      expect(inferContextualCategory('Papel higiénico y detergente', 'Supermercado')).toBe(
+        '🧼 Household'
+      );
+      expect(inferContextualCategory('Pasaporte y tarjeta de embarque', 'Viaje a Madrid')).toBe(
+        '📄 Travel & Documents'
+      );
+      expect(inferContextualCategory('Cargador del portátil', 'Equipaje')).toBe('🔌 Electronics');
+    });
+
     it('groups English grocery items with descriptive phrases (including -ies plurals) accurately', () => {
       expect(inferContextualCategory('Milk for yogurt', 'Weekly Groceries')).toBe('🥛 Dairy & Cold');
       expect(inferContextualCategory('Pork for stew', 'Weekly Groceries')).toBe('🥩 Meat & Seafood');

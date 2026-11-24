@@ -6,6 +6,7 @@ import { classifyTaskWithAI, classifyTasksWithAIAsync } from '../utils/aiCore';
 import { MY_TASKS_PROJECT_ID, MY_TASKS_PROJECT, isTaskAssignedToUser } from '../utils/taskFilters';
 import { htmlToPlainText } from '../utils/htmlDescription';
 import { isOverdue, normalizeVikunjaDate } from '../utils/dates';
+import { useTranslation } from '../i18n';
 
 export type FilterType = 'all' | 'active' | 'done';
 export type DueFilterType = 'all' | 'overdue' | 'today' | 'has_due' | 'no_due';
@@ -55,6 +56,7 @@ export function useFilteredSortedTasks({
   minPriority = 0,
   dueFilter = 'all',
 }: UseFilteredSortedTasksParams): UseFilteredSortedTasksResult {
+  const { t, locale } = useTranslation();
   const safePositiveProjects = useMemo(
     () => (Array.isArray(projects) ? projects.filter((p) => p && p.id > 0) : []),
     [projects]
@@ -82,15 +84,26 @@ export function useFilteredSortedTasks({
   const isSavedFilterView = Boolean(matchedSavedFilter);
 
   const activeProject: Project = useMemo(() => {
-    if (isMyTasksView) return MY_TASKS_PROJECT;
-    if (isAllTasksView) return { id: 0, title: 'All Tasks', hex_color: '#007AFF' };
+    if (isMyTasksView) {
+      return { ...MY_TASKS_PROJECT, title: t('drawer.myOpenTasks') };
+    }
+    const allTasksTitle = t('drawer.allTasks');
+    if (isAllTasksView) return { id: 0, title: allTasksTitle, hex_color: '#007AFF' };
     if (matchedSavedFilter) return matchedSavedFilter;
     return (
       safePositiveProjects.find((p) => p.id === selectedProjectId) ||
       safePositiveProjects.find((p) => !p.is_archived) ||
-      safePositiveProjects[0] || { id: 0, title: 'All Tasks', hex_color: '#007AFF' }
+      safePositiveProjects[0] || { id: 0, title: allTasksTitle, hex_color: '#007AFF' }
     );
-  }, [isMyTasksView, isAllTasksView, matchedSavedFilter, safePositiveProjects, selectedProjectId]);
+  }, [
+    isMyTasksView,
+    isAllTasksView,
+    matchedSavedFilter,
+    safePositiveProjects,
+    selectedProjectId,
+    locale,
+    t,
+  ]);
 
   const isShopping = useMemo(() => isShoppingList(activeProject?.title), [activeProject?.title]);
 

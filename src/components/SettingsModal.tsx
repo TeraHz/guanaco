@@ -14,9 +14,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useTaskStore } from '../store/taskStore';
-import { AppBadgeMode, ThemeMode, WeekStartDay } from '../types/vikunja';
+import { AppBadgeMode, LanguagePreference, ThemeMode, WeekStartDay } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
+import { useTranslation } from '../i18n';
 import {
   checkBiometricAvailable,
   isBiometricEnabled,
@@ -45,6 +46,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const theme = useAppTheme();
   const {
+    t,
+    languagePreference: activeLangPref,
+    setLanguagePreference: setI18nLanguagePreference,
+  } = useTranslation();
+  const {
     client,
     currentUser: storeCurrentUser,
     cachedUsers,
@@ -58,6 +64,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTaskItemTextScale,
     themeMode = 'system',
     setThemeMode,
+    languagePreference: storeLanguagePreference,
+    setLanguagePreference: setStoreLanguagePreference,
     weekStartDay = 1,
     setWeekStartDay,
     appBadgeMode = 'off',
@@ -66,6 +74,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     syncStatus,
     pendingSyncCount,
   } = useTaskStore();
+  const effectiveLanguagePref: LanguagePreference =
+    storeLanguagePreference ?? activeLangPref ?? 'system';
 
   const [savedUsername, setSavedUsername] = useState<string | null>(null);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
@@ -96,7 +106,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [clearedAiCache, setClearedAiCache] = useState(false);
   const aiCacheTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
+  const [isUpToDateNotice, setIsUpToDateNotice] = useState(false);
   const updateStatusTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
@@ -110,12 +120,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
     const info = await checkForUpdate(true);
     if (info?.isAvailable) {
-      setUpdateStatusMsg(null);
+      setIsUpToDateNotice(false);
     } else {
-      setUpdateStatusMsg('✓ Up to date');
+      setIsUpToDateNotice(true);
       if (updateStatusTimerRef.current) clearTimeout(updateStatusTimerRef.current);
       updateStatusTimerRef.current = setTimeout(() => {
-        setUpdateStatusMsg(null);
+        setIsUpToDateNotice(false);
       }, 4000);
     }
   };
@@ -164,8 +174,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleToggleBiometric = async (value: boolean) => {
     const promptReason = value
-      ? 'Verify identity to enable Biometric Lock'
-      : 'Verify identity to disable Biometric Lock';
+      ? t('lock.enableBiometricReason')
+      : t('lock.disableBiometricReason');
     try {
       const passed = await authenticateWithBiometrics(promptReason);
       if (!passed) {
@@ -195,7 +205,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       resetTimerRef.current = setTimeout(() => setResetSuccess(false), 2500);
     } catch (err: any) {
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
-      setResetError(err?.message || 'Failed to sync from server.');
+      setResetError(err?.message || t('settings.failedSyncFromServer'));
     } finally {
       setIsResetting(false);
     }
@@ -205,12 +215,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (isResetting) return;
     const message =
       pendingSyncCount > 0
-        ? `You have ${pendingSyncCount} unsynced offline change(s) that will be permanently discarded. Replace all local data with server data?`
-        : 'This will clear local cached data and re-download all lists and tasks from the server. Continue?';
+        ? t('settings.overwriteConfirmPending', { count: pendingSyncCount })
+        : t('settings.overwriteConfirmClean');
 
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-        if (window.confirm(`Overwrite & Sync from Server\n\n${message}`)) {
+        if (window.confirm(`${t('settings.overwriteTitle')}\n\n${message}`)) {
           executeResetAndSync();
         }
       } else {
@@ -219,10 +229,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       return;
     }
 
-    Alert.alert('Overwrite & Sync from Server', message, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('settings.overwriteTitle'), message, [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Overwrite',
+        text: t('settings.overwriteBtn'),
         style: 'destructive',
         onPress: () => executeResetAndSync(),
       },
@@ -238,10 +248,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleRequestLogout = () => {
     if (pendingSyncCount > 0) {
-      const message = `You have ${pendingSyncCount} unsynced offline change(s). Logging out now will permanently discard them. Log out anyway?`;
+      const message = t('settings.logoutConfirmPending', { count: pendingSyncCount });
       if (Platform.OS === 'web') {
         if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-          if (window.confirm(`Unsynced Changes\n\n${message}`)) {
+          if (window.confirm(`${t('lock.unsyncedTitle')}\n\n${message}`)) {
             executeLogout();
           }
         } else {
@@ -250,10 +260,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         return;
       }
 
-      Alert.alert('Unsynced Changes', message, [
-        { text: 'Cancel', style: 'cancel' },
+      Alert.alert(t('lock.unsyncedTitle'), message, [
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Log Out',
+          text: t('settings.logOut'),
           style: 'destructive',
           onPress: executeLogout,
         },
@@ -275,16 +285,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const syncStatusLabel =
     syncStatus === 'synced'
-      ? '● Synced'
+      ? t('settings.statusSynced')
       : syncStatus === 'syncing'
-      ? 'Syncing...'
+      ? t('settings.statusSyncing')
       : (syncStatus as string) === 'auth_required'
       ? pendingSyncCount > 0
-        ? `Sign-in required (${pendingSyncCount} pending)`
-        : 'Sign-in required'
+        ? t('settings.statusSignInPending', { count: pendingSyncCount })
+        : t('settings.statusSignIn')
       : pendingSyncCount > 0
-      ? `● Offline (${pendingSyncCount} pending)`
-      : '● Offline';
+      ? t('settings.statusOfflinePending', { count: pendingSyncCount })
+      : t('settings.statusOffline');
 
   const secondaryBtnSurface = {
     backgroundColor: theme.colors.surfaceSecondary,
@@ -319,14 +329,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               },
             ]}
           >
-            <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Settings</Text>
+            <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
+              {t('settings.title')}
+            </Text>
             <TouchableOpacity
               testID="close-settings-btn"
               style={styles.closeBtn}
               onPress={onClose}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityRole="button"
-              accessibilityLabel="Close settings"
+              accessibilityLabel={t('settings.closeA11y')}
             >
               <Text style={[styles.closeBtnText, { color: theme.colors.textSecondary }]}>✕</Text>
             </TouchableOpacity>
@@ -345,8 +357,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
                 {pendingConfirmAction === 'reset'
-                  ? 'Overwrite local data and re-sync from server?'
-                  : `Discard ${pendingSyncCount} unsynced change(s) and log out?`}
+                  ? t('settings.overwriteBannerConfirm')
+                  : t('settings.logoutBannerConfirm', { count: pendingSyncCount })}
               </Text>
               <View style={styles.confirmBannerActions}>
                 <TouchableOpacity
@@ -356,7 +368,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   accessibilityRole="button"
                 >
                   <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
-                    Cancel
+                    {t('common.cancel')}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -366,7 +378,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   accessibilityRole="button"
                 >
                   <Text style={styles.confirmProceedBtnText}>
-                    {pendingConfirmAction === 'reset' ? 'Overwrite' : 'Log Out'}
+                    {pendingConfirmAction === 'reset'
+                      ? t('settings.overwriteBtn')
+                      : t('settings.logOut')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -389,10 +403,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ]}
             >
               <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                ACCOUNT
+                {t('settings.accountSection')}
               </Text>
               <View style={styles.infoRow}>
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Server</Text>
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                  {t('settings.server')}
+                </Text>
                 <Text style={[styles.infoValue, { color: theme.colors.text }]} numberOfLines={1}>
                   {serverUrl}
                 </Text>
@@ -406,12 +422,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   },
                 ]}
               >
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>User</Text>
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                  {t('settings.user')}
+                </Text>
                 <Text
                   testID="settings-display-username"
                   style={[styles.infoValue, { color: theme.colors.text }]}
                 >
-                  {displayUsername ? `@${displayUsername}` : 'Connected'}
+                  {displayUsername ? `@${displayUsername}` : t('settings.connected')}
                 </Text>
               </View>
             </View>
@@ -427,13 +445,78 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ]}
             >
               <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                PREFERENCES
+                {t('settings.preferencesSection')}
               </Text>
+
+              {/* Language Selector */}
               <View style={styles.settingBlock}>
+                <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                  {t('settings.language')}
+                </Text>
+                <View style={styles.presetChipsRow}>
+                  {(
+                    [
+                      { key: 'system', label: t('settings.langSystem') },
+                      { key: 'en', label: 'English' },
+                      { key: 'bg', label: 'Български' },
+                      { key: 'es', label: 'Español' },
+                    ] as { key: LanguagePreference; label: string }[]
+                  ).map((opt) => {
+                    const isSelected = effectiveLanguagePref === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        testID={`settings-lang-${opt.key}`}
+                        style={[
+                          styles.presetChip,
+                          isSelected
+                            ? {
+                                backgroundColor: theme.colors.accent,
+                                borderColor: theme.colors.accent,
+                              }
+                            : secondaryBtnSurface,
+                        ]}
+                        onPress={() => {
+                          if (setStoreLanguagePreference) {
+                            setStoreLanguagePreference(opt.key);
+                          } else {
+                            setI18nLanguagePreference(opt.key);
+                          }
+                          safeHaptics.selection();
+                        }}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                      >
+                        <Text
+                          style={[
+                            styles.presetChipText,
+                            {
+                              color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
+                              fontWeight: isSelected ? '700' : '500',
+                            },
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View
+                style={[
+                  styles.settingBlock,
+                  {
+                    borderTopColor: theme.colors.cardBorder,
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}
+              >
                 <View style={styles.settingRow}>
                   <View style={styles.settingTextCol}>
                     <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                      Task Box Size
+                      {t('settings.taskBoxSize')}
                     </Text>
                   </View>
                   <View style={styles.stepperContainer}>
@@ -452,7 +535,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       accessibilityRole="button"
-                      accessibilityLabel="Decrease task box size"
+                      accessibilityLabel={t('settings.decreaseBoxSizeA11y')}
                     >
                       <Text
                         style={[
@@ -491,7 +574,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       accessibilityRole="button"
-                      accessibilityLabel="Increase task box size"
+                      accessibilityLabel={t('settings.increaseBoxSizeA11y')}
                     >
                       <Text
                         style={[
@@ -555,7 +638,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <View style={[styles.settingRow, { marginTop: 14 }]}>
                   <View style={styles.settingTextCol}>
                     <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                      Task Text Size
+                      {t('settings.taskTextSize')}
                     </Text>
                   </View>
                   <View style={styles.stepperContainer}>
@@ -574,7 +657,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       accessibilityRole="button"
-                      accessibilityLabel="Decrease task text size"
+                      accessibilityLabel={t('settings.decreaseTextSizeA11y')}
                     >
                       <Text
                         style={[
@@ -613,7 +696,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       accessibilityRole="button"
-                      accessibilityLabel="Increase task text size"
+                      accessibilityLabel={t('settings.increaseTextSizeA11y')}
                     >
                       <Text
                         style={[
@@ -704,10 +787,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               >
                 <View style={styles.settingTextCol}>
                   <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                    Re-enable Staple Tasks
+                    {t('settings.reenableStaples')}
                   </Text>
                   <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
-                    Suggest completed items when typing
+                    {t('settings.reenableStaplesSub')}
                   </Text>
                 </View>
                 <Switch
@@ -735,14 +818,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   },
                 ]}
               >
-                <Text style={[styles.settingTitle, { color: theme.colors.text }]}>Appearance</Text>
+                <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                  {t('settings.appearance')}
+                </Text>
                 <View style={styles.presetChipsRow}>
                   {(
                     [
-                      { key: 'system', label: 'System' },
-                      { key: 'light', label: 'Light' },
-                      { key: 'dark', label: 'Dark' },
-                      { key: 'oled', label: 'OLED' },
+                      { key: 'system', label: t('settings.themeSystem') },
+                      { key: 'light', label: t('settings.themeLight') },
+                      { key: 'dark', label: t('settings.themeDark') },
+                      { key: 'oled', label: t('settings.themeOled') },
                     ] as { key: ThemeMode; label: string }[]
                   ).map((opt) => {
                     const isSelected = themeMode === opt.key;
@@ -794,13 +879,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ]}
               >
                 <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                  Start Week On
+                  {t('settings.startWeekOn')}
                 </Text>
                 <View style={styles.presetChipsRow}>
                   {(
                     [
-                      { day: 1, label: 'Monday' },
-                      { day: 0, label: 'Sunday' },
+                      { day: 1, label: t('settings.monday') },
+                      { day: 0, label: t('settings.sunday') },
                     ] as { day: WeekStartDay; label: string }[]
                   ).map((opt) => {
                     const isSelected = weekStartDay === opt.day;
@@ -853,14 +938,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   ]}
                 >
                   <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                    App Icon Badge
+                    {t('settings.appIconBadge')}
                   </Text>
                   <View style={styles.presetChipsRow}>
                     {(
                       [
-                        { key: 'off', label: 'Off' },
-                        { key: 'overdue', label: 'Overdue' },
-                        { key: 'due_today', label: 'Due Today' },
+                        { key: 'off', label: t('settings.badgeOff') },
+                        { key: 'overdue', label: t('settings.badgeOverdue') },
+                        { key: 'due_today', label: t('settings.badgeDueToday') },
                       ] as { key: AppBadgeMode; label: string }[]
                     ).map((opt) => {
                       const isSelected = appBadgeMode === opt.key;
@@ -914,7 +999,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 >
                   <View style={styles.settingTextCol}>
                     <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-                      Biometric Lock
+                      {t('settings.biometricLock')}
                     </Text>
                   </View>
                   <Switch
@@ -943,7 +1028,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  ORGANIZATION
+                  {t('settings.organizationSection')}
                 </Text>
                 <TouchableOpacity
                   testID="settings-manage-labels-btn"
@@ -957,7 +1042,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   accessibilityRole="button"
                 >
                   <Text style={[styles.menuRowTitle, { color: theme.colors.text }]}>
-                    Manage Labels
+                    {t('labels.manageLabels')}
                   </Text>
                   <Text style={[styles.menuRowArrow, { color: theme.colors.textSecondary }]}>›</Text>
                 </TouchableOpacity>
@@ -977,17 +1062,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  SMART GROUPING
+                  {t('settings.smartGroupingSection')}
                 </Text>
                 <View style={styles.infoRow}>
                   <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
-                    Mode
+                    {t('settings.mode')}
                   </Text>
                   <Text
                     testID="settings-aicore-engine-label"
                     style={[styles.infoValue, { color: theme.colors.textSecondary }]}
                   >
-                    {hasLivePromptApi ? 'Gemini Nano (On-Device)' : 'On-Device Heuristics'}
+                    {hasLivePromptApi
+                      ? t('settings.geminiNano')
+                      : t('settings.onDeviceHeuristics')}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -1008,7 +1095,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       { color: clearedAiCache ? theme.colors.success : theme.colors.text },
                     ]}
                   >
-                    {clearedAiCache ? '✓ Cache cleared' : 'Clear Category Cache'}
+                    {clearedAiCache
+                      ? t('settings.cacheCleared')
+                      : t('settings.clearCategoryCache')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1027,7 +1116,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ]}
               >
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                  APP UPDATES
+                  {t('settings.appUpdatesSection')}
                 </Text>
 
                 {updateInfo?.isAvailable ? (
@@ -1037,10 +1126,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <>
                         <View style={styles.infoRow}>
                           <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
-                            Available
+                            {t('settings.available')}
                           </Text>
                           <Text style={[styles.infoValue, { color: theme.colors.text }]}>
-                            {nextVer ? `v${nextVer}` : 'New version'}
+                            {nextVer ? `v${nextVer}` : t('settings.newVersion')}
                           </Text>
                         </View>
                         <TouchableOpacity
@@ -1054,7 +1143,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           accessibilityRole="button"
                         >
                           <Text style={styles.primaryActionBtnText}>
-                            {nextVer ? `Update to v${nextVer}` : 'Update Now'}
+                            {nextVer
+                              ? t('settings.updateToVersion', { version: nextVer })
+                              : t('settings.updateNow')}
                           </Text>
                         </TouchableOpacity>
                       </>
@@ -1083,7 +1174,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             { color: theme.colors.textSecondary },
                           ]}
                         >
-                          Checking...
+                          {t('settings.checking')}
                         </Text>
                       </View>
                     ) : (
@@ -1091,13 +1182,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         style={[
                           styles.secondaryActionText,
                           {
-                            color: updateStatusMsg
+                            color: isUpToDateNotice
                               ? theme.colors.success
                               : theme.colors.text,
                           },
                         ]}
                       >
-                        {updateStatusMsg || 'Check for Updates'}
+                        {isUpToDateNotice ? t('settings.upToDate') : t('settings.checkForUpdates')}
                       </Text>
                     )}
                   </TouchableOpacity>
@@ -1116,10 +1207,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ]}
             >
               <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                SYNC
+                {t('settings.syncSection')}
               </Text>
               <View style={styles.infoRow}>
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Status</Text>
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                  {t('settings.status')}
+                </Text>
                 <Text
                   testID="settings-sync-status-text"
                   style={[styles.infoValue, { color: syncStatusColor }]}
@@ -1155,16 +1248,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <Text
                       style={[styles.secondaryActionText, { color: theme.colors.textSecondary }]}
                     >
-                      Syncing from server...
+                      {t('settings.syncingFromServer')}
                     </Text>
                   </View>
                 ) : resetSuccess ? (
                   <Text style={[styles.secondaryActionText, { color: theme.colors.success }]}>
-                    ✓ Synced
+                    {t('settings.syncedDone')}
                   </Text>
                 ) : (
                   <Text style={[styles.secondaryActionText, { color: theme.colors.text }]}>
-                    Overwrite & Sync from Server
+                    {t('settings.overwriteAndSync')}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -1189,7 +1282,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 activeOpacity={0.8}
                 accessibilityRole="button"
               >
-                <Text style={[styles.logoutBtnText, { color: theme.colors.danger }]}>Log Out</Text>
+                <Text style={[styles.logoutBtnText, { color: theme.colors.danger }]}>
+                  {t('settings.logOut')}
+                </Text>
               </TouchableOpacity>
             )}
 

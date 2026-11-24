@@ -137,8 +137,9 @@ Tap any task to view or edit all of its details:
   <img src="assets/screenshots/06-tablet-split-view.png" width="620" alt="Tablet split-screen layout" />
 </p>
 
-### Themes & Sizing
+### Themes, Language & Sizing
 Open **Settings → Preferences** to customize the display:
+- **Language:** Choose **`System`** (automatic), **`English`**, **`Български`** (Bulgarian), or **`Español`** (Spanish). Quick-add shortcuts (such as `утре в 18:30`, `всеки 2 дни`, `!висок` in Bulgarian or `mañana a las 18:30`, `cada 2 días`, `!alta` in Spanish) and smart supermarket aisle grouping work across all three languages. You can also switch languages directly on the sign-in screen.
 - **Appearance:** Choose **`System`**, **`Light`**, **`Dark`**, or **`OLED`** (pure black background for AMOLED screens and dark rooms).
 - **Card & Text Size:** Adjust **Task Box Size** and **Task Text Size** independently from `100%` up to `200%`.
 

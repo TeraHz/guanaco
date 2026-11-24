@@ -266,5 +266,67 @@ describe('Quick Add Magic Parser', () => {
       expect(result.priority).toBe(3);
       expectSameLocalDay(result.dueDate, 2026, 8, 25);
     });
+
+    it('parses natural-language Bulgarian quick-add dates, times, priorities, weekdays, and recurrence', () => {
+      const r1 = parseQuickAdd(
+        'Купи прясно мляко #пазар утре в 18:30 всеки 2 дни !висок',
+        referenceDate
+      );
+      expect(r1.title).toBe('Купи прясно мляко');
+      expect(r1.labels).toEqual(['пазар']);
+      expect(r1.priority).toBe(3);
+      expectSameLocalDay(r1.dueDate, 2026, 8, 21);
+      expect(new Date(r1.dueDate!).getHours()).toBe(18);
+      expect(new Date(r1.dueDate!).getMinutes()).toBe(30);
+      expect(r1.repeatAfter).toBe(2 * 86400);
+
+      const r2 = parseQuickAdd('Плати тока след 3 дни !спешно', referenceDate);
+      expect(r2.title).toBe('Плати тока');
+      expect(r2.priority).toBe(4);
+      expectSameLocalDay(r2.dueDate, 2026, 8, 23);
+
+      const rWeekday = parseQuickAdd('Зъболекар в петък в 14:00', referenceDate);
+      expect(rWeekday.title).toBe('Зъболекар');
+      expectSameLocalDay(rWeekday.dueDate, 2026, 8, 25);
+      expect(new Date(rWeekday.dueDate!).getHours()).toBe(14);
+
+      const rMonthly = parseQuickAdd('Наем всеки месец @днес', referenceDate);
+      expect(rMonthly.title).toBe('Наем');
+      expect(rMonthly.assignees).toEqual([]);
+      expectSameLocalDay(rMonthly.dueDate, 2026, 8, 20);
+      expect(rMonthly.repeatAfter).toBe(2592000);
+      expect(rMonthly.repeatMode).toBe(RepeatMode.Monthly);
+    });
+
+    it('parses natural-language Spanish quick-add dates, times, priorities, weekdays, and recurrence', () => {
+      const r1 = parseQuickAdd(
+        'Comprar leche fresca #super mañana a las 18:30 cada 2 días !alta',
+        referenceDate
+      );
+      expect(r1.title).toBe('Comprar leche fresca');
+      expect(r1.labels).toEqual(['super']);
+      expect(r1.priority).toBe(3);
+      expectSameLocalDay(r1.dueDate, 2026, 8, 21);
+      expect(new Date(r1.dueDate!).getHours()).toBe(18);
+      expect(new Date(r1.dueDate!).getMinutes()).toBe(30);
+      expect(r1.repeatAfter).toBe(2 * 86400);
+
+      const r2 = parseQuickAdd('Pagar factura en 4 días !urgente', referenceDate);
+      expect(r2.title).toBe('Pagar factura');
+      expect(r2.priority).toBe(4);
+      expectSameLocalDay(r2.dueDate, 2026, 8, 24);
+
+      const rWeekday = parseQuickAdd('Dentista el viernes a las 14:00', referenceDate);
+      expect(rWeekday.title).toBe('Dentista');
+      expectSameLocalDay(rWeekday.dueDate, 2026, 8, 25);
+      expect(new Date(rWeekday.dueDate!).getHours()).toBe(14);
+
+      const rMonthly = parseQuickAdd('Pagar alquiler cada mes @hoy', referenceDate);
+      expect(rMonthly.title).toBe('Pagar alquiler');
+      expect(rMonthly.assignees).toEqual([]);
+      expectSameLocalDay(rMonthly.dueDate, 2026, 8, 20);
+      expect(rMonthly.repeatAfter).toBe(2592000);
+      expect(rMonthly.repeatMode).toBe(RepeatMode.Monthly);
+    });
   });
 });

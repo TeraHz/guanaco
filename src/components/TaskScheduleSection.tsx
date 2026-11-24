@@ -25,6 +25,7 @@ import {
   TimeUnit,
 } from '../utils/repeat';
 import { formatReminderDescription } from '../utils/reminders';
+import { getFormattingLocale, TranslationKey, useTranslation } from '../i18n';
 
 export interface TaskScheduleSectionProps {
   dueDate?: string | null;
@@ -57,15 +58,11 @@ function formatLocalTimeInput(d: Date): string {
   return `${h}:${min}`;
 }
 
-const FIELD_LABELS: Record<ScheduleField, string> = {
-  dueDate: 'Due',
-  startDate: 'Start',
-  endDate: 'End',
+const FIELD_LABEL_KEYS: Record<ScheduleField, TranslationKey> = {
+  dueDate: 'schedule.fieldDue',
+  startDate: 'schedule.fieldStart',
+  endDate: 'schedule.fieldEnd',
 };
-
-function getFieldLabel(field: ScheduleField): string {
-  return Object.prototype.hasOwnProperty.call(FIELD_LABELS, field) ? FIELD_LABELS[field] : 'Date';
-}
 
 export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
   dueDate,
@@ -82,6 +79,13 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
   onChangeReminders,
 }) => {
   const theme = useAppTheme();
+  const { t, locale } = useTranslation();
+  const fmtLocale = getFormattingLocale(locale);
+
+  const getFieldLabel = (field: ScheduleField): string =>
+    Object.prototype.hasOwnProperty.call(FIELD_LABEL_KEYS, field)
+      ? t(FIELD_LABEL_KEYS[field])
+      : t('schedule.fieldDateFallback');
 
   const safeDueDate = normalizeVikunjaDate(dueDate);
   const safeStartDate = normalizeVikunjaDate(startDate);
@@ -164,7 +168,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
     }
 
     if (safeStartDate && candidateDate.getTime() < new Date(safeStartDate).getTime()) {
-      setDateValidationError('End date cannot be earlier than start date.');
+      setDateValidationError(t('taskDetail.endBeforeStartError'));
       return false;
     }
 
@@ -283,7 +287,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
     if (mode === 'date') {
       const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (!m) {
-        setWebInputError('Enter a valid date as YYYY-MM-DD.');
+        setWebInputError(t('schedule.webInvalidDateFormat'));
         return;
       }
       const year = parseInt(m[1], 10);
@@ -296,7 +300,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
         candidate.getMonth() !== monthIdx ||
         candidate.getDate() !== day
       ) {
-        setWebInputError('Invalid calendar date.');
+        setWebInputError(t('schedule.webInvalidCalendarDate'));
         return;
       }
       setWebInputError(null);
@@ -308,13 +312,13 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
     const tm = raw.match(/^(\d{1,2}):(\d{2})$/);
     if (!tm) {
-      setWebInputError('Enter time in 24-hour format HH:MM.');
+      setWebInputError(t('schedule.webInvalidTimeFormat'));
       return;
     }
     const hours = parseInt(tm[1], 10);
     const minutes = parseInt(tm[2], 10);
     if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-      setWebInputError('Hours must be 00–23 and minutes 00–59.');
+      setWebInputError(t('schedule.webInvalidHoursMinutes'));
       return;
     }
     const candidate = getBaseDateForField(field);
@@ -361,11 +365,11 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
     repeatMode
   ) || { amount: 2, unit: 'days' as TimeUnit };
   const customUnits: { key: TimeUnit; label: string }[] = [
-    { key: 'hours', label: 'Hours' },
-    { key: 'days', label: 'Days' },
-    { key: 'weeks', label: 'Weeks' },
-    { key: 'months', label: 'Months' },
-    { key: 'years', label: 'Years' },
+    { key: 'hours', label: t('schedule.unitHours') },
+    { key: 'days', label: t('schedule.unitDays') },
+    { key: 'weeks', label: t('schedule.unitWeeks') },
+    { key: 'months', label: t('schedule.unitMonths') },
+    { key: 'years', label: t('schedule.unitYears') },
   ];
   const derivedUnit: TimeUnit = customUnits.some((u) => u.key === parsedCustomInterval.unit)
     ? parsedCustomInterval.unit
@@ -412,16 +416,20 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
     <View style={styles.container}>
       {/* DUE DATE SECTION */}
       <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}>DUE DATE</Text>
+        <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}>
+          {t('schedule.dueDateSection')}
+        </Text>
         {safeDueDate && (
           <TouchableOpacity
             testID="clear-due-date-btn"
             onPress={handleClearDueDate}
             style={[styles.clearBtn, secondarySurface]}
             accessibilityRole="button"
-            accessibilityLabel="Clear due date"
+            accessibilityLabel={t('schedule.clearDueDateA11y')}
           >
-            <Text style={[styles.clearBtnText, { color: theme.colors.textSecondary }]}>Clear</Text>
+            <Text style={[styles.clearBtnText, { color: theme.colors.textSecondary }]}>
+              {t('common.clear')}
+            </Text>
           </TouchableOpacity>
         )}
       </View>
@@ -436,7 +444,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           ]}
           onPress={() => openPicker('dueDate', 'date')}
           accessibilityRole="button"
-          accessibilityLabel="Select due date"
+          accessibilityLabel={t('schedule.selectDueDateA11y')}
         >
           <Text
             style={[
@@ -444,7 +452,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               { color: safeDueDate ? theme.colors.text : theme.colors.textSecondary },
             ]}
           >
-            {safeDueDate ? formatDateDisplay(safeDueDate) : 'Not set'}
+            {safeDueDate ? formatDateDisplay(safeDueDate) : t('schedule.notSet')}
           </Text>
         </TouchableOpacity>
 
@@ -457,10 +465,13 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             ]}
             onPress={() => openPicker('dueDate', 'time')}
             accessibilityRole="button"
-            accessibilityLabel="Select due time"
+            accessibilityLabel={t('schedule.selectDueTimeA11y')}
           >
             <Text style={[styles.dateBadgeText, { color: theme.colors.accent }]}>
-              {new Date(safeDueDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {new Date(safeDueDate).toLocaleTimeString(fmtLocale, {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
             </Text>
           </TouchableOpacity>
         )}
@@ -474,7 +485,9 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           onPress={() => handleApplyPreset('today')}
           accessibilityRole="button"
         >
-          <Text style={[styles.presetText, { color: theme.colors.text }]}>Today</Text>
+          <Text style={[styles.presetText, { color: theme.colors.text }]}>
+            {t('schedule.today')}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -483,7 +496,9 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           onPress={() => handleApplyPreset('tomorrow')}
           accessibilityRole="button"
         >
-          <Text style={[styles.presetText, { color: theme.colors.text }]}>Tomorrow</Text>
+          <Text style={[styles.presetText, { color: theme.colors.text }]}>
+            {t('schedule.tomorrow')}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -492,7 +507,9 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           onPress={() => handleApplyPreset('this_weekend')}
           accessibilityRole="button"
         >
-          <Text style={[styles.presetText, { color: theme.colors.text }]}>Weekend</Text>
+          <Text style={[styles.presetText, { color: theme.colors.text }]}>
+            {t('schedule.weekend')}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -501,16 +518,18 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           onPress={() => handleApplyPreset('next_week')}
           accessibilityRole="button"
         >
-          <Text style={[styles.presetText, { color: theme.colors.text }]}>Next Week</Text>
+          <Text style={[styles.presetText, { color: theme.colors.text }]}>
+            {t('schedule.nextWeek')}
+          </Text>
         </TouchableOpacity>
       </View>
 
       {/* Postpone / Defer Shortcuts */}
       <View style={[styles.presetsRow, { marginTop: 8 }]}>
         {[
-          { days: 1, label: '+1d', testID: 'postpone-1d' },
-          { days: 3, label: '+3d', testID: 'postpone-3d' },
-          { days: 7, label: '+1w', testID: 'postpone-1w' },
+          { days: 1, label: t('schedule.postpone1d'), testID: 'postpone-1d' },
+          { days: 3, label: t('schedule.postpone3d'), testID: 'postpone-3d' },
+          { days: 7, label: t('schedule.postpone1w'), testID: 'postpone-1w' },
         ].map((item) => (
           <TouchableOpacity
             key={item.testID}
@@ -518,7 +537,11 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             style={[styles.presetChip, secondarySurface]}
             onPress={() => handlePostponeByDays(item.days)}
             accessibilityRole="button"
-            accessibilityLabel={`Postpone by ${item.days} day${item.days > 1 ? 's' : ''}`}
+            accessibilityLabel={
+              item.days === 1
+                ? t('schedule.postponeOneDayA11y')
+                : t('schedule.postponeDaysA11y', { days: item.days })
+            }
           >
             <Text style={[styles.presetText, { color: theme.colors.textSecondary }]}>
               {item.label}
@@ -529,12 +552,14 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
       {/* START & END DATES SECTION */}
       <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary, marginTop: 18 }]}>
-        START & END DATES
+        {t('schedule.startEndSection')}
       </Text>
       <View style={styles.startEndRow}>
         {/* Start Date */}
         <View style={styles.startEndCol}>
-          <Text style={[styles.subLabel, { color: theme.colors.textSecondary }]}>Starts</Text>
+          <Text style={[styles.subLabel, { color: theme.colors.textSecondary }]}>
+            {t('schedule.starts')}
+          </Text>
           <TouchableOpacity
             testID="picker-start-date-trigger"
             style={[
@@ -543,7 +568,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             ]}
             onPress={() => openPicker('startDate', 'date')}
             accessibilityRole="button"
-            accessibilityLabel="Select start date"
+            accessibilityLabel={t('schedule.selectStartDateA11y')}
           >
             <Text
               style={[
@@ -551,7 +576,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                 { color: safeStartDate ? theme.colors.text : theme.colors.textSecondary },
               ]}
             >
-              {safeStartDate ? formatDateDisplay(safeStartDate) : 'Not set'}
+              {safeStartDate ? formatDateDisplay(safeStartDate) : t('schedule.notSet')}
             </Text>
           </TouchableOpacity>
           {safeStartDate && (
@@ -564,10 +589,10 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                 ]}
                 onPress={() => openPicker('startDate', 'time')}
                 accessibilityRole="button"
-                accessibilityLabel="Select start time"
+                accessibilityLabel={t('schedule.selectStartTimeA11y')}
               >
                 <Text style={[styles.dateBadgeText, { color: theme.colors.accent, fontSize: 12 }]}>
-                  {new Date(safeStartDate).toLocaleTimeString([], {
+                  {new Date(safeStartDate).toLocaleTimeString(fmtLocale, {
                     hour: '2-digit',
                     minute: '2-digit',
                   })}
@@ -578,10 +603,10 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                 onPress={handleClearStartDate}
                 style={[styles.clearBtn, secondarySurface]}
                 accessibilityRole="button"
-                accessibilityLabel="Clear start date"
+                accessibilityLabel={t('schedule.clearStartDateA11y')}
               >
                 <Text style={[styles.clearBtnText, { color: theme.colors.textSecondary }]}>
-                  Clear
+                  {t('common.clear')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -590,7 +615,9 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
         {/* End Date */}
         <View style={styles.startEndCol}>
-          <Text style={[styles.subLabel, { color: theme.colors.textSecondary }]}>Ends</Text>
+          <Text style={[styles.subLabel, { color: theme.colors.textSecondary }]}>
+            {t('schedule.ends')}
+          </Text>
           <TouchableOpacity
             testID="picker-end-date-trigger"
             style={[
@@ -599,7 +626,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             ]}
             onPress={() => openPicker('endDate', 'date')}
             accessibilityRole="button"
-            accessibilityLabel="Select end date"
+            accessibilityLabel={t('schedule.selectEndDateA11y')}
           >
             <Text
               style={[
@@ -607,7 +634,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                 { color: safeEndDate ? theme.colors.text : theme.colors.textSecondary },
               ]}
             >
-              {safeEndDate ? formatDateDisplay(safeEndDate) : 'Not set'}
+              {safeEndDate ? formatDateDisplay(safeEndDate) : t('schedule.notSet')}
             </Text>
           </TouchableOpacity>
           {safeEndDate && (
@@ -620,10 +647,10 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                 ]}
                 onPress={() => openPicker('endDate', 'time')}
                 accessibilityRole="button"
-                accessibilityLabel="Select end time"
+                accessibilityLabel={t('schedule.selectEndTimeA11y')}
               >
                 <Text style={[styles.dateBadgeText, { color: theme.colors.accent, fontSize: 12 }]}>
-                  {new Date(safeEndDate).toLocaleTimeString([], {
+                  {new Date(safeEndDate).toLocaleTimeString(fmtLocale, {
                     hour: '2-digit',
                     minute: '2-digit',
                   })}
@@ -634,10 +661,10 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                 onPress={handleClearEndDate}
                 style={[styles.clearBtn, secondarySurface]}
                 accessibilityRole="button"
-                accessibilityLabel="Clear end date"
+                accessibilityLabel={t('schedule.clearEndDateA11y')}
               >
                 <Text style={[styles.clearBtnText, { color: theme.colors.textSecondary }]}>
-                  Clear
+                  {t('common.clear')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -664,7 +691,9 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           ]}
         >
           <Text style={[styles.pickerCardTitle, { color: theme.colors.text }]}>
-            Set {getFieldLabel(activePicker.field)} {activePicker.mode === 'date' ? 'Date' : 'Time'}
+            {t(activePicker.mode === 'date' ? 'schedule.setFieldDate' : 'schedule.setFieldTime', {
+              field: getFieldLabel(activePicker.field),
+            })}
           </Text>
           <View style={styles.webInputRow}>
             <TextInput
@@ -693,7 +722,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               onPress={handleWebApply}
               accessibilityRole="button"
             >
-              <Text style={styles.pickerActionBtnText}>Apply</Text>
+              <Text style={styles.pickerActionBtnText}>{t('common.apply')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               testID="web-picker-cancel-btn"
@@ -704,7 +733,9 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               }}
               accessibilityRole="button"
             >
-              <Text style={[styles.pickerCancelBtnText, { color: theme.colors.text }]}>Cancel</Text>
+              <Text style={[styles.pickerCancelBtnText, { color: theme.colors.text }]}>
+                {t('common.cancel')}
+              </Text>
             </TouchableOpacity>
           </View>
           {webInputError ? (
@@ -734,11 +765,13 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               accessibilityRole="button"
             >
               <Text style={[styles.iosCancelText, { color: theme.colors.textSecondary }]}>
-                Cancel
+                {t('common.cancel')}
               </Text>
             </TouchableOpacity>
             <Text style={[styles.pickerCardTitle, { color: theme.colors.text }]}>
-              {getFieldLabel(activePicker.field)} {activePicker.mode === 'date' ? 'Date' : 'Time'}
+              {t(activePicker.mode === 'date' ? 'schedule.iosFieldDate' : 'schedule.iosFieldTime', {
+                field: getFieldLabel(activePicker.field),
+              })}
             </Text>
             <TouchableOpacity
               testID="ios-picker-done-btn"
@@ -746,13 +779,16 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               style={styles.iosToolbarBtn}
               accessibilityRole="button"
             >
-              <Text style={[styles.iosDoneText, { color: theme.colors.accent }]}>Done</Text>
+              <Text style={[styles.iosDoneText, { color: theme.colors.accent }]}>
+                {t('common.done')}
+              </Text>
             </TouchableOpacity>
           </View>
           <DateTimePicker
             value={currentPickerValue}
             mode={activePicker.mode}
             display="spinner"
+            locale={fmtLocale}
             themeVariant={theme.isDark ? 'dark' : 'light'}
             minimumDate={
               activePicker.field === 'endDate' && safeStartDate
@@ -780,7 +816,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
       {/* REPEAT SECTION */}
       <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary, marginTop: 18 }]}>
-        REPEAT
+        {t('schedule.repeatSection')}
       </Text>
       <View style={styles.presetsRow}>
         <TouchableOpacity
@@ -800,7 +836,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               { color: isNeverSelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
-            Never
+            {t('schedule.never')}
           </Text>
         </TouchableOpacity>
 
@@ -823,7 +859,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               { color: isDailySelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
-            Daily
+            {t('schedule.daily')}
           </Text>
         </TouchableOpacity>
 
@@ -846,7 +882,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               { color: isWeeklySelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
-            Weekly
+            {t('schedule.weekly')}
           </Text>
         </TouchableOpacity>
 
@@ -867,7 +903,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               { color: isMonthlySelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
-            Monthly
+            {t('schedule.monthly')}
           </Text>
         </TouchableOpacity>
 
@@ -890,7 +926,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               { color: isCustomSelected ? '#FFFFFF' : theme.colors.textSecondary },
             ]}
           >
-            Custom
+            {t('schedule.custom')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -904,7 +940,9 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           ]}
         >
           <View style={styles.customRepeatTopRow}>
-            <Text style={[styles.pickerCardTitle, { color: theme.colors.text }]}>Every</Text>
+            <Text style={[styles.pickerCardTitle, { color: theme.colors.text }]}>
+              {t('schedule.every')}
+            </Text>
             <View style={styles.customStepperRow}>
               <TouchableOpacity
                 testID="custom-repeat-decrement"
@@ -915,7 +953,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                   applyCustomRepeat(activeCustomAmount - 1, activeCustomUnit);
                 }}
                 accessibilityRole="button"
-                accessibilityLabel="Decrease repeat interval"
+                accessibilityLabel={t('schedule.decreaseRepeatA11y')}
               >
                 <Text
                   style={[
@@ -945,7 +983,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
                   applyCustomRepeat(activeCustomAmount + 1, activeCustomUnit);
                 }}
                 accessibilityRole="button"
-                accessibilityLabel="Increase repeat interval"
+                accessibilityLabel={t('schedule.increaseRepeatA11y')}
               >
                 <Text style={[styles.customStepperText, { color: theme.colors.accent }]}>+</Text>
               </TouchableOpacity>
@@ -1008,7 +1046,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             ]}
             numberOfLines={1}
           >
-            From Due Date
+            {t('schedule.fromDueDate')}
           </Text>
         </TouchableOpacity>
 
@@ -1037,7 +1075,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             ]}
             numberOfLines={1}
           >
-            Monthly
+            {t('schedule.monthly')}
           </Text>
         </TouchableOpacity>
 
@@ -1066,7 +1104,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             ]}
             numberOfLines={1}
           >
-            After Completion
+            {t('schedule.afterCompletion')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -1082,14 +1120,18 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
       {/* REMINDERS SECTION */}
       <View style={[styles.sectionHeader, { marginTop: 18 }]}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}>REMINDERS</Text>
+        <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}>
+          {t('schedule.remindersSection')}
+        </Text>
         <TouchableOpacity
           testID="quick-add-reminder-btn"
           style={styles.addReminderBtn}
           onPress={() => setShowReminderMenu(!showReminderMenu)}
           accessibilityRole="button"
         >
-          <Text style={[styles.addReminderBtnText, { color: theme.colors.accent }]}>+ Add</Text>
+          <Text style={[styles.addReminderBtnText, { color: theme.colors.accent }]}>
+            {t('schedule.addReminderBtn')}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -1106,7 +1148,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             onPress={() => handleAddReminderPreset(0)}
           >
             <Text style={[styles.reminderMenuItemText, { color: theme.colors.text }]}>
-              At time of event
+              {t('schedule.atTimeOfEvent')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -1115,7 +1157,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             onPress={() => handleAddReminderPreset(-900)}
           >
             <Text style={[styles.reminderMenuItemText, { color: theme.colors.text }]}>
-              15 minutes before
+              {t('schedule.15mBefore')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -1124,7 +1166,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             onPress={() => handleAddReminderPreset(-3600)}
           >
             <Text style={[styles.reminderMenuItemText, { color: theme.colors.text }]}>
-              1 hour before
+              {t('schedule.1hBefore')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -1133,7 +1175,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             onPress={() => handleAddReminderPreset(-86400)}
           >
             <Text style={[styles.reminderMenuItemText, { color: theme.colors.text }]}>
-              1 day before
+              {t('schedule.1dBefore')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1142,7 +1184,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
       {/* Reminders List */}
       {reminders.length === 0 ? (
         <Text style={[styles.emptyRemindersText, { color: theme.colors.textSecondary }]}>
-          No reminders
+          {t('schedule.noReminders')}
         </Text>
       ) : (
         reminders.map((reminder, idx) => (
@@ -1158,7 +1200,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
               style={styles.removeReminderBtn}
               onPress={() => handleRemoveReminder(idx)}
               accessibilityRole="button"
-              accessibilityLabel={`Remove reminder ${idx + 1}`}
+              accessibilityLabel={t('schedule.removeReminderA11y', { index: idx + 1 })}
             >
               <Text style={[styles.removeReminderBtnText, { color: theme.colors.danger }]}>✕</Text>
             </TouchableOpacity>

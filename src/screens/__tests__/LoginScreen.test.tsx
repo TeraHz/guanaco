@@ -1,16 +1,23 @@
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, cleanup } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ReactNative from 'react-native';
 import { LoginScreen } from '../LoginScreen';
 import { VikunjaApiError } from '../../api/client';
+import { setActiveLanguagePreference } from '../../i18n';
 
 describe('LoginScreen', () => {
   const mockOnConnect = jest.fn();
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    setActiveLanguagePreference('system');
     await AsyncStorage.clear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    setActiveLanguagePreference('system');
   });
 
   it('renders hardened server URL, username, and password fields (no autoCapitalize/autoCorrect/spellCheck)', () => {
@@ -218,6 +225,24 @@ describe('LoginScreen', () => {
     fireEvent.press(bioBtn);
     await waitFor(() => {
       expect(mockBiometricUnlock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('allows switching language directly on LoginScreen before authentication', async () => {
+    const { getByTestId, getByText, getByPlaceholderText } = render(
+      <LoginScreen onConnect={mockOnConnect} />
+    );
+
+    fireEvent.press(getByTestId('login-lang-bg'));
+    await waitFor(() => {
+      expect(getByText('Свържи се')).toBeTruthy();
+      expect(getByPlaceholderText('Потребителско име')).toBeTruthy();
+    });
+
+    fireEvent.press(getByTestId('login-lang-es'));
+    await waitFor(() => {
+      expect(getByText('Conectar')).toBeTruthy();
+      expect(getByPlaceholderText('Usuario')).toBeTruthy();
     });
   });
 });

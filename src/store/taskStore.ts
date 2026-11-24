@@ -7,6 +7,7 @@ import {
   CreateProjectInput,
   CreateTaskInput,
   Label,
+  LanguagePreference,
   Project,
   Task,
   ThemeMode,
@@ -30,12 +31,19 @@ import {
   LEGACY_STORAGE_KEY_PASSWORD,
 } from '../utils/biometrics';
 import {
+  initNotifications,
   scheduleTaskReminders,
   cancelTaskReminders,
   syncAllTaskReminders,
   syncAppBadgeCount,
 } from '../services/localNotifications';
 import { clearAICoreCache } from '../utils/aiCore';
+import {
+  CACHE_KEY_LANGUAGE,
+  isValidLanguagePreference,
+  setActiveLanguagePreference,
+  t,
+} from '../i18n';
 
 const CACHE_KEY_PROJECTS = '@vikunja_cached_projects';
 const CACHE_KEY_TASKS = '@vikunja_cached_tasks';
@@ -371,6 +379,7 @@ export interface TaskState {
   taskItemScale: number; // Percentage: 100, 125, 150, 175, 200 (default: 100)
   taskItemTextScale: number; // Percentage: 100, 125, 150, 175, 200 (default: 100)
   themeMode: ThemeMode;
+  languagePreference: LanguagePreference;
   weekStartDay: WeekStartDay;
   appBadgeMode: AppBadgeMode;
   savedFilterTaskIds: Record<number, number[]>;
@@ -384,6 +393,7 @@ export interface TaskState {
   setTaskItemScale: (scale: number) => Promise<void>;
   setTaskItemTextScale: (scale: number) => Promise<void>;
   setThemeMode: (mode: ThemeMode) => Promise<void>;
+  setLanguagePreference: (pref: LanguagePreference) => Promise<void>;
   setWeekStartDay: (day: WeekStartDay) => Promise<void>;
   setAppBadgeMode: (mode: AppBadgeMode) => Promise<void>;
   setPendingOpenTaskId: (taskId: number | null) => void;
@@ -568,6 +578,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
     taskItemScale: 100,
     taskItemTextScale: 100,
     themeMode: 'system',
+    languagePreference: 'system',
     weekStartDay: 1,
     appBadgeMode: 'off',
     savedFilterTaskIds: {},
@@ -719,7 +730,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
         set({
           authRequired: false,
           syncStatus: 'offline',
-          error: 'Connection lost while renewing session. Offline changes are safe.',
+          error: t('store.connectionLostRenewing'),
         });
       };
 
@@ -732,7 +743,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
           set({
             authRequired: false,
             syncStatus: 'offline',
-            error: 'Connection lost while renewing session. Offline changes are safe.',
+            error: t('store.connectionLostRenewing'),
           });
           return;
         }
@@ -741,7 +752,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
         set({
           syncStatus: 'auth_required',
           authRequired: true,
-          error: 'Session expired. Please sign in again to sync your changes.',
+          error: t('store.sessionExpiredPleaseSignIn'),
         });
       };
 
@@ -778,6 +789,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
           taskItemTextScaleRaw,
           lastProjectRaw,
           themeModeRaw,
+          languageRaw,
           weekStartRaw,
           appBadgeModeRaw,
           savedFilterTasksRaw,
@@ -794,6 +806,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
           AsyncStorage.getItem(CACHE_KEY_TASK_ITEM_TEXT_SCALE),
           AsyncStorage.getItem(CACHE_KEY_LAST_PROJECT),
           AsyncStorage.getItem(CACHE_KEY_THEME_MODE),
+          AsyncStorage.getItem(CACHE_KEY_LANGUAGE),
           AsyncStorage.getItem(CACHE_KEY_WEEK_START_DAY),
           AsyncStorage.getItem(CACHE_KEY_APP_BADGE_MODE),
           AsyncStorage.getItem(CACHE_KEY_SAVED_FILTER_TASKS),
@@ -886,6 +899,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
         ) {
           updates.themeMode = themeModeRaw;
           setActiveThemeMode(themeModeRaw);
+        }
+
+        if (isValidLanguagePreference(languageRaw)) {
+          updates.languagePreference = languageRaw;
+          setActiveLanguagePreference(languageRaw);
         }
 
         if (weekStartRaw === '0' || weekStartRaw === '1') {
@@ -989,6 +1007,18 @@ export const useTaskStore = create<TaskState>((set, get) => {
       try {
         await AsyncStorage.setItem(CACHE_KEY_THEME_MODE, safeMode);
       } catch (_) {}
+    },
+
+    setLanguagePreference: async (pref: LanguagePreference) => {
+      const safePref: LanguagePreference = isValidLanguagePreference(pref) ? pref : 'system';
+      setActiveLanguagePreference(safePref);
+      set({ languagePreference: safePref });
+      try {
+        await AsyncStorage.setItem(CACHE_KEY_LANGUAGE, safePref);
+      } catch (_) {}
+      initNotifications()
+        .then(() => syncAllTaskReminders(get().tasks || []))
+        .catch(() => {});
     },
 
     setWeekStartDay: async (day: WeekStartDay) => {
@@ -1116,7 +1146,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       const epoch = sessionEpoch;
       const { client, projects } = get();
       if (!client) {
-        throw new Error('Network connection required to manage lists.');
+        throw new Error(t('listEditor.networkRequiredError'));
       }
       const created = await client.createProject(input);
       if (epoch !== sessionEpoch) return created;
@@ -1131,7 +1161,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       const epoch = sessionEpoch;
       const { client, projects } = get();
       if (!client) {
-        throw new Error('Network connection required to manage lists.');
+        throw new Error(t('listEditor.networkRequiredError'));
       }
       const updated = await client.updateProject(projectId, input);
       if (epoch !== sessionEpoch) return updated;
@@ -1148,7 +1178,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       const epoch = sessionEpoch;
       const { client, projects, tasks, selectedProjectId, syncQueue } = get();
       if (!client) {
-        throw new Error('Network connection required to manage lists.');
+        throw new Error(t('listEditor.networkRequiredError'));
       }
       const deletedProjectTasks = (tasks || []).filter((t) => t.project_id === projectId);
 
@@ -1182,7 +1212,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       const epoch = sessionEpoch;
       const { client, projects, selectedProjectId } = get();
       if (!client) {
-        throw new Error('Network connection required to manage lists.');
+        throw new Error(t('listEditor.networkRequiredError'));
       }
       const updated = await client.updateProject(projectId, { is_archived: isArchived });
       if (epoch !== sessionEpoch) return updated;
@@ -1207,7 +1237,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       const epoch = sessionEpoch;
       const { client, projects } = get();
       if (!client) {
-        throw new Error('Network connection required to manage lists.');
+        throw new Error(t('listEditor.networkRequiredError'));
       }
       const current = (projects || []).find((p) => p.id === projectId);
       const updated = await client.updateProject(projectId, { is_favorite: !current?.is_favorite });
@@ -1225,7 +1255,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       const epoch = sessionEpoch;
       const { client, projects } = get();
       if (!client) {
-        throw new Error('Network connection required to manage lists.');
+        throw new Error(t('listEditor.networkRequiredError'));
       }
       const dup = await client.duplicateProject(projectId);
       if (epoch !== sessionEpoch) return dup;
@@ -1817,7 +1847,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       const epoch = sessionEpoch;
       const { client, labels } = get();
       const safeLabels = Array.isArray(labels) ? labels : [];
-      if (!title.trim()) throw new Error('Label title cannot be empty');
+      if (!title.trim()) throw new Error(t('labels.emptyTitleStoreError'));
 
       let createdLabel: Label;
       if (client) {

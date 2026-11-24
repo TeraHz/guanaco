@@ -1,5 +1,6 @@
 import { TaskReminder } from '../types/vikunja';
 import { normalizeVikunjaDate, formatDateDisplay } from './dates';
+import { t } from '../i18n';
 
 export interface TaskDates {
   due_date?: string | null;
@@ -60,44 +61,52 @@ export function calculateReminderTime(
  * Produces a clear, human-readable description for a reminder.
  */
 export function formatReminderDescription(reminder: TaskReminder): string {
-  if (!reminder) return 'Custom reminder';
+  if (!reminder) return t('schedule.customReminder');
 
   if (reminder.relative_to && ALLOWED_RELATIVE_TO.has(reminder.relative_to)) {
-    const targetLabel =
-      reminder.relative_to === 'due_date'
-        ? 'due'
-        : reminder.relative_to === 'start_date'
-        ? 'start'
-        : 'end';
-
     const period = reminder.relative_period ?? 0;
     if (!Number.isFinite(period) || Math.abs(period) > MAX_RELATIVE_PERIOD_SECONDS) {
-      return 'Custom reminder';
+      return t('schedule.customReminder');
     }
     if (period === 0) {
-      return `At ${targetLabel} time`;
+      if (reminder.relative_to === 'due_date') return t('schedule.atDueTime');
+      if (reminder.relative_to === 'start_date') return t('schedule.atStartTime');
+      return t('schedule.atEndTime');
     }
 
     const absSec = Math.abs(period);
     let timeUnitStr = '';
     if (absSec % 604800 === 0) {
       const weeks = absSec / 604800;
-      timeUnitStr = `${weeks} ${weeks === 1 ? 'week' : 'weeks'}`;
+      timeUnitStr = weeks === 1 ? t('schedule.oneWeek') : t('schedule.nWeeks', { count: weeks });
     } else if (absSec % 86400 === 0) {
       const days = absSec / 86400;
-      timeUnitStr = `${days} ${days === 1 ? 'day' : 'days'}`;
+      timeUnitStr = days === 1 ? t('schedule.oneDay') : t('schedule.nDays', { count: days });
     } else if (absSec % 3600 === 0) {
       const hours = absSec / 3600;
-      timeUnitStr = `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+      timeUnitStr = hours === 1 ? t('schedule.oneHour') : t('schedule.nHours', { count: hours });
     } else if (absSec < 60) {
       const secs = Math.round(absSec);
-      timeUnitStr = `${secs} ${secs === 1 ? 'second' : 'seconds'}`;
+      timeUnitStr = secs === 1 ? t('schedule.oneSecond') : t('schedule.nSeconds', { count: secs });
     } else {
       const mins = Math.round(absSec / 60);
-      timeUnitStr = `${mins} ${mins === 1 ? 'minute' : 'minutes'}`;
+      timeUnitStr = mins === 1 ? t('schedule.oneMinute') : t('schedule.nMinutes', { count: mins });
     }
 
-    return `${timeUnitStr} ${period < 0 ? 'before' : 'after'} ${targetLabel}`;
+    const isBefore = period < 0;
+    if (reminder.relative_to === 'due_date') {
+      return t(isBefore ? 'schedule.relativeBeforeDue' : 'schedule.relativeAfterDue', {
+        time: timeUnitStr,
+      });
+    }
+    if (reminder.relative_to === 'start_date') {
+      return t(isBefore ? 'schedule.relativeBeforeStart' : 'schedule.relativeAfterStart', {
+        time: timeUnitStr,
+      });
+    }
+    return t(isBefore ? 'schedule.relativeBeforeEnd' : 'schedule.relativeAfterEnd', {
+      time: timeUnitStr,
+    });
   }
 
   if (reminder.reminder) {
@@ -105,5 +114,5 @@ export function formatReminderDescription(reminder: TaskReminder): string {
     if (formatted) return formatted;
   }
 
-  return 'Custom reminder';
+  return t('schedule.customReminder');
 }

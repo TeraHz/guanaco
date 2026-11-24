@@ -19,6 +19,7 @@ import {
 } from '../types/vikunja';
 import { isPersonalApiToken } from '../utils/biometrics';
 import { APP_NAME, APP_VERSION } from '../constants/version';
+import { t } from '../i18n';
 
 export interface VikunjaClientConfig {
   baseUrl: string;
@@ -55,22 +56,22 @@ export interface ParsedServerUrl {
 export function parseAndValidateServerUrl(rawUrl: string): ParsedServerUrl {
   const trimmed = (rawUrl || '').trim();
   if (!trimmed) {
-    throw new Error('Server URL is required');
+    throw new Error(t('urlError.required'));
   }
 
   // Reject scheme-relative (`://...` or `//...`) and dangerous non-http(s) schemes
   if (trimmed.startsWith('//') || trimmed.startsWith('://')) {
-    throw new Error('Invalid server URL');
+    throw new Error(t('urlError.invalid'));
   }
 
   const explicitSchemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//);
   if (explicitSchemeMatch) {
     const proto = explicitSchemeMatch[1].toLowerCase();
     if (proto !== 'http' && proto !== 'https') {
-      throw new Error(`Unsupported URL scheme "${proto}://". Use https:// or http://.`);
+      throw new Error(t('urlError.unsupportedScheme', { proto }));
     }
   } else if (/^(javascript|data|vbscript|file|mailto|about|blob):/i.test(trimmed)) {
-    throw new Error('Invalid server URL scheme');
+    throw new Error(t('urlError.invalidScheme'));
   }
 
   const candidate = explicitSchemeMatch ? trimmed : `https://${trimmed}`;
@@ -79,20 +80,20 @@ export function parseAndValidateServerUrl(rawUrl: string): ParsedServerUrl {
   try {
     parsed = new URL(candidate);
   } catch (_) {
-    throw new Error('Invalid server URL format');
+    throw new Error(t('urlError.invalidFormat'));
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('Unsupported URL protocol');
+    throw new Error(t('urlError.unsupportedProtocol'));
   }
 
   if (parsed.username || parsed.password) {
-    throw new Error('Embedded credentials in server URL are not allowed');
+    throw new Error(t('urlError.embeddedCredentials'));
   }
 
   const hostname = parsed.hostname.trim();
   if (!hostname || hostname.includes('..') || hostname.startsWith('.') || hostname.endsWith('.')) {
-    throw new Error('Invalid server hostname');
+    throw new Error(t('urlError.invalidHostname'));
   }
 
   // Validate IPv4 octets if hostname is numeric IPv4
@@ -105,7 +106,7 @@ export function parseAndValidateServerUrl(rawUrl: string): ParsedServerUrl {
         return !Number.isInteger(n) || n < 0 || n > 255;
       })
     ) {
-      throw new Error('Invalid IPv4 address in server URL');
+      throw new Error(t('urlError.invalidIpv4'));
     }
   } else if (!hostname.startsWith('[')) {
     // Standard DNS hostname validation
@@ -119,18 +120,18 @@ export function parseAndValidateServerUrl(rawUrl: string): ParsedServerUrl {
         !lbl.endsWith('-')
     );
     if (!validLabels) {
-      throw new Error('Invalid server hostname');
+      throw new Error(t('urlError.invalidHostname'));
     }
     // Require a dot, `localhost`, or explicit port so bare words like "invalid-url" are rejected
     if (labels.length < 2 && hostname.toLowerCase() !== 'localhost' && !parsed.port) {
-      throw new Error('Please enter a valid domain or host (e.g. https://vikunja.example.com)');
+      throw new Error(t('urlError.enterValidDomain'));
     }
   }
 
   if (parsed.port) {
     const portNum = Number(parsed.port);
     if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
-      throw new Error('Invalid server port');
+      throw new Error(t('urlError.invalidPort'));
     }
   }
 

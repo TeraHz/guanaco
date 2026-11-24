@@ -31,6 +31,8 @@ import {
   parseAndValidateServerUrl,
   isTotpRequiredError,
 } from '../api/client';
+import { LanguagePreference, useTranslation } from '../i18n';
+import { useTaskStore } from '../store/taskStore';
 
 export interface LoginConnectOptions {
   authMethod?: 'password' | 'api_token';
@@ -55,6 +57,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   defaultServerUrl = '',
 }) => {
   const theme = useAppTheme();
+  const { t, languagePreference, setLanguagePreference } = useTranslation();
 
   const [serverUrl, setServerUrl] = useState(defaultServerUrl);
   const [authMode, setAuthMode] = useState<'password' | 'api_token'>('password');
@@ -101,14 +104,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     if (!onBiometricUnlock) return;
     setErrorMessage(null);
     try {
-      const passed = await authenticateWithBiometrics('Unlock Guanaco', { forceReset: true });
+      const passed = await authenticateWithBiometrics(t('lock.unlockGuanaco'), { forceReset: true });
       if (passed) {
         setLoading(true);
         await onBiometricUnlock();
         safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Biometric authentication failed');
+      setErrorMessage(err.message || t('auth.biometricFailed'));
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
@@ -126,7 +129,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     const secretValue = effectiveTokenMode ? password.trim() : password;
 
     if (!rawUrl || !secretValue || (!effectiveTokenMode && !cleanUser)) {
-      setErrorMessage('Please fill in all fields');
+      setErrorMessage(t('auth.fillAllFields'));
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
       return;
     }
@@ -138,7 +141,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       normalizedUrl = validated.serverUrl;
       isInsecureHttp = validated.isInsecureHttp;
     } catch (urlErr: any) {
-      setErrorMessage(urlErr.message || 'Invalid server URL');
+      setErrorMessage(urlErr.message || t('auth.invalidServerUrl'));
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
       return;
     }
@@ -190,11 +193,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       if (!effectiveTokenMode && isTotpRequiredError(err)) {
         const hadCode = totpPasscode.trim().length > 0;
         setShowTotp(true);
-        setErrorMessage(
-          hadCode ? 'Invalid 2FA code.' : 'Enter your 6-digit 2FA code.'
-        );
+        setErrorMessage(hadCode ? t('auth.invalid2fa') : t('auth.enter2fa'));
       } else {
-        setErrorMessage(err.message || 'Failed to connect to server');
+        setErrorMessage(err.message || t('auth.failedToConnect'));
       }
       safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -290,7 +291,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     },
                   ]}
                 >
-                  Password
+                  {t('auth.passwordTab')}
                 </Text>
               </TouchableOpacity>
 
@@ -325,7 +326,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     },
                   ]}
                 >
-                  API Token
+                  {t('auth.apiTokenTab')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -379,7 +380,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     { color: theme.colors.warning },
                   ]}
                 >
-                  Unencrypted HTTP
+                  {t('auth.unencryptedHttpTitle')}
                 </Text>
                 <Text
                   style={[
@@ -387,7 +388,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     { color: theme.colors.text },
                   ]}
                 >
-                  {pendingInsecureHttpUrl} sends credentials unencrypted.
+                  {t('auth.unencryptedHttpBody', { url: pendingInsecureHttpUrl })}
                 </Text>
                 <View style={styles.warningActions}>
                   <TouchableOpacity
@@ -396,7 +397,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     style={[styles.warningSafeBtn, { backgroundColor: theme.colors.accent }]}
                     onPress={handleSwitchToHttps}
                   >
-                    <Text style={styles.warningSafeBtnText}>Use HTTPS</Text>
+                    <Text style={styles.warningSafeBtnText}>{t('auth.useHttps')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     testID="http-confirm-insecure-btn"
@@ -416,7 +417,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                         { color: theme.colors.text },
                       ]}
                     >
-                      Continue Anyway
+                      {t('common.continueAnyway')}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -424,10 +425,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             )}
 
             <View style={styles.inputGroup}>
-              <Text style={[styles.label, { color: theme.colors.text }]}>Server URL</Text>
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                {t('auth.serverUrl')}
+              </Text>
               <TextInput
                 testID="login-server-url-input"
-                accessibilityLabel="Server URL"
+                accessibilityLabel={t('auth.serverUrl')}
                 style={[
                   styles.input,
                   {
@@ -462,12 +465,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             {!isTokenMode && (
               <View style={styles.inputGroup}>
                 <Text style={[styles.label, { color: theme.colors.text }]}>
-                  Username or Email
+                  {t('auth.usernameOrEmail')}
                 </Text>
                 <TextInput
                   ref={usernameInputRef}
                   testID="login-username-input"
-                  accessibilityLabel="Username or Email"
+                  accessibilityLabel={t('auth.usernameOrEmail')}
                   style={[
                     styles.input,
                     {
@@ -476,7 +479,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       color: theme.colors.text,
                     },
                   ]}
-                  placeholder="Username"
+                  placeholder={t('auth.usernamePlaceholder')}
                   placeholderTextColor={theme.colors.placeholder}
                   value={username}
                   onChangeText={setUsername}
@@ -493,17 +496,19 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <View style={styles.inputGroup}>
               <View style={styles.labelRow}>
                 <Text style={[styles.label, { color: theme.colors.text, marginBottom: 0 }]}>
-                  {isTokenMode ? 'API Token' : 'Password'}
+                  {isTokenMode ? t('auth.apiTokenLabel') : t('auth.passwordLabel')}
                 </Text>
                 <TouchableOpacity
                   testID="login-toggle-secret-visibility-btn"
                   accessibilityRole="button"
-                  accessibilityLabel={showSecret ? 'Hide password' : 'Show password'}
+                  accessibilityLabel={
+                    showSecret ? t('auth.hidePasswordA11y') : t('auth.showPasswordA11y')
+                  }
                   onPress={() => setShowSecret((prev) => !prev)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Text style={[styles.inlineLink, { color: theme.colors.accent }]}>
-                    {showSecret ? 'Hide' : 'Show'}
+                    {showSecret ? t('auth.hide') : t('auth.show')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -511,7 +516,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 ref={passwordInputRef}
                 testID="login-password-input"
                 accessibilityLabel={
-                  isTokenMode ? 'Personal API Token' : 'Password or API Token'
+                  isTokenMode ? t('auth.personalApiTokenA11y') : t('auth.passwordOrTokenA11y')
                 }
                 style={[
                   styles.input,
@@ -521,7 +526,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     color: theme.colors.text,
                   },
                 ]}
-                placeholder={isTokenMode ? 'tk_...' : 'Password'}
+                placeholder={isTokenMode ? 'tk_...' : t('auth.passwordLabel')}
                 placeholderTextColor={theme.colors.placeholder}
                 value={password}
                 onChangeText={setPassword}
@@ -547,7 +552,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   <View style={styles.inputGroup}>
                     <View style={styles.labelRow}>
                       <Text style={[styles.label, { color: theme.colors.text, marginBottom: 0 }]}>
-                        Two-Factor Code
+                        {t('auth.twoFactorCode')}
                       </Text>
                       <TouchableOpacity
                         testID="login-hide-totp-btn"
@@ -558,14 +563,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                         }}
                       >
                         <Text style={[styles.inlineLink, { color: theme.colors.textSecondary }]}>
-                          Cancel
+                          {t('common.cancel')}
                         </Text>
                       </TouchableOpacity>
                     </View>
                     <TextInput
                       ref={totpInputRef}
                       testID="login-totp-input"
-                      accessibilityLabel="Two-Factor Code"
+                      accessibilityLabel={t('auth.twoFactorCode')}
                       style={[
                         styles.input,
                         {
@@ -574,7 +579,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                           color: theme.colors.text,
                         },
                       ]}
-                      placeholder="6-digit code"
+                      placeholder={t('auth.twoFactorPlaceholder')}
                       placeholderTextColor={theme.colors.placeholder}
                       value={totpPasscode}
                       onChangeText={setTotpPasscode}
@@ -597,7 +602,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     onPress={() => setShowTotp(true)}
                   >
                     <Text style={[styles.inlineLink, { color: theme.colors.accent }]}>
-                      2FA code
+                      {t('auth.totpToggle')}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -619,7 +624,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.buttonText}>Connect</Text>
+                <Text style={styles.buttonText}>{t('auth.connect')}</Text>
               )}
             </TouchableOpacity>
 
@@ -640,10 +645,60 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 activeOpacity={0.8}
               >
                 <Text style={[styles.biometricButtonText, { color: theme.colors.text }]}>
-                  Unlock
+                  {t('auth.unlock')}
                 </Text>
               </TouchableOpacity>
             )}
+          </View>
+
+          <View testID="login-language-switcher" style={styles.langRow}>
+            {(
+              [
+                { key: 'system', label: t('settings.langSystem') },
+                { key: 'en', label: 'English' },
+                { key: 'bg', label: 'Български' },
+                { key: 'es', label: 'Español' },
+              ] as { key: LanguagePreference; label: string }[]
+            ).map((opt) => {
+              const selected = languagePreference === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  testID={`login-lang-${opt.key}`}
+                  style={[
+                    styles.langPill,
+                    selected
+                      ? {
+                          backgroundColor: theme.colors.accent,
+                          borderColor: theme.colors.accent,
+                        }
+                      : {
+                          backgroundColor: theme.colors.cardBackground,
+                          borderColor: theme.colors.cardBorder,
+                        },
+                  ]}
+                  onPress={() => {
+                    safeHaptics.selection();
+                    setLanguagePreference(opt.key).catch(() => {});
+                    useTaskStore.getState().setLanguagePreference?.(opt.key).catch(() => {});
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                >
+                  <Text
+                    style={[
+                      styles.langPillText,
+                      {
+                        color: selected ? '#FFFFFF' : theme.colors.textSecondary,
+                        fontWeight: selected ? '700' : '500',
+                      },
+                    ]}
+                  >
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -809,5 +864,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  langRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 18,
+  },
+  langPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+  },
+  langPillText: {
+    fontSize: 12,
   },
 });

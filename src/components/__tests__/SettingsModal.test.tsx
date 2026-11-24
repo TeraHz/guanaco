@@ -9,6 +9,7 @@ import { useTaskStore } from '../../store/taskStore';
 import { useUpdateStore } from '../../store/updateStore';
 import { APP_VERSION } from '../../constants/version';
 import { __setMockAICoreSupportedForTesting } from '../../utils/aiCore';
+import { setActiveLanguagePreference } from '../../i18n';
 
 describe('SettingsModal', () => {
   const initialStoreState = useTaskStore.getState();
@@ -45,6 +46,7 @@ describe('SettingsModal', () => {
     Platform.OS = originalOS;
     __setMockAICoreSupportedForTesting(null);
     cleanup();
+    setActiveLanguagePreference('system');
     useTaskStore.setState(initialStoreState, true);
     useUpdateStore.setState(initialUpdateState, true);
     jest.restoreAllMocks();
@@ -108,7 +110,7 @@ describe('SettingsModal', () => {
       useUpdateStore.setState({
         updateInfo: {
           isAvailable: true,
-          availableVersionCode: 10500,
+          availableVersionCode: 10600,
           isFlexibleAllowed: true,
           isImmediateAllowed: true,
         } as any,
@@ -122,8 +124,8 @@ describe('SettingsModal', () => {
         onOpenLabelManagement={mockOnOpenLabels}
       />
     );
-    expect(getAllByText('v1.5.0')).toHaveLength(1);
-    expect(getAllByText('Update to v1.5.0')).toHaveLength(1);
+    expect(getAllByText('v1.6.0')).toHaveLength(1);
+    expect(getAllByText('Update to v1.6.0')).toHaveLength(1);
     const installBtnStyle = StyleSheet.flatten(
       getByTestId('settings-install-update-btn').props.style
     );
@@ -364,5 +366,29 @@ describe('SettingsModal', () => {
     fireEvent.press(getByTestId('settings-theme-system'));
     fireEvent.press(getByTestId('settings-week-start-1'));
     fireEvent.press(getByTestId('settings-badge-off'));
+  });
+
+  it('switches live UI language between System, English, Bulgarian, and Spanish and persists @vikunja_language', async () => {
+    const { getByTestId, getByText } = await renderSettings();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('settings-lang-bg'));
+    });
+    expect(getByText('Настройки')).toBeTruthy();
+    expect(getByText('Език')).toBeTruthy();
+    expect(await AsyncStorage.getItem('@vikunja_language')).toBe('bg');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('settings-lang-es'));
+    });
+    expect(getByText('Ajustes')).toBeTruthy();
+    expect(getByText('Idioma')).toBeTruthy();
+    expect(await AsyncStorage.getItem('@vikunja_language')).toBe('es');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('settings-lang-en'));
+    });
+    expect(getByText('Settings')).toBeTruthy();
+    expect(await AsyncStorage.getItem('@vikunja_language')).toBe('en');
   });
 });

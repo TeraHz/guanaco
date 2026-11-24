@@ -3,6 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { AppBadgeMode, RepeatMode, Task, TaskReminder } from '../types/vikunja';
 import { calculateReminderTime, formatReminderDescription } from '../utils/reminders';
 import { isOverdue, normalizeVikunjaDate } from '../utils/dates';
+import { t } from '../i18n';
 
 export const REMINDER_CHANNEL_ID = 'guanaco_task_reminders';
 export const TASK_REMINDER_CATEGORY = 'GUANACO_TASK_REMINDER';
@@ -41,12 +42,12 @@ export async function initNotifications(): Promise<void> {
     await Notifications.setNotificationCategoryAsync(TASK_REMINDER_CATEGORY, [
       {
         identifier: NOTIF_ACTION_MARK_DONE,
-        buttonTitle: 'Mark Complete',
+        buttonTitle: t('notifications.markComplete'),
         options: { opensAppToForeground: false },
       },
       {
         identifier: NOTIF_ACTION_SNOOZE_15M,
-        buttonTitle: 'Snooze 15m',
+        buttonTitle: t('notifications.snooze15m'),
         options: { opensAppToForeground: false },
       },
     ]).catch(() => {});
@@ -54,7 +55,7 @@ export async function initNotifications(): Promise<void> {
 
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
-      name: 'Task Reminders',
+      name: t('notifications.channelName'),
       importance: Notifications.AndroidImportance.HIGH,
       sound: 'default',
       vibrationPattern: [0, 250, 250, 250],
@@ -110,7 +111,7 @@ async function scheduleUpcomingForTask(
     await Notifications.scheduleNotificationAsync({
       content: {
         title: task.title,
-        body: `Reminder: ${description}`,
+        body: t('notifications.reminderBody', { description }),
         categoryIdentifier: TASK_REMINDER_CATEGORY,
         data: {
           taskId: task.id,
@@ -184,7 +185,7 @@ export async function scheduleSnoozedReminder(task: Task, minutes = 15): Promise
     await Notifications.scheduleNotificationAsync({
       content: {
         title: task.title,
-        body: `Snoozed reminder (${minutes}m)`,
+        body: t('notifications.snoozedBody', { minutes }),
         categoryIdentifier: TASK_REMINDER_CATEGORY,
         data: {
           taskId: task.id,

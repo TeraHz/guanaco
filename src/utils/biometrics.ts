@@ -2,6 +2,7 @@ import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
+import { t } from '../i18n';
 
 export const STORAGE_KEY_AUTH_TOKEN = '@vikunja_auth_token';
 export const SECURE_KEY_AUTH_TOKEN = 'vikunja_auth_token';
@@ -119,14 +120,14 @@ export async function isAndroidActivityReadyForBiometrics(): Promise<boolean> {
 }
 
 export async function authenticateWithBiometrics(
-  reason = 'Unlock Guanaco',
+  reason?: string,
   options?: AuthenticateBiometricsOptions
 ): Promise<boolean> {
   if (Platform.OS === 'web') return false;
   const promptConfig: LocalAuthentication.LocalAuthenticationOptions = {
-    promptMessage: reason,
-    fallbackLabel: 'Enter PIN / Password',
-    cancelLabel: 'Cancel',
+    promptMessage: reason || t('lock.unlockGuanaco'),
+    fallbackLabel: t('lock.enterPinOrPassword'),
+    cancelLabel: t('common.cancel'),
     disableDeviceFallback: false,
   };
 
