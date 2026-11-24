@@ -34,6 +34,7 @@ interface QuickAddBarProps {
   historyTasks?: Task[];
   availableLabels?: string[];
   availableUsers?: User[];
+  hideAssignees?: boolean;
   reenableStaples?: boolean;
   onAddTask: (input: CreateTaskInput) => void;
   onReenableTask?: (taskId: number) => void;
@@ -74,6 +75,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   historyTasks = [],
   availableLabels = [],
   availableUsers = [],
+  hideAssignees = false,
   reenableStaples = true,
   onAddTask,
   onReenableTask,
@@ -109,9 +111,11 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   // Memoized Live Quick Add Magic Parsing
   const parsed: ParsedTaskInput & { repeatMode?: RepeatMode } = useMemo(() => {
     return rawText.trim()
-      ? (parseQuickAdd(rawText) as ParsedTaskInput & { repeatMode?: RepeatMode })
+      ? (parseQuickAdd(rawText, undefined, {
+          extractAssignees: !hideAssignees,
+        }) as ParsedTaskInput & { repeatMode?: RepeatMode })
       : { title: '', labels: [], assignees: [], dueDate: null };
-  }, [rawText]);
+  }, [rawText, hideAssignees]);
 
   const effectivePriority =
     parsed.priority !== undefined ? parsed.priority : manualPriority;
@@ -131,9 +135,10 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
 
   // Assignee Suggestions (when typing @user)
   const userSuggestions = useMemo(() => {
+    if (hideAssignees) return [];
     const mentionQuery = extractMentionQuery(rawText);
     return mentionQuery !== null ? getUserSuggestions(mentionQuery, availableUsers) : [];
-  }, [rawText, availableUsers]);
+  }, [rawText, availableUsers, hideAssignees]);
 
   // Label Suggestions (when typing *label or #label) - prioritized with last used label first
   const labelSuggestions = useMemo(() => {

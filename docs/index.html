@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Guanaco — To-Do Lists, Tasks &amp; Reminders for Vikunja (Android &amp; iOS)</title>
-  <meta name="description" content="Guanaco is a fast, private, open-source to-do list, grocery, and task manager for phones and tablets, powered by your self-hosted or cloud Vikunja server. Works offline with subtasks, smart grocery sorting, local reminders, and OLED dark mode." />
-  <meta name="keywords" content="Vikunja mobile app, Vikunja Android app, Vikunja iOS app, self-hosted todo app, offline task manager, open source Vikunja client, Guanaco Vikunja, private todo list" />
+  <title>Guanaco — Private Tasks, Groceries &amp; Reminders (Offline or with Vikunja)</title>
+  <meta name="description" content="Guanaco is a fast, private, open-source to-do list, grocery, and task manager for phones and tablets. Use it 100% standalone offline with JSON backups, or sync anytime with your self-hosted or cloud Vikunja server." />
+  <meta name="keywords" content="offline todo app, private task manager, grocery list app, Vikunja mobile app, Vikunja Android app, Vikunja iOS app, self-hosted todo app, open source task manager, Guanaco" />
   <meta name="author" content="Guanaco Open Source Project" />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
   <link rel="canonical" href="https://terahz.github.io/guanaco/" />
@@ -13,18 +13,18 @@
   <!-- Open Graph / Social Sharing -->
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Guanaco" />
-  <meta property="og:title" content="Guanaco — Mobile &amp; Tablet App for Vikunja" />
-  <meta property="og:description" content="A fast, private mobile and tablet app for your Vikunja server. Works offline, supports subtasks, saved filters, quick natural-language entry, and local reminders." />
+  <meta property="og:title" content="Guanaco — Private Tasks, Groceries &amp; Reminders" />
+  <meta property="og:description" content="A fast, private task and grocery list app for phones and tablets. Works 100% standalone offline or synced with your Vikunja server." />
   <meta property="og:url" content="https://terahz.github.io/guanaco/" />
   <meta property="og:image" content="https://terahz.github.io/guanaco/assets/social-preview.png" />
   <meta property="og:image:width" content="1280" />
   <meta property="og:image:height" content="640" />
-  <meta property="og:image:alt" content="Guanaco — Mobile Client for Vikunja" />
+  <meta property="og:image:alt" content="Guanaco — Private Tasks, Groceries and Reminders" />
 
   <!-- Twitter / Fediverse Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Guanaco — Mobile &amp; Tablet App for Vikunja" />
-  <meta name="twitter:description" content="A fast, private, open-source mobile and tablet app for Vikunja. Works offline with subtasks, saved filters, local reminders, and zero tracking." />
+  <meta name="twitter:title" content="Guanaco — Private Tasks, Groceries &amp; Reminders" />
+  <meta name="twitter:description" content="A fast, private, open-source task and grocery list app. Works 100% standalone offline or synced with Vikunja, with zero tracking." />
   <meta name="twitter:image" content="https://terahz.github.io/guanaco/assets/social-preview.png" />
 
   <meta name="theme-color" content="#0D0D0E" />
@@ -37,10 +37,10 @@
       {
         "@type": "SoftwareApplication",
         "name": "Guanaco",
-        "alternateName": "Guanaco — Vikunja Mobile App",
+        "alternateName": "Guanaco — Tasks & Lists",
         "applicationCategory": "ProductivityApplication",
         "operatingSystem": "Android, iOS",
-        "description": "Fast, private mobile and tablet task management app for self-hosted and cloud Vikunja servers.",
+        "description": "Fast, private mobile and tablet task and grocery list manager — works standalone offline on your device or synced with a Vikunja server.",
         "url": "https://terahz.github.io/guanaco/",
         "downloadUrl": "https://github.com/TeraHz/guanaco/releases",
         "codeRepository": "https://github.com/TeraHz/guanaco",
@@ -58,8 +58,9 @@
           "priceCurrency": "USD"
         },
         "featureList": [
-          "Full offline support with automatic background sync",
-          "Subtasks, saved filters, labels, priorities, and shared lists",
+          "100% standalone on-device offline mode with JSON backup & restore",
+          "Optional two-way background sync and one-tap migration to Vikunja servers",
+          "Subtasks, grocery aisle smart sorting, saved filters, labels, and priorities",
           "Natural-language quick task entry for dates, tags, lists, and repeating schedules",
           "Support for private home-server HTTPS certificates on Android",
           "On-device reminders with Mark Complete and Snooze actions",
@@ -71,10 +72,18 @@
         "mainEntity": [
           {
             "@type": "Question",
+            "name": "Do I need a Vikunja server or account to use Guanaco?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Tap Use Offline on This Device on the welcome screen to manage lists, groceries, subtasks, tags, repeating schedules, and reminders 100% locally. You can export JSON backups anytime or connect a Vikunja server later and migrate your local lists seamlessly."
+            }
+          },
+          {
+            "@type": "Question",
             "name": "Can I use Guanaco when I don't have an internet connection?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Yes. Your lists and tasks stay available offline so you can add, check off, edit, and reorder items anywhere. Guanaco syncs your changes automatically as soon as your Vikunja server is reachable again."
+              "text": "Yes. Both standalone mode and server-synced mode work completely offline so you can add, check off, edit, and reorder items anywhere. If connected to a Vikunja server, Guanaco syncs your changes automatically once your server is reachable again."
             }
           },
           {
@@ -90,7 +99,7 @@
             "name": "Does Guanaco track usage or send tasks through third-party servers?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "No. Guanaco connects strictly between your device and your Vikunja server. There are no analytics trackers, ads, or external push-notification services — all reminders run locally on your device."
+              "text": "No. Guanaco stores your data strictly on your device (and only syncs directly with your own Vikunja server if you connect one). There are no analytics trackers, ads, or external push-notification services — all reminders run locally on your device."
             }
           },
           {
@@ -404,7 +413,7 @@
         </div>
         <h1>To-do lists, groceries &amp; tasks — private and ready offline.</h1>
         <p class="lead">
-          Guanaco is a fast, tracker-free task and list manager for Android, iPhone, iPad, and tablets. It connects directly to your self-hosted or cloud <a href="https://vikunja.io/" style="color: #7cc4ff; text-decoration: underline;">Vikunja</a> task server — sorting grocery aisles, tracking subtasks, and firing reminders even when you're offline.
+          Guanaco is a fast, tracker-free task and list manager for Android, iPhone, iPad, and tablets. Use it <strong>100% standalone on your device</strong> with no server or account needed, or connect anytime to your self-hosted or cloud <a href="https://vikunja.io/" style="color: #7cc4ff; text-decoration: underline;">Vikunja</a> server — sorting grocery aisles, tracking subtasks, and firing reminders offline.
         </p>
         <div class="cta-row">
           <a class="btn btn-primary" href="https://github.com/TeraHz/guanaco/releases">Download Releases</a>
@@ -441,8 +450,8 @@
         </p>
         <div class="features-grid">
           <article class="feature-box">
-            <h3>Works Offline</h3>
-            <p>Add tasks, check off errands, edit notes, and reorder lists without a connection. Everything syncs automatically once you're back online.</p>
+            <h3>Standalone or Server Sync</h3>
+            <p>Start immediately on your device with no server or account, export JSON backups anytime, and connect a Vikunja server later to upload your lists seamlessly.</p>
           </article>
           <article class="feature-box">
             <h3>Subtasks &amp; Saved Filters</h3>

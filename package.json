@@ -1,7 +1,7 @@
 {
   "name": "guanaco",
-  "version": "1.5.0",
-  "description": "Fast, private, offline-first mobile and tablet client for self-hosted Vikunja task servers.",
+  "version": "1.6.0",
+  "description": "Fast, private to-do list, grocery, and task manager for Android, iOS, and tablets — standalone offline or synced with Vikunja.",
   "homepage": "https://terahz.github.io/guanaco/",
   "repository": {
     "type": "git",

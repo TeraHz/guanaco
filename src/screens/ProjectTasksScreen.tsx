@@ -41,6 +41,7 @@ import { getLabelBadgeStyles, hexToRgba, normalizeHexColor } from '../utils/colo
 import { useAppTheme } from '../utils/theme';
 import { CreateTaskInput, Task, Project } from '../types/vikunja';
 import { localizeCategoryName, TranslationKey, useTranslation } from '../i18n';
+import { syncAllTaskReminders, syncAppBadgeCount } from '../services/localNotifications';
 
 interface ProjectTasksScreenProps {
   onOpenDrawer?: () => void;
@@ -133,6 +134,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       : t('sort.button');
   const {
     client,
+    isLocalMode = false,
     projects,
     tasks,
     labels: storeLabels,
@@ -147,6 +149,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     taskItemTextScale = 100,
     weekStartDay = 1,
     savedFilterTaskIds = {},
+    localDataVersion = 0,
+    isLoading = false,
+    isSyncingAll = false,
     pendingOpenTaskId = null,
     setPendingOpenTaskId,
     toggleTask,
@@ -239,18 +244,18 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const pendingDeleteRef = useRef<{
     ref: TrackedTaskRef;
     timer: ReturnType<typeof setTimeout>;
-    hadClient: boolean;
+    hadActiveSession: boolean;
   } | null>(null);
 
   const flushPendingDelete = useCallback(() => {
     if (!pendingDeleteRef.current) return;
-    const { ref, timer, hadClient } = pendingDeleteRef.current;
+    const { ref, timer, hadActiveSession } = pendingDeleteRef.current;
     clearTimeout(timer);
     pendingDeleteRef.current = null;
     setPendingDeleteTaskRef(null);
 
     const storeState = useTaskStore.getState();
-    if (hadClient && !storeState.client) {
+    if (hadActiveSession && !storeState.client && !storeState.isLocalMode) {
       return;
     }
     const live = resolveLiveTask(storeState.tasks, ref);
@@ -273,7 +278,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         clearTimeout(timer);
         pendingDeleteRef.current = null;
         const storeState = useTaskStore.getState();
-        if (storeState.client !== null) {
+        if (storeState.client !== null || storeState.isLocalMode) {
           const live = resolveLiveTask(storeState.tasks, ref);
           if (live) {
             deleteTask(live.id);
@@ -359,28 +364,26 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     [tasks, duplicatedTaskRef]
   );
 
-  // Open task detail modal when user taps a local reminder notification
+  const lastObservedLocalDataVersionRef = useRef(localDataVersion);
   useEffect(() => {
-    if (pendingOpenTaskId === null || pendingOpenTaskId === undefined) return;
-    const found = (Array.isArray(tasks) ? tasks : []).find((t) => t.id === pendingOpenTaskId);
-    setPendingOpenTaskId?.(null);
-    if (found) {
-      closeAllModals();
-      setSelectedTaskRef({
-        id: found.id,
-        title: found.title,
-        project_id: found.project_id,
-        done: Boolean(found.done),
-      });
+    if (lastObservedLocalDataVersionRef.current === localDataVersion) return;
+    lastObservedLocalDataVersionRef.current = localDataVersion;
+    if (pendingDeleteRef.current) {
+      clearTimeout(pendingDeleteRef.current.timer);
+      pendingDeleteRef.current = null;
     }
-  }, [pendingOpenTaskId, tasks, setPendingOpenTaskId]);
+    setPendingDeleteTaskRef(null);
+  }, [localDataVersion]);
 
   useEffect(() => {
     if (!pendingDeleteTaskRef) return;
 
-    // Cancel staged delete without mutating if session cleared (`!client` when staged with client)
+    // Cancel staged delete without mutating if session cleared (`!client && !isLocalMode` when staged in an active session)
     // or if the task was removed from store (e.g. `resetAndSyncFromServer`, `clearSession`, `deleteProject`).
-    if ((pendingDeleteRef.current?.hadClient && !client) || !livePendingDeleteTask) {
+    if (
+      (pendingDeleteRef.current?.hadActiveSession && !client && !isLocalMode) ||
+      !livePendingDeleteTask
+    ) {
       if (pendingDeleteRef.current) {
         clearTimeout(pendingDeleteRef.current.timer);
         pendingDeleteRef.current = null;
@@ -401,7 +404,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       }
       setPendingDeleteTaskRef(updatedRef);
     }
-  }, [pendingDeleteTaskRef, livePendingDeleteTask, client]);
+  }, [pendingDeleteTaskRef, livePendingDeleteTask, client, isLocalMode]);
 
   useEffect(() => {
     if (selectedTaskRef && liveSelectedTask && liveSelectedTask.id !== selectedTaskRef.id) {
@@ -476,8 +479,33 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     }
   }, [selectedProjectId]);
 
+  // Open task detail modal when user taps a local reminder notification (placed AFTER mount fetch effect)
+  useEffect(() => {
+    if (pendingOpenTaskId === null || pendingOpenTaskId === undefined) return;
+    const found = (Array.isArray(tasks) ? tasks : []).find((t) => t.id === pendingOpenTaskId);
+    if (found) {
+      setPendingOpenTaskId?.(null);
+      closeAllModals();
+      setSelectedTaskRef({
+        id: found.id,
+        title: found.title,
+        project_id: found.project_id,
+        done: Boolean(found.done),
+      });
+    } else if (!isLoading && !isSyncingAll) {
+      setPendingOpenTaskId?.(null);
+    }
+  }, [pendingOpenTaskId, tasks, isLoading, isSyncingAll, setPendingOpenTaskId]);
+
   const handleRefresh = async () => {
     setRefreshing(true);
+    if (isLocalMode && !client) {
+      const snap = useTaskStore.getState();
+      await syncAllTaskReminders(snap.tasks || []).catch(() => {});
+      await syncAppBadgeCount(snap.tasks || [], snap.appBadgeMode).catch(() => {});
+      setRefreshing(false);
+      return;
+    }
     await syncAll();
     if (
       selectedProjectId !== null &&
@@ -514,7 +542,17 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     searchAllLists: showSearch ? searchAllLists : false,
     minPriority: showSearch ? minPriority : 0,
     dueFilter: showSearch ? dueFilter : 'all',
+    isLocalMode,
   });
+
+  useEffect(() => {
+    if (
+      selectedLabel &&
+      !availableLabels.some((lbl) => lbl.toLowerCase() === selectedLabel.toLowerCase())
+    ) {
+      setSelectedLabel(null);
+    }
+  }, [localDataVersion, availableLabels, selectedLabel]);
 
   const visibleTasks = useMemo(
     () =>
@@ -603,13 +641,14 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         project_id: target.project_id,
         done: Boolean(target.done),
       };
-      const hadClient = Boolean(useTaskStore.getState().client);
+      const curStore = useTaskStore.getState();
+      const hadActiveSession = Boolean(curStore.client || curStore.isLocalMode);
 
       const timer = setTimeout(() => {
         flushPendingDelete();
       }, 5000);
 
-      pendingDeleteRef.current = { ref: nextRef, timer, hadClient };
+      pendingDeleteRef.current = { ref: nextRef, timer, hadActiveSession };
       setPendingDeleteTaskRef(nextRef);
     },
     [tasks, deleteTask, flushPendingDelete]
@@ -822,64 +861,66 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           </TouchableOpacity>
 
           {/* Live Sync Status Indicator */}
-          <TouchableOpacity
-            testID="sync-indicator-btn"
-            style={[
-              styles.syncIndicatorPill,
-              {
-                backgroundColor:
-                  syncStatus === 'syncing'
-                    ? hexToRgba(theme.colors.accent, 0.14)
-                    : syncStatus === 'offline' || (syncStatus as string) === 'auth_required'
-                    ? hexToRgba(theme.colors.warning, 0.16)
-                    : hexToRgba(theme.colors.success, 0.14),
-                borderColor:
-                  syncStatus === 'syncing'
-                    ? hexToRgba(theme.colors.accent, 0.35)
-                    : syncStatus === 'offline' || (syncStatus as string) === 'auth_required'
-                    ? hexToRgba(theme.colors.warning, 0.45)
-                    : hexToRgba(theme.colors.success, 0.35),
-              },
-            ]}
-            onPress={() => {
-              if (syncStatus === 'offline') {
-                retrySync();
-              }
-            }}
-            activeOpacity={syncStatus === 'offline' ? 0.7 : 1}
-            accessibilityRole="button"
-            accessibilityLabel={
-              syncStatus === 'synced'
-                ? t('tasks.syncSyncedA11y')
-                : syncStatus === 'syncing'
-                ? t('tasks.syncSyncingA11y')
-                : (syncStatus as string) === 'auth_required'
-                ? t('tasks.syncReauthA11y')
-                : t('tasks.syncOfflineA11y', { count: pendingSyncCount })
-            }
-          >
-            <Text
+          {!isLocalMode && (
+            <TouchableOpacity
+              testID="sync-indicator-btn"
               style={[
-                styles.syncIndicatorText,
+                styles.syncIndicatorPill,
                 {
-                  color:
+                  backgroundColor:
                     syncStatus === 'syncing'
-                      ? theme.colors.accent
+                      ? hexToRgba(theme.colors.accent, 0.14)
                       : syncStatus === 'offline' || (syncStatus as string) === 'auth_required'
-                      ? theme.colors.warning
-                      : theme.colors.success,
+                      ? hexToRgba(theme.colors.warning, 0.16)
+                      : hexToRgba(theme.colors.success, 0.14),
+                  borderColor:
+                    syncStatus === 'syncing'
+                      ? hexToRgba(theme.colors.accent, 0.35)
+                      : syncStatus === 'offline' || (syncStatus as string) === 'auth_required'
+                      ? hexToRgba(theme.colors.warning, 0.45)
+                      : hexToRgba(theme.colors.success, 0.35),
                 },
               ]}
+              onPress={() => {
+                if (syncStatus === 'offline') {
+                  retrySync();
+                }
+              }}
+              activeOpacity={syncStatus === 'offline' ? 0.7 : 1}
+              accessibilityRole="button"
+              accessibilityLabel={
+                syncStatus === 'synced'
+                  ? t('tasks.syncSyncedA11y')
+                  : syncStatus === 'syncing'
+                  ? t('tasks.syncSyncingA11y')
+                  : (syncStatus as string) === 'auth_required'
+                  ? t('tasks.syncReauthA11y')
+                  : t('tasks.syncOfflineA11y', { count: pendingSyncCount })
+              }
             >
-              {syncStatus === 'synced'
-                ? t('tasks.syncSynced')
-                : syncStatus === 'syncing'
-                ? t('tasks.syncSyncing')
-                : (syncStatus as string) === 'auth_required'
-                ? t('tasks.syncSignIn', { count: pendingSyncCount })
-                : t('tasks.syncOffline', { count: pendingSyncCount })}
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  styles.syncIndicatorText,
+                  {
+                    color:
+                      syncStatus === 'syncing'
+                        ? theme.colors.accent
+                        : syncStatus === 'offline' || (syncStatus as string) === 'auth_required'
+                        ? theme.colors.warning
+                        : theme.colors.success,
+                  },
+                ]}
+              >
+                {syncStatus === 'synced'
+                  ? t('tasks.syncSynced')
+                  : syncStatus === 'syncing'
+                  ? t('tasks.syncSyncing')
+                  : (syncStatus as string) === 'auth_required'
+                  ? t('tasks.syncSignIn', { count: pendingSyncCount })
+                  : t('tasks.syncOffline', { count: pendingSyncCount })}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Collapsible Search & Multi-Facet Filter Bar */}
@@ -908,7 +949,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 style={[styles.searchInput, { color: theme.colors.text }]}
                 placeholder={
                   searchAllLists
-                    ? t('tasks.searchAllPlaceholder')
+                    ? isLocalMode
+                      ? t('tasks.searchAllLocalPlaceholder')
+                      : t('tasks.searchAllPlaceholder')
                     : activeProject?.title
                     ? t('tasks.searchInListPlaceholder', { title: activeProject.title })
                     : t('tasks.searchInListFallback')
@@ -1552,7 +1595,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           <QuickAddBar
             activeProjectId={defaultTargetProjectId}
             availableProjects={safeProjects}
-            availableUsers={cachedUsers}
+            availableUsers={isLocalMode ? [] : cachedUsers}
+            hideAssignees={isLocalMode}
             doneTasks={doneTasks}
             historyTasks={projectTasks}
             availableLabels={availableLabels}
@@ -1640,6 +1684,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         availableProjects={safeProjects}
         defaultProjectId={defaultTargetProjectId}
         weekStartDay={weekStartDay}
+        hideAssignees={isLocalMode}
         onClose={() => {
           setSelectedTaskRef(null);
           setShowCreateTaskModal(false);
@@ -1994,20 +2039,25 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         </Text>
                       </TouchableOpacity>
 
-                      <TouchableOpacity
-                        testID="project-option-share"
-                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => {
-                          const pid = actionSheetProject.id;
-                          closeAllModals();
-                          setSharingProjectId(pid);
-                        }}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {t('drawer.shareList')}
-                        </Text>
-                      </TouchableOpacity>
+                      {!isLocalMode && (
+                        <TouchableOpacity
+                          testID="project-option-share"
+                          style={[
+                            styles.actionSheetOption,
+                            { borderBottomColor: theme.colors.border },
+                          ]}
+                          onPress={() => {
+                            const pid = actionSheetProject.id;
+                            closeAllModals();
+                            setSharingProjectId(pid);
+                          }}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                            {t('drawer.shareList')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
                       <TouchableOpacity
                         testID="project-option-favorite"

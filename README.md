@@ -1,11 +1,11 @@
-# Guanaco — Tasks, Lists & Reminders for Vikunja
+# Guanaco — Private Tasks, Lists & Reminders
 
 <p align="center">
   <img src="assets/icon.png" width="120" height="120" alt="Guanaco app icon" style="border-radius: 26px;" />
 </p>
 
 <p align="center">
-  <strong>A fast, private to-do list, grocery, and task manager for Android, iOS, and tablets — powered by <a href="https://vikunja.io/">Vikunja</a>.</strong>
+  <strong>A fast, private to-do list, grocery, and task manager for Android, iOS, and tablets — use it 100% standalone offline or sync with <a href="https://vikunja.io/">Vikunja</a>.</strong>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 ---
 
-**Guanaco** is an offline-capable task, grocery list, and project manager for Android, iPhone, iPad, and tablets that connects directly to your self-hosted or cloud **[Vikunja](https://vikunja.io/)** task server. Check off errands, sort shopping lists by store aisle, break projects into subtasks, and get local reminders — with zero ads, trackers, or third-party cloud intermediaries.
+**Guanaco** is a fast, private task, grocery list, and project manager for Android, iPhone, iPad, and tablets. Use it **100% standalone on your device** with no server or account required, or connect directly to your self-hosted or cloud **[Vikunja](https://vikunja.io/)** server anytime — with zero ads, trackers, or third-party cloud intermediaries.
 
 ---
 
@@ -52,7 +52,7 @@
 
 ## Features
 
-- **Reliable Offline Use** — View your lists, check off items, edit details, and add new tasks on a plane or in a dead zone. Everything syncs automatically once you reconnect.
+- **Standalone On-Device Mode & Seamless Vikunja Sync** — Tap **Use Offline on This Device** to start immediately with no server or account, export/import portable `.json` backups anytime, and optionally connect a Vikunja server later (uploading your local lists and tasks or starting fresh). When connected to a server, full offline caching queues changes in dead zones and syncs automatically once back online.
 - **Tasks, Subtasks & Rich Notes** — Break larger tasks into subtasks with live progress counts, duplicate recurring templates, and read or edit formatted notes and checklists created in Vikunja Web.
 - **Lists, Sublists & Saved Filters** — Organize nested lists, pin favorites, share lists with teammates, and open your Vikunja Saved Filters right from the sidebar.
 - **Fast Search & Effortless Gestures** — Search across every list by title, note, label, or assignee. Swipe left to complete a task, swipe right to move or delete it, or drag items into your own custom order.

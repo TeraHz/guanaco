@@ -9,23 +9,24 @@ Guanaco: Vikunja Tasks & Lists
 
 ## 2. Short Description (Max 80 characters)
 ```
-Offline to-do lists, grocery sorting & reminders for your Vikunja task server.
+Private offline to-do lists, grocery sorting & reminders — local or Vikunja.
 ```
-*(Length: 78 characters)*
+*(Length: 76 characters)*
 
 ---
 
 ## 3. Full Description (Max 4,000 characters)
 
 ```markdown
-Guanaco is a fast, private, open-source to-do list, grocery list, and task manager for phones and tablets, built for your self-hosted or cloud Vikunja task server.
+Guanaco is a fast, private, open-source to-do list, grocery list, and task manager for phones and tablets. Use it 100% standalone on your device with no server or account required, or connect anytime to your self-hosted or cloud Vikunja server.
 
-Organize everyday errands, shared shopping lists, trip packing checklists, and home projects with subtasks, local reminders, and automatic supermarket aisle sorting — even when you have no signal, with zero ads or tracking.
+Organize everyday errands, shopping lists, trip packing checklists, and home projects with subtasks, local reminders, and automatic supermarket aisle sorting — with zero ads, trackers, or third-party cloud intermediaries.
 
-Note: Guanaco connects directly to an existing Vikunja server (self-hosted or Vikunja Cloud) and requires a server URL to sign in.
+Use Standalone or Sync Later:
+Start immediately on your device, export or import portable JSON backups anytime, and optionally connect a Vikunja server later to upload your local lists and tasks seamlessly.
 
 Features:
-• Works Offline: View lists, check off groceries or errands, add tasks, and edit details without a signal — changes sync automatically once you reconnect.
+• Standalone & Offline Sync: Use 100% locally on your device, or connect a Vikunja server with full offline caching that syncs automatically once back online.
 • Smart Grocery & List Grouping: Automatically sort shopping lists by supermarket aisle (Produce, Dairy, Bakery, Meat) or group travel and home projects right on your device.
 • Subtasks & Saved Filters: Break home projects into subtasks with progress counts, duplicate task templates, and open your Vikunja Saved Filters from the sidebar.
 • Quick One-Line Entry: Add tasks with inline shortcuts for #labels, +lists, !priority, @assignees, due dates, and repeating schedules.

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Guanaco",
     "slug": "guanaco",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.geodar.guanaco",
-      "versionCode": 10500,
+      "versionCode": 10600,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

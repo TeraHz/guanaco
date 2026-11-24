@@ -1,4 +1,5 @@
-import { RepeatMode } from '../types/vikunja';
+import { RepeatMode, Task, TaskReminder } from '../types/vikunja';
+import { normalizeVikunjaDate } from './dates';
 import { t, TranslationKey } from '../i18n';
 
 export type TimeUnit = 'seconds' | 'minutes' | 'hours' | 'days' | 'weeks' | 'months' | 'years';
@@ -144,4 +145,208 @@ export function formatRepeatDescription(
   }
 
   return base;
+}
+
+export function isTaskRecurring(
+  task?: Pick<Task, 'repeat_after' | 'repeat_mode'> | null
+): boolean {
+  if (!task) return false;
+  if (task.repeat_mode === RepeatMode.Monthly) return true;
+  return Boolean(
+    typeof task.repeat_after === 'number' &&
+      Number.isFinite(task.repeat_after) &&
+      task.repeat_after > 0
+  );
+}
+
+/**
+ * Adds `months` calendar months in local wall-clock time while clamping day-of-month
+ * to the end of the target month (e.g. Jan 31 + 1 month -> Feb 28/29 instead of Mar 3).
+ */
+export function addCalendarMonthsClamped(anchor: Date, months: number): Date {
+  const origYear = anchor.getFullYear();
+  const origMonth = anchor.getMonth();
+  const origDay = anchor.getDate();
+
+  const totalMonths = origMonth + months;
+  const targetYear = origYear + Math.floor(totalMonths / 12);
+  const targetMonth = ((totalMonths % 12) + 12) % 12;
+
+  const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const clampedDay = Math.min(origDay, daysInTargetMonth);
+
+  return new Date(
+    targetYear,
+    targetMonth,
+    clampedDay,
+    anchor.getHours(),
+    anchor.getMinutes(),
+    anchor.getSeconds(),
+    anchor.getMilliseconds()
+  );
+}
+
+function addLocalCalendarDays(anchor: Date, days: number): Date {
+  return new Date(
+    anchor.getFullYear(),
+    anchor.getMonth(),
+    anchor.getDate() + days,
+    anchor.getHours(),
+    anchor.getMinutes(),
+    anchor.getSeconds(),
+    anchor.getMilliseconds()
+  );
+}
+
+const MAX_SAFE_REPEAT_SECONDS = 100 * 365 * 86400; // 100 years
+
+/**
+ * Rolls a completed recurring task forward to its next occurrence for standalone on-device mode,
+ * keeping `done: false`, resetting `percent_done: 0`, preserving wall-clock time across DST boundaries
+ * for whole-day/month intervals, and accurately shifting `start_date`, `end_date`, and absolute `reminders`
+ * across `FromDueDate`, `Monthly`, and `FromCompletion` modes (even when `due_date` is `null`).
+ */
+export function computeNextRecurringTaskState(task: Task, now: Date = new Date()): Task {
+  const safeNow = now instanceof Date && !isNaN(now.getTime()) ? now : new Date();
+  if (!isTaskRecurring(task)) {
+    const nowIso = safeNow.toISOString();
+    return {
+      ...task,
+      done: true,
+      done_at: nowIso,
+      updated: nowIso,
+    };
+  }
+
+  const nowMs = safeNow.getTime();
+  const normDue = normalizeVikunjaDate(task.due_date);
+  const normStart = normalizeVikunjaDate(task.start_date);
+  const normEnd = normalizeVikunjaDate(task.end_date);
+
+  const existingDue = normDue ? new Date(normDue) : null;
+  const existingStart = normStart ? new Date(normStart) : null;
+  const existingEnd = normEnd ? new Date(normEnd) : null;
+
+  let earliestAbsReminder: Date | null = null;
+  if (Array.isArray(task.reminders)) {
+    for (const r of task.reminders) {
+      if (r && !r.relative_to && r.reminder) {
+        const nr = normalizeVikunjaDate(r.reminder);
+        if (nr) {
+          const rd = new Date(nr);
+          if (!earliestAbsReminder || rd.getTime() < earliestAbsReminder.getTime()) {
+            earliestAbsReminder = rd;
+          }
+        }
+      }
+    }
+  }
+
+  const priorScheduleAnchor =
+    existingDue ?? existingStart ?? existingEnd ?? earliestAbsReminder;
+  const shouldWriteDueDate = existingDue !== null || priorScheduleAnchor === null;
+
+  const repeatMode = task.repeat_mode ?? RepeatMode.FromDueDate;
+  const rawAfter =
+    typeof task.repeat_after === 'number' &&
+    Number.isFinite(task.repeat_after) &&
+    task.repeat_after > 0
+      ? Math.min(MAX_SAFE_REPEAT_SECONDS, Math.round(task.repeat_after))
+      : 0;
+
+  const stepBaseDate =
+    repeatMode === RepeatMode.FromCompletion || !priorScheduleAnchor
+      ? safeNow
+      : priorScheduleAnchor;
+
+  let nextTarget: Date;
+  let calendarMonthsApplied = 0;
+  let calendarDaysApplied = 0;
+
+  if (repeatMode === RepeatMode.Monthly) {
+    const monthsStep =
+      rawAfter >= UNIT_SECONDS.months && rawAfter % UNIT_SECONDS.months === 0
+        ? Math.max(1, Math.round(rawAfter / UNIT_SECONDS.months))
+        : 1;
+    let k = 1;
+    nextTarget = addCalendarMonthsClamped(stepBaseDate, monthsStep * k);
+    while (nextTarget.getTime() <= nowMs && k < 1200) {
+      k += 1;
+      nextTarget = addCalendarMonthsClamped(stepBaseDate, monthsStep * k);
+    }
+    calendarMonthsApplied = monthsStep * k;
+  } else if (rawAfter > 0 && rawAfter % UNIT_SECONDS.days === 0) {
+    const daysStep = Math.max(1, Math.round(rawAfter / UNIT_SECONDS.days));
+    let k = 1;
+    if (stepBaseDate.getTime() < nowMs) {
+      const approxDiffDays = Math.floor(
+        (nowMs - stepBaseDate.getTime()) / (UNIT_SECONDS.days * 1000)
+      );
+      k = Math.max(1, Math.floor(approxDiffDays / daysStep));
+    }
+    nextTarget = addLocalCalendarDays(stepBaseDate, daysStep * k);
+    let guard = 0;
+    while (nextTarget.getTime() <= nowMs && guard < 10000) {
+      k += 1;
+      guard += 1;
+      nextTarget = addLocalCalendarDays(stepBaseDate, daysStep * k);
+    }
+    calendarDaysApplied = daysStep * k;
+  } else {
+    const stepMs = Math.max(1000, rawAfter * 1000);
+    const baseMs = stepBaseDate.getTime();
+    const k = baseMs <= nowMs ? Math.floor((nowMs - baseMs) / stepMs) + 1 : 1;
+    nextTarget = new Date(baseMs + k * stepMs);
+  }
+
+  if (isNaN(nextTarget.getTime())) {
+    nextTarget = new Date(nowMs + UNIT_SECONDS.days * 1000);
+  }
+
+  const effectiveAnchorDeltaMs = priorScheduleAnchor
+    ? nextTarget.getTime() - priorScheduleAnchor.getTime()
+    : nextTarget.getTime() - stepBaseDate.getTime();
+  const isFromCompletionWithPrior =
+    repeatMode === RepeatMode.FromCompletion && priorScheduleAnchor !== null;
+
+  const shiftCompanionDate = (iso?: string | null): string | null => {
+    const norm = normalizeVikunjaDate(iso);
+    if (!norm) return null;
+    const orig = new Date(norm);
+    let shifted: Date;
+    if (isFromCompletionWithPrior) {
+      shifted = new Date(orig.getTime() + effectiveAnchorDeltaMs);
+    } else if (calendarMonthsApplied > 0) {
+      shifted = addCalendarMonthsClamped(orig, calendarMonthsApplied);
+    } else if (calendarDaysApplied > 0) {
+      shifted = addLocalCalendarDays(orig, calendarDaysApplied);
+    } else {
+      shifted = new Date(orig.getTime() + effectiveAnchorDeltaMs);
+    }
+    return isNaN(shifted.getTime()) ? norm : shifted.toISOString();
+  };
+
+  let nextReminders: TaskReminder[] | null | undefined = task.reminders;
+  if (Array.isArray(task.reminders) && task.reminders.length > 0) {
+    nextReminders = task.reminders.map((rem) => {
+      if (!rem) return rem;
+      if (!rem.relative_to && rem.reminder) {
+        const shifted = shiftCompanionDate(rem.reminder);
+        return shifted ? { ...rem, reminder: shifted } : rem;
+      }
+      return { ...rem };
+    });
+  }
+
+  return {
+    ...task,
+    done: false,
+    done_at: null,
+    percent_done: task.percent_done !== undefined ? 0 : undefined,
+    due_date: shouldWriteDueDate ? nextTarget.toISOString() : null,
+    start_date: shiftCompanionDate(task.start_date),
+    end_date: shiftCompanionDate(task.end_date),
+    reminders: nextReminders,
+    updated: safeNow.toISOString(),
+  };
 }

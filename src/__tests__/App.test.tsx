@@ -760,4 +760,152 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
       }
     }
   });
+
+  it('supports standalone Offline Mode out-of-the-box, hides multi-user/sync UI, and seamlessly migrates local tasks when connecting a Vikunja server later', async () => {
+    const { getByTestId, findByText, queryByTestId, findByTestId, getByPlaceholderText } = render(
+      <App />
+    );
+
+    // 1. Tap "Use Offline on This Device" on LoginScreen with ZERO network calls
+    (global.fetch as jest.Mock).mockClear();
+    fireEvent.press(getByTestId('login-use-offline-btn'));
+
+    // Lands in starter "Tasks" list; sync pill and multi-user options are hidden!
+    expect(await findByText('Tasks')).toBeTruthy();
+    expect(queryByTestId('sync-indicator-btn')).toBeNull();
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    // Add a local task in "Tasks"
+    fireEvent.changeText(getByTestId('quick-add-input'), 'Buy Oat Milk');
+    fireEvent.press(getByTestId('quick-add-submit'));
+    expect(await findByText('Buy Oat Milk')).toBeTruthy();
+
+    // Open Drawer -> My Open Tasks is hidden in Local Mode; open Settings -> Connect a Vikunja Server
+    fireEvent.press(getByTestId('drawer-toggle-btn'));
+    expect(queryByTestId('drawer-project-my-tasks')).toBeNull();
+    fireEvent.press(getByTestId('drawer-settings-btn'));
+
+    expect(await findByTestId('settings-local-mode-badge')).toBeTruthy();
+    expect(getByTestId('settings-backup-section')).toBeTruthy();
+    fireEvent.press(getByTestId('settings-connect-server-btn'));
+
+    // 2. Connect Server screen shows Back button and migration options ("1 list(s) and 1 task(s)")
+    expect(await findByTestId('login-migration-choice-box')).toBeTruthy();
+    // Cancel via Back -> returns straight to local tasks untouched!
+    fireEvent.press(getByTestId('reauth-back-btn'));
+    expect(await findByText('Buy Oat Milk')).toBeTruthy();
+
+    // 3. Re-open Connect Server and connect to Vikunja with default 'merge' mode
+    const uploadedTaskTitles: string[] = [];
+    global.fetch = jest.fn().mockImplementation((url: string, opts?: any) => {
+      if (url.includes('/login')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ token: 'migrated-jwt-token' }),
+        } as Response);
+      }
+      if (url.endsWith('/user')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 1, username: 'alice' }),
+        } as Response);
+      }
+      if (url.endsWith('/projects/10/tasks') && opts?.method === 'PUT') {
+        const body = JSON.parse(opts.body);
+        uploadedTaskTitles.push(body.title);
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: 777,
+            title: body.title,
+            done: false,
+            priority: 0,
+            project_id: 10,
+          }),
+        } as Response);
+      }
+      if (url.includes('/labels')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [],
+        } as Response);
+      }
+      if (url.includes('/tasks')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () =>
+            uploadedTaskTitles.map((title, i) => ({
+              id: 777 + i,
+              title,
+              done: false,
+              priority: 0,
+              project_id: 10,
+            })),
+        } as Response);
+      }
+      if (url.includes('/projects')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 10, title: 'Tasks', hex_color: '#0A84FF' }],
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response);
+    });
+
+    fireEvent.press(getByTestId('drawer-toggle-btn'));
+    fireEvent.press(getByTestId('drawer-settings-btn'));
+    fireEvent.press(await findByTestId('settings-connect-server-btn'));
+
+    fireEvent.changeText(
+      getByPlaceholderText('https://vikunja.example.com'),
+      'https://try.vikunja.io'
+    );
+    fireEvent.changeText(getByPlaceholderText('Username'), 'alice');
+    fireEvent.changeText(getByPlaceholderText('Password'), 'strongpass');
+    fireEvent.press(getByTestId('login-submit-btn'));
+
+    // Local task was uploaded to server project 10, Local Mode exited, and Sync pill is now visible!
+    expect(await findByText('Buy Oat Milk')).toBeTruthy();
+    expect(await findByTestId('sync-indicator-btn')).toBeTruthy();
+    expect(uploadedTaskTitles).toEqual(['Buy Oat Milk']);
+    expect(useTaskStore.getState().isLocalMode).toBe(false);
+    expect(await AsyncStorage.getItem('@vikunja_local_mode')).toBeNull();
+  });
+
+  it('protects standalone Local Mode behind Biometric Lock on cold start without any server token', async () => {
+    await AsyncStorage.setItem('@vikunja_local_mode', 'true');
+    await AsyncStorage.setItem(
+      '@vikunja_cached_projects',
+      JSON.stringify([{ id: 1, title: 'Private Local Vault', hex_color: '#0A84FF' }])
+    );
+    await AsyncStorage.setItem(
+      '@vikunja_cached_tasks',
+      JSON.stringify([
+        { id: -50, title: 'Top Secret Offline Note', done: false, priority: 3, project_id: 1 },
+      ])
+    );
+    await setBiometricEnabled(true);
+
+    // Biometric prompt cancelled on cold launch -> stays locked
+    (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: false });
+
+    const { findByTestId, queryByText, findByText } = render(<App />);
+    expect(await findByTestId('biometric-lock-screen')).toBeTruthy();
+    expect(queryByText('Top Secret Offline Note')).toBeNull();
+    expect(await findByText('Erase Local Data & Exit')).toBeTruthy();
+
+    // Pass biometrics -> unlocks Local Mode with zero network calls!
+    (global.fetch as jest.Mock).mockClear();
+    (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+    fireEvent.press(await findByTestId('login-biometric-btn'));
+
+    expect(await findByText('Top Secret Offline Note')).toBeTruthy();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });

@@ -31,6 +31,7 @@ interface ProjectDrawerProps {
   onClose: () => void;
   onAddNewList?: () => void;
   onLogout?: () => void;
+  onConnectServer?: () => void;
   inline?: boolean;
 }
 
@@ -39,16 +40,19 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   onClose,
   onAddNewList,
   onLogout,
+  onConnectServer,
   inline = false,
 }) => {
   const theme = useAppTheme();
   const { t } = useTranslation();
   const {
+    isLocalMode = false,
     projects,
     tasks,
     currentUser,
     selectedProjectId,
     savedFilterTaskIds = {},
+    pendingOpenTaskId = null,
     setSelectedProjectId,
     toggleProjectFavorite,
     archiveProject,
@@ -67,6 +71,16 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   useEffect(() => {
     setConfirmingDelete(false);
   }, [actionSheetProjectId]);
+
+  // Dismiss drawer & nested modals when a notification tap requests opening a task detail sheet
+  useEffect(() => {
+    if (pendingOpenTaskId !== null && pendingOpenTaskId !== undefined) {
+      openExclusiveSubModal('none');
+      if (visible && !inline) {
+        onClose();
+      }
+    }
+  }, [pendingOpenTaskId, visible, inline, onClose]);
 
   // Strict modal mutual exclusion so NEVER are two <Modal>s visible simultaneously on iOS!
   const openExclusiveSubModal = (
@@ -290,42 +304,44 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         </TouchableOpacity>
 
         {/* My Open Tasks View */}
-        <TouchableOpacity
-          testID="drawer-project-my-tasks"
-          style={[
-            styles.projectItem,
-            selectedProjectId === MY_TASKS_PROJECT_ID && {
-              backgroundColor: theme.colors.surfaceSecondary,
-            },
-          ]}
-          onPress={() => handleSelect(MY_TASKS_PROJECT_ID)}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityState={{ selected: selectedProjectId === MY_TASKS_PROJECT_ID }}
-        >
-          <View
+        {!isLocalMode && (
+          <TouchableOpacity
+            testID="drawer-project-my-tasks"
             style={[
-              styles.colorDot,
-              { backgroundColor: theme.isDark ? '#BF5AF2' : '#7E22CE' },
+              styles.projectItem,
+              selectedProjectId === MY_TASKS_PROJECT_ID && {
+                backgroundColor: theme.colors.surfaceSecondary,
+              },
             ]}
-          />
-          <Text
-            style={[
-              styles.projectTitle,
-              { color: theme.colors.text },
-              selectedProjectId === MY_TASKS_PROJECT_ID && styles.projectTitleSelected,
-            ]}
-            numberOfLines={1}
+            onPress={() => handleSelect(MY_TASKS_PROJECT_ID)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityState={{ selected: selectedProjectId === MY_TASKS_PROJECT_ID }}
           >
-            {t('drawer.myOpenTasks')}
-          </Text>
-          <Text
-            testID="drawer-count-my-tasks"
-            style={[styles.badgeCount, { color: theme.colors.textSecondary }]}
-          >
-            {myActiveCount}
-          </Text>
-        </TouchableOpacity>
+            <View
+              style={[
+                styles.colorDot,
+                { backgroundColor: theme.isDark ? '#BF5AF2' : '#7E22CE' },
+              ]}
+            />
+            <Text
+              style={[
+                styles.projectTitle,
+                { color: theme.colors.text },
+                selectedProjectId === MY_TASKS_PROJECT_ID && styles.projectTitleSelected,
+              ]}
+              numberOfLines={1}
+            >
+              {t('drawer.myOpenTasks')}
+            </Text>
+            <Text
+              testID="drawer-count-my-tasks"
+              style={[styles.badgeCount, { color: theme.colors.textSecondary }]}
+            >
+              {myActiveCount}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Server Saved Filters */}
         {savedFilters.length > 0 && (
@@ -629,6 +645,14 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         visible={showSettings}
         onClose={() => setShowSettings(false)}
         onLogout={onLogout}
+        onConnectServer={
+          onConnectServer
+            ? () => {
+                onClose();
+                onConnectServer();
+              }
+            : undefined
+        }
         onOpenLabelManagement={() => openExclusiveSubModal('labels')}
       />
 
@@ -741,19 +765,24 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         </Text>
                       </TouchableOpacity>
 
-                      <TouchableOpacity
-                        testID="drawer-option-share"
-                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => {
-                          const pid = actionSheetProject.id;
-                          openExclusiveSubModal('sharing', pid);
-                        }}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {t('drawer.shareList')}
-                        </Text>
-                      </TouchableOpacity>
+                      {!isLocalMode && (
+                        <TouchableOpacity
+                          testID="drawer-option-share"
+                          style={[
+                            styles.actionSheetOption,
+                            { borderBottomColor: theme.colors.border },
+                          ]}
+                          onPress={() => {
+                            const pid = actionSheetProject.id;
+                            openExclusiveSubModal('sharing', pid);
+                          }}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                            {t('drawer.shareList')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
                       <TouchableOpacity
                         testID="drawer-option-favorite"

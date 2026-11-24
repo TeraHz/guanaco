@@ -3,8 +3,11 @@ import {
   intervalToSeconds,
   formatRepeatDescription,
   REPEAT_PRESETS,
+  addCalendarMonthsClamped,
+  computeNextRecurringTaskState,
+  isTaskRecurring,
 } from '../repeat';
-import { RepeatMode } from '../../types/vikunja';
+import { ReminderRelativeTo, RepeatMode, Task } from '../../types/vikunja';
 
 describe('repeat utils', () => {
   describe('intervalToSeconds & secondsToInterval', () => {
@@ -127,6 +130,107 @@ describe('repeat utils', () => {
       expect(REPEAT_PRESETS.find((p) => p.label === 'Monthly')?.repeatMode).toBe(
         RepeatMode.Monthly
       );
+    });
+  });
+
+  describe('Local Mode Recurring Rollover (addCalendarMonthsClamped & computeNextRecurringTaskState)', () => {
+    it('clamps month-end dates without overflowing Feb 28/29 into March and avoids Feb-28 drift across multi-month steps', () => {
+      const jan31NonLeap = new Date(2026, 0, 31, 9, 30, 0, 0);
+      const febClamped = addCalendarMonthsClamped(jan31NonLeap, 1);
+      expect(febClamped.getFullYear()).toBe(2026);
+      expect(febClamped.getMonth()).toBe(1);
+      expect(febClamped.getDate()).toBe(28);
+      expect(febClamped.getHours()).toBe(9);
+      expect(febClamped.getMinutes()).toBe(30);
+
+      // Multi-month step from Jan 31 (+2 months) lands on Mar 31, NOT Mar 28!
+      const mar31 = addCalendarMonthsClamped(jan31NonLeap, 2);
+      expect(mar31.getMonth()).toBe(2);
+      expect(mar31.getDate()).toBe(31);
+
+      // Leap year 2028: Jan 31 + 1 month -> Feb 29
+      const jan31Leap = new Date(2028, 0, 31, 9, 0, 0, 0);
+      const feb29 = addCalendarMonthsClamped(jan31Leap, 1);
+      expect(feb29.getMonth()).toBe(1);
+      expect(feb29.getDate()).toBe(29);
+    });
+
+    it('rolls Daily, Weekly, Monthly, and FromCompletion recurring tasks forward while keeping done=false and shifting companion dates/reminders', () => {
+      const now = new Date(2026, 10, 24, 14, 0, 0, 0); // Nov 24, 2026 14:00 local
+      const dueMorning = new Date(2026, 10, 24, 9, 0, 0, 0); // Nov 24, 2026 09:00 local
+      const startMorning = new Date(2026, 10, 24, 8, 0, 0, 0);
+
+      const dailyTask: Task = {
+        id: -10,
+        title: 'Take vitamins',
+        done: false,
+        priority: 1,
+        percent_done: 0.75,
+        project_id: 1,
+        due_date: dueMorning.toISOString(),
+        start_date: startMorning.toISOString(),
+        repeat_after: 86400,
+        repeat_mode: RepeatMode.FromDueDate,
+        reminders: [
+          { relative_to: ReminderRelativeTo.DueDate, relative_period: -900 },
+          { relative_to: '', reminder: dueMorning.toISOString() },
+        ],
+      };
+
+      expect(isTaskRecurring(dailyTask)).toBe(true);
+      const rolledDaily = computeNextRecurringTaskState(dailyTask, now);
+      expect(rolledDaily.done).toBe(false);
+      expect(rolledDaily.done_at).toBeNull();
+      expect(rolledDaily.percent_done).toBe(0);
+
+      const nextDueDate = new Date(rolledDaily.due_date!);
+      expect(nextDueDate.getFullYear()).toBe(2026);
+      expect(nextDueDate.getMonth()).toBe(10);
+      expect(nextDueDate.getDate()).toBe(25);
+      expect(nextDueDate.getHours()).toBe(9);
+
+      // Start date and absolute reminder shifted by 1 calendar day too
+      expect(new Date(rolledDaily.start_date!).getDate()).toBe(25);
+      expect(rolledDaily.reminders?.[0]?.relative_period).toBe(-900);
+      expect(new Date(rolledDaily.reminders?.[1]?.reminder!).getDate()).toBe(25);
+
+      // FromCompletion mode advances relative to `now` AND shifts companion dates by (nextTarget - priorScheduleAnchor)
+      const fromCompletionTask: Task = {
+        id: -11,
+        title: 'Water plants',
+        done: false,
+        priority: 0,
+        project_id: 1,
+        due_date: new Date(2026, 10, 10, 9, 0, 0, 0).toISOString(), // 14 days overdue
+        start_date: new Date(2026, 10, 9, 9, 0, 0, 0).toISOString(), // 1 day before due_date
+        repeat_after: 3 * 86400,
+        repeat_mode: RepeatMode.FromCompletion,
+      };
+      const rolledFromComp = computeNextRecurringTaskState(fromCompletionTask, now);
+      const compDue = new Date(rolledFromComp.due_date!);
+      const compStart = new Date(rolledFromComp.start_date!);
+      expect(compDue.getDate()).toBe(27); // Nov 24 + 3 days = Nov 27
+      expect(compDue.getHours()).toBe(14); // Preserves completion hour
+      // Companion start_date stays ~1 day ahead of the new due_date rather than lagging 14 days behind!
+      expect(compDue.getTime() - compStart.getTime()).toBe(24 * 3600 * 1000);
+
+      // Recurring task with due_date: null anchored on start_date + absolute reminder does NOT fabricate due_date
+      const startOnlyRecurring: Task = {
+        id: -12,
+        title: 'Morning stretch',
+        done: false,
+        priority: 0,
+        project_id: 1,
+        due_date: null,
+        start_date: startMorning.toISOString(),
+        repeat_after: 86400,
+        repeat_mode: RepeatMode.FromDueDate,
+        reminders: [{ relative_to: '', reminder: startMorning.toISOString() }],
+      };
+      const rolledStartOnly = computeNextRecurringTaskState(startOnlyRecurring, now);
+      expect(rolledStartOnly.due_date).toBeNull();
+      expect(new Date(rolledStartOnly.start_date!).getDate()).toBe(25);
+      expect(new Date(rolledStartOnly.reminders![0].reminder!).getDate()).toBe(25);
     });
   });
 });

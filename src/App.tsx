@@ -14,8 +14,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useTaskStore } from './store/taskStore';
+import { useTaskStore, CACHE_KEY_LOCAL_MODE } from './store/taskStore';
 import { SYNC_QUEUE_STORAGE_KEY } from './store/syncQueue';
+import {
+  clearMigrationCheckpoint,
+  isUntouchedEmptyStarterProject,
+  migrateLocalDataToServer,
+} from './services/localMigration';
 import { LoginScreen, LoginConnectOptions } from './screens/LoginScreen';
 import { ProjectTasksScreen } from './screens/ProjectTasksScreen';
 import { ProjectDrawer } from './screens/ProjectDrawer';
@@ -26,10 +31,14 @@ import { hexToRgba } from './utils/colors';
 import {
   getStoredAuth,
   setStoredAuth,
+  setStoredRefreshToken,
   clearStoredAuth,
+  clearStoredCredentialsOnly,
   clearNativeCookies,
   checkBiometricAvailable,
   isBiometricEnabled,
+  getCachedBiometricEnabled,
+  setBiometricEnabled,
   authenticateWithBiometrics,
   cancelBiometricPrompt,
   isAndroidActivityReadyForBiometrics,
@@ -42,7 +51,9 @@ import {
   NOTIF_ACTION_SNOOZE_15M,
   scheduleSnoozedReminder,
   shouldCompleteTaskFromNotification,
+  syncAppBadgeCount,
 } from './services/localNotifications';
+import { isSystemFileDialogRecentlyActive } from './utils/localBackup';
 import { useUpdateStore } from './store/updateStore';
 import { AppUpdatePromptModal } from './components/AppUpdatePromptModal';
 import { loadStoredLanguagePreference, t as translate, useTranslation } from './i18n';
@@ -60,8 +71,12 @@ export default function App() {
   const [isLocked, setIsLocked] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const [pendingLockLogoutCount, setPendingLockLogoutCount] = useState<number | null>(null);
+  const [pendingLockEraseLocal, setPendingLockEraseLocal] = useState(false);
   const [showReauthLogin, setShowReauthLogin] = useState(false);
+  const [showConnectServerFromLocal, setShowConnectServerFromLocal] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [pendingLocalSession, setPendingLocalSession] = useState(false);
   const [pendingStoredSession, setPendingStoredSession] = useState<{
     serverUrl: string;
     token: string;
@@ -74,18 +89,36 @@ export default function App() {
   const biometricAttemptSeqRef = useRef(0);
   const needsAutoUnlockPromptRef = useRef(false);
   const isConnectingRef = useRef(false);
+  const logoutEpochRef = useRef(0);
+  const handledNotifKeysRef = useRef<Set<string>>(new Set());
   const isLockedRef = useRef(isLocked);
   isLockedRef.current = isLocked;
 
-  const { initialize, syncAll, authRequired, pendingSyncCount } = useTaskStore();
+  const {
+    initialize,
+    initializeLocalMode,
+    syncAll,
+    authRequired,
+    pendingSyncCount,
+    isLocalMode,
+    projects,
+    tasks,
+  } = useTaskStore();
 
   useEffect(() => {
     const unsub = useTaskStore.subscribe((state, prev) => {
-      if (prev.client && !state.client && !isConnectingRef.current) {
+      if (
+        (prev.client || prev.isLocalMode) &&
+        !state.client &&
+        !state.isLocalMode &&
+        !isConnectingRef.current
+      ) {
         setIsDrawerOpen(false);
         setShowReauthLogin(false);
+        setShowConnectServerFromLocal(false);
         setLockError(null);
         setPendingLockLogoutCount(null);
+        setPendingLockEraseLocal(false);
         setIsLocked(false);
         setIsAuthenticated(false);
       }
@@ -105,7 +138,7 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Handle interactive local reminder actions (Mark Complete, Snooze 15m) & tap-to-open safely
+  // Handle interactive local reminder actions (Mark Complete, Snooze 15m) & cold-start / live tap-to-open safely
   useEffect(() => {
     if (
       Platform.OS === 'web' ||
@@ -114,22 +147,38 @@ export default function App() {
       return;
     }
 
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const actionId = response?.actionIdentifier;
-      const notifId = response?.notification?.request?.identifier;
+    const handleNotificationResponse = (response: any) => {
+      if (!response) return;
+      const actionId = response?.actionIdentifier || 'DEFAULT';
+      const notifId = response?.notification?.request?.identifier || '';
+      const dedupeKey = notifId ? `${notifId}:${actionId}` : '';
+      if (dedupeKey && handledNotifKeysRef.current.has(dedupeKey)) {
+        return;
+      }
+
       const data = (response?.notification?.request?.content?.data || {}) as {
         taskId?: number;
         taskDueDate?: string | null;
+        occurrenceAnchor?: string | null;
       };
       const taskId = typeof data.taskId === 'number' ? data.taskId : null;
       if (taskId === null) return;
 
+      const isBgPastLockGrace =
+        backgroundedAtRef.current !== null &&
+        Date.now() - backgroundedAtRef.current >= BIOMETRIC_LOCK_GRACE_MS &&
+        getCachedBiometricEnabled();
+
       if (actionId === NOTIF_ACTION_MARK_DONE) {
+        const store = useTaskStore.getState();
+        // Never dismiss or mutate while locked or uninitialized so user never loses the tray notification
+        if (isLockedRef.current || isBgPastLockGrace || (!store.client && !store.isLocalMode)) {
+          return;
+        }
+        if (dedupeKey) handledNotifKeysRef.current.add(dedupeKey);
         if (notifId && typeof Notifications.dismissNotificationAsync === 'function') {
           Notifications.dismissNotificationAsync(notifId).catch(() => {});
         }
-        if (isLockedRef.current || !useTaskStore.getState().client) return;
-        const store = useTaskStore.getState();
         const target = (store.tasks || []).find((t) => t.id === taskId);
         if (shouldCompleteTaskFromNotification(target, data)) {
           store.toggleTask(taskId);
@@ -138,20 +187,49 @@ export default function App() {
       }
 
       if (actionId === NOTIF_ACTION_SNOOZE_15M) {
+        const store = useTaskStore.getState();
+        if (isLockedRef.current || isBgPastLockGrace || (!store.client && !store.isLocalMode)) {
+          return;
+        }
+        if (dedupeKey) handledNotifKeysRef.current.add(dedupeKey);
         if (notifId && typeof Notifications.dismissNotificationAsync === 'function') {
           Notifications.dismissNotificationAsync(notifId).catch(() => {});
         }
-        if (isLockedRef.current || !useTaskStore.getState().client) return;
-        const target = (useTaskStore.getState().tasks || []).find((t) => t.id === taskId);
-        if (target && !target.done) {
+        const target = (store.tasks || []).find((t) => t.id === taskId);
+        if (shouldCompleteTaskFromNotification(target, data) && target) {
           scheduleSnoozedReminder(target, 15).catch(() => {});
         }
         return;
       }
 
-      // Default notification tap: stage taskId so ProjectTasksScreen opens it once unlocked
+      // Default notification tap: stage taskId and close any open overlays so ProjectTasksScreen opens it cleanly
+      if (dedupeKey) handledNotifKeysRef.current.add(dedupeKey);
+      setIsDrawerOpen(false);
+      if (!isConnectingRef.current) {
+        setShowReauthLogin(false);
+        setShowConnectServerFromLocal(false);
+      }
       useTaskStore.getState().setPendingOpenTaskId(taskId);
-    });
+    };
+
+    const sub = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
+
+    if (typeof Notifications.getLastNotificationResponseAsync === 'function') {
+      Notifications.getLastNotificationResponseAsync()
+        .then((lastResp) => {
+          if (!lastResp) return;
+          const actionId = lastResp?.actionIdentifier;
+          // Only replay default tap-to-open from cold launch so action buttons aren't re-triggered later
+          if (
+            !actionId ||
+            actionId === (Notifications as any).DEFAULT_ACTION_IDENTIFIER ||
+            actionId === 'expo.modules.notifications.actions.DEFAULT'
+          ) {
+            handleNotificationResponse(lastResp);
+          }
+        })
+        .catch(() => {});
+    }
 
     return () => {
       sub?.remove?.();
@@ -191,13 +269,28 @@ export default function App() {
         await initialize(target.serverUrl, target.token, target.refreshToken);
         setIsAuthenticated(true);
         setPendingStoredSession(null);
+      } else if (!isAuthenticated && pendingLocalSession) {
+        await initializeLocalMode({ seedDefaultsIfEmpty: false });
+        setIsAuthenticated(true);
+        setPendingLocalSession(false);
       }
       setLockError(null);
       setPendingLockLogoutCount(null);
+      setPendingLockEraseLocal(false);
+      isLockedRef.current = false;
       setIsLocked(false);
-      syncAll().catch(() => {});
+      if (useTaskStore.getState().client) {
+        syncAll().catch(() => {});
+      }
     },
-    [initialize, isAuthenticated, pendingStoredSession, syncAll]
+    [
+      initialize,
+      initializeLocalMode,
+      isAuthenticated,
+      pendingLocalSession,
+      pendingStoredSession,
+      syncAll,
+    ]
   );
 
   // Google Play In-App Updates lifecycle & listeners (only check when authenticated & unlocked)
@@ -226,12 +319,56 @@ export default function App() {
     let mounted = true;
     async function restoreSession() {
       const stored = await getStoredAuth();
-      if (!mounted) return;
-      if (!stored.serverUrl || !stored.token) return;
+      if (!mounted || isConnectingRef.current) return;
+
+      if (!stored.serverUrl || !stored.token) {
+        const storedLocalMode = await AsyncStorage.getItem(CACHE_KEY_LOCAL_MODE).catch(
+          () => null
+        );
+        if (!mounted || isConnectingRef.current || storedLocalMode !== 'true') return;
+
+        const biometricActive =
+          (await isBiometricEnabled()) && (await checkBiometricAvailable());
+        if (!mounted || isConnectingRef.current) return;
+
+        if (biometricActive) {
+          setPendingLocalSession(true);
+          setLockError(null);
+          isLockedRef.current = true;
+          setIsLocked(true);
+
+          const readyForPrompt = await isAndroidActivityReadyForBiometrics();
+          if (!mounted || isConnectingRef.current) return;
+          if (!readyForPrompt) {
+            needsAutoUnlockPromptRef.current = true;
+            return;
+          }
+
+          const passed = await promptBiometricUnlock();
+          if (!mounted || isConnectingRef.current) return;
+          if (!passed) {
+            return;
+          }
+
+          await initializeLocalMode({ seedDefaultsIfEmpty: false });
+          if (!mounted || isConnectingRef.current) return;
+          setPendingLocalSession(false);
+          setIsAuthenticated(true);
+          isLockedRef.current = false;
+          setIsLocked(false);
+          return;
+        }
+
+        await initializeLocalMode({ seedDefaultsIfEmpty: false });
+        if (!mounted || isConnectingRef.current) return;
+        setIsAuthenticated(true);
+        setIsLocked(false);
+        return;
+      }
 
       const biometricActive =
         (await isBiometricEnabled()) && (await checkBiometricAvailable());
-      if (!mounted) return;
+      if (!mounted || isConnectingRef.current) return;
 
       if (biometricActive) {
         const sessionData = {
@@ -246,7 +383,7 @@ export default function App() {
         setIsLocked(true);
 
         const readyForPrompt = await isAndroidActivityReadyForBiometrics();
-        if (!mounted) return;
+        if (!mounted || isConnectingRef.current) return;
         if (!readyForPrompt) {
           // Device Keyguard is still locked — defer auto-prompt until Android window focus arrives
           needsAutoUnlockPromptRef.current = true;
@@ -254,14 +391,14 @@ export default function App() {
         }
 
         const passed = await promptBiometricUnlock();
-        if (!mounted) return;
+        if (!mounted || isConnectingRef.current) return;
         if (!passed) {
           // Stay on the biometric lock gate without exposing cached tasks or requiring network login
           return;
         }
 
         await initialize(stored.serverUrl, stored.token, stored.refreshToken);
-        if (!mounted) return;
+        if (!mounted || isConnectingRef.current) return;
         setPendingStoredSession(null);
         setIsAuthenticated(true);
         isLockedRef.current = false;
@@ -272,7 +409,7 @@ export default function App() {
 
       // Biometrics disabled or unavailable on device: restore offline cached data in 0ms
       await initialize(stored.serverUrl, stored.token, stored.refreshToken);
-      if (!mounted) return;
+      if (!mounted || isConnectingRef.current) return;
       setIsAuthenticated(true);
       setIsLocked(false);
       syncAll().catch(() => {});
@@ -281,7 +418,7 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, [initialize, promptBiometricUnlock, syncAll]);
+  }, [initialize, initializeLocalMode, promptBiometricUnlock, syncAll]);
 
   // On Android, when the screen wakes behind a locked Keyguard, defer auto-prompt until window focus arrives
   useEffect(() => {
@@ -314,11 +451,20 @@ export default function App() {
 
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+    const refreshForegroundState = () => {
+      const st = useTaskStore.getState();
+      if (st.isLocalMode && !st.client) {
+        syncAppBadgeCount(st.tasks || [], st.appBadgeMode).catch(() => {});
+      } else {
+        syncAll().catch(() => {});
+      }
+    };
+
     const startPolling = () => {
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(() => {
         if (AppState.currentState === 'active' && !isLockedRef.current) {
-          syncAll().catch(() => {});
+          refreshForegroundState();
         }
       }, 60000);
     };
@@ -353,14 +499,34 @@ export default function App() {
         backgroundedAtRef.current = null;
         const elapsedMs = bgAt !== null ? Date.now() - bgAt : 0;
 
+        // Do not lock & unmount SettingsModal while returning from Android SAF / Share picker
+        const skipLockForSystemDialog = isSystemFileDialogRecentlyActive();
+
+        // Synchronously conceal task list on frame 0 if biometrics were cached as enabled
+        if (
+          !skipLockForSystemDialog &&
+          bgAt !== null &&
+          elapsedMs >= BIOMETRIC_LOCK_GRACE_MS &&
+          getCachedBiometricEnabled()
+        ) {
+          isLockedRef.current = true;
+          setLockError(null);
+          setPendingLockLogoutCount(null);
+          setPendingLockEraseLocal(false);
+          setIsLocked(true);
+          setIsDrawerOpen(false);
+          stopPolling();
+        }
+
         (async () => {
-          if (bgAt !== null && elapsedMs >= BIOMETRIC_LOCK_GRACE_MS) {
+          if (!skipLockForSystemDialog && bgAt !== null && elapsedMs >= BIOMETRIC_LOCK_GRACE_MS) {
             const bioActive =
               (await isBiometricEnabled()) && (await checkBiometricAvailable());
             if (bioActive) {
               isLockedRef.current = true;
               setLockError(null);
               setPendingLockLogoutCount(null);
+              setPendingLockEraseLocal(false);
               setIsLocked(true);
               setIsDrawerOpen(false);
               stopPolling();
@@ -378,11 +544,15 @@ export default function App() {
               }
               isLockedRef.current = false;
               setIsLocked(false);
+            } else if (isLockedRef.current) {
+              // Biometric enrollment was removed at OS level while backgrounded
+              isLockedRef.current = false;
+              setIsLocked(false);
             }
           }
 
           if (!isLockedRef.current) {
-            syncAll().catch(() => {});
+            refreshForegroundState();
             useUpdateStore.getState().checkForUpdate().catch(() => {});
             startPolling();
           }
@@ -395,7 +565,7 @@ export default function App() {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       handleFocus = () => {
         if (!isLockedRef.current) {
-          syncAll().catch(() => {});
+          refreshForegroundState();
           startPolling();
         }
       };
@@ -418,6 +588,73 @@ export default function App() {
     };
   }, [isAuthenticated, promptBiometricUnlock, syncAll]);
 
+  const handleStartLocalMode = async () => {
+    logoutEpochRef.current += 1;
+    isConnectingRef.current = true;
+    setIsConnecting(true);
+    try {
+      // Never allow tapping "Use Offline" during cold-start microtasks to bypass an existing biometric-protected session
+      const [stored, storedLocalFlag, bioEnabled, bioAvail] = await Promise.all([
+        getStoredAuth().catch(() => null),
+        AsyncStorage.getItem(CACHE_KEY_LOCAL_MODE).catch(() => null),
+        isBiometricEnabled().catch(() => false),
+        checkBiometricAvailable().catch(() => false),
+      ]);
+
+      const hasProtectedExistingSession =
+        bioEnabled &&
+        bioAvail &&
+        ((stored && stored.serverUrl && stored.token) || storedLocalFlag === 'true');
+
+      if (hasProtectedExistingSession) {
+        const passed = await promptBiometricUnlock({ forceReset: true });
+        if (!passed) {
+          if (stored && stored.serverUrl && stored.token) {
+            setPendingStoredSession({
+              serverUrl: stored.serverUrl,
+              token: stored.token,
+              refreshToken: stored.refreshToken,
+              username: stored.username,
+            });
+          } else {
+            setPendingLocalSession(true);
+          }
+          isLockedRef.current = true;
+          setIsLocked(true);
+          return;
+        }
+        if (storedLocalFlag === 'true' && (!stored || !stored.token)) {
+          await initializeLocalMode({ seedDefaultsIfEmpty: false });
+          setPendingLocalSession(false);
+          isLockedRef.current = false;
+          setIsLocked(false);
+          setIsAuthenticated(true);
+          return;
+        }
+      }
+
+      // Starting fresh Local Mode: wipe any leftover server tokens/sessions cleanly
+      await Promise.all([
+        clearStoredAuth(),
+        useTaskStore.getState().clearSession(),
+      ]);
+      await initializeLocalMode({ seedDefaultsIfEmpty: true });
+      setPendingStoredSession(null);
+      setPendingLocalSession(false);
+      setShowReauthLogin(false);
+      setShowConnectServerFromLocal(false);
+      setLockError(null);
+      setPendingLockLogoutCount(null);
+      setPendingLockEraseLocal(false);
+      isLockedRef.current = false;
+      setIsLocked(false);
+      setIsAuthenticated(true);
+    } finally {
+      isConnectingRef.current = false;
+      setIsConnecting(false);
+    }
+  };
+
   const handleConnect = async (
     rawServerUrl: string,
     username: string,
@@ -433,114 +670,225 @@ export default function App() {
     const isTokenAuth =
       options?.authMethod === 'api_token' || isPersonalApiToken(secret);
 
-    let activeToken: string;
-    let activeRefreshToken: string | null = null;
-    let resolvedUsername = username.trim();
-    let authUser: User | null = null;
-
-    if (isTokenAuth) {
-      const candidateToken = secret.trim();
-      const tempClient = new VikunjaClient({
-        baseUrl: normalizedUrl,
-        token: candidateToken,
-      });
-      const user = await tempClient.getCurrentUser();
-      if (!user || (!user.id && !user.username)) {
-        throw new Error(t('auth.invalidApiToken'));
-      }
-      authUser = user;
-      activeToken = candidateToken;
-      activeRefreshToken = null;
-      if (user.username) {
-        resolvedUsername = user.username;
-      }
-    } else {
-      const tempClient = new VikunjaClient({ baseUrl: normalizedUrl });
-      const auth = await tempClient.login(
-        resolvedUsername,
-        secret,
-        true,
-        options?.totpPasscode
-      );
-      activeToken = auth.token;
-      activeRefreshToken = tempClient.getRefreshToken();
-      // Best-effort resolve canonical user profile so email <-> username / tk_ re-auth matches accurately
-      authUser = await tempClient.getCurrentUser().catch(() => null);
-      if (authUser?.username) {
-        resolvedUsername = authUser.username;
-      }
-    }
-
-    // Isolate sessions if switching to a different server or genuinely different user account
+    logoutEpochRef.current += 1;
     isConnectingRef.current = true;
+    setIsConnecting(true);
+
     try {
-      const prevStored = await getStoredAuth();
-      const prevCurrentUser = useTaskStore.getState().currentUser;
-      const isDifferentServer =
-        Boolean(prevStored.serverUrl) && prevStored.serverUrl !== normalizedUrl;
+      const initialStoreSnap = useTaskStore.getState();
+      const wasLocalMode = Boolean(initialStoreSnap.isLocalMode);
 
-      let isDifferentUser = false;
-      if (authUser && prevCurrentUser && authUser.id > 0 && prevCurrentUser.id > 0) {
-        isDifferentUser = authUser.id !== prevCurrentUser.id;
-      } else if (prevStored.username && resolvedUsername) {
-        const prevIdentifiers = new Set(
-          [
-            prevStored.username,
-            prevCurrentUser?.username,
-            prevCurrentUser?.email,
-          ]
-            .filter((v): v is string => Boolean(v))
-            .map((v) => v.toLowerCase())
-        );
-        const nextIdentifiers = [
-          resolvedUsername,
-          username.trim(),
-          authUser?.username,
-          authUser?.email,
-        ]
-          .filter((v): v is string => Boolean(v))
-          .map((v) => v.toLowerCase());
-
-        isDifferentUser =
-          prevIdentifiers.size > 0 &&
-          nextIdentifiers.length > 0 &&
-          !nextIdentifiers.some((id) => prevIdentifiers.has(id));
-      }
-
-      if (isDifferentServer || isDifferentUser) {
-        await useTaskStore.getState().clearSession();
-      }
-      if (isDifferentServer || isDifferentUser || isTokenAuth) {
+      // Clear any stale native refresh cookies BEFORE authenticating if coming from Local Mode or Token Mode
+      if (wasLocalMode || isTokenAuth) {
         await clearNativeCookies();
       }
 
-      // Persist token, rotating refresh token, normalized server URL, and canonical username ONLY (zero plaintext passwords!)
-      await setStoredAuth(activeToken, normalizedUrl, resolvedUsername || undefined, {
-        refreshToken: activeRefreshToken,
-      });
+      let activeToken: string;
+      let activeRefreshToken: string | null = null;
+      let resolvedUsername = username.trim();
+      let authUser: User | null = null;
 
-      await initialize(normalizedUrl, activeToken, activeRefreshToken);
-      if (authUser && authUser.username) {
-        useTaskStore.setState({ currentUser: authUser });
+      if (isTokenAuth) {
+        const candidateToken = secret.trim();
+        const tempClient = new VikunjaClient({
+          baseUrl: normalizedUrl,
+          token: candidateToken,
+        });
+        const user = await tempClient.getCurrentUser();
+        if (!user || (!user.id && !user.username)) {
+          throw new Error(t('auth.invalidApiToken'));
+        }
+        authUser = user;
+        activeToken = candidateToken;
+        activeRefreshToken = null;
+        if (user.username) {
+          resolvedUsername = user.username;
+        }
+      } else {
+        const tempClient = new VikunjaClient({ baseUrl: normalizedUrl });
+        const auth = await tempClient.login(
+          resolvedUsername,
+          secret,
+          true,
+          options?.totpPasscode
+        );
+        activeToken = auth.token;
+        activeRefreshToken = tempClient.getRefreshToken();
+        // Best-effort resolve canonical user profile so email <-> username / tk_ re-auth matches accurately
+        authUser = await tempClient.getCurrentUser().catch(() => null);
+        if (authUser?.username) {
+          resolvedUsername = authUser.username;
+        }
+      }
+
+      if (wasLocalMode) {
+        const migMode = options?.migrationMode ?? 'merge';
+
+        if (migMode === 'replace') {
+          await clearMigrationCheckpoint();
+          await useTaskStore.getState().clearSession();
+          if (isTokenAuth) {
+            await clearNativeCookies();
+          }
+
+          await setStoredAuth(activeToken, normalizedUrl, resolvedUsername || undefined, {
+            refreshToken: activeRefreshToken,
+          });
+          await initialize(normalizedUrl, activeToken, activeRefreshToken);
+          if (authUser && authUser.username) {
+            useTaskStore.setState({ currentUser: authUser });
+          }
+        } else {
+          const migrationClient = new VikunjaClient({
+            baseUrl: normalizedUrl,
+            token: activeToken,
+            refreshToken: activeRefreshToken,
+            onRefreshTokenUpdated: async (nextRt) => {
+              activeRefreshToken = nextRt;
+              await setStoredRefreshToken(nextRt);
+            },
+          });
+
+          const userScope = authUser?.id
+            ? `id:${authUser.id}`
+            : resolvedUsername || normalizedUrl;
+
+          const migResult = await migrateLocalDataToServer({
+            client: migrationClient,
+            localProjects: initialStoreSnap.projects || [],
+            localTasks: initialStoreSnap.tasks || [],
+            localLabels: initialStoreSnap.labels || [],
+            selectedProjectId: initialStoreSnap.selectedProjectId,
+            userScope,
+          });
+
+          const finalRefreshToken = migrationClient.getRefreshToken() ?? activeRefreshToken;
+
+          await useTaskStore.getState().clearSession();
+          if (isTokenAuth) {
+            await clearNativeCookies();
+          }
+
+          if (migResult.mappedSelectedProjectId !== null && migResult.mappedSelectedProjectId > 0) {
+            await AsyncStorage.setItem(
+              '@vikunja_last_project_id',
+              String(migResult.mappedSelectedProjectId)
+            ).catch(() => {});
+          }
+
+          await setStoredAuth(activeToken, normalizedUrl, resolvedUsername || undefined, {
+            refreshToken: finalRefreshToken,
+          });
+
+          await initialize(normalizedUrl, activeToken, finalRefreshToken);
+          if (authUser && authUser.username) {
+            useTaskStore.setState({ currentUser: authUser });
+          }
+
+          await useTaskStore.getState().seedMigratedServerState({
+            projects: migResult.mergedProjects,
+            labels: migResult.mergedLabels,
+            tasks: migResult.uploadedServerTasks,
+            selectedProjectId: migResult.mappedSelectedProjectId,
+          });
+
+          if (
+            migResult.deferredTasks.length > 0 ||
+            migResult.deferredRelations.length > 0 ||
+            migResult.deferredFollowUps.length > 0
+          ) {
+            useTaskStore
+              .getState()
+              .enqueueDeferredMigrationItems(
+                migResult.deferredTasks,
+                migResult.deferredRelations,
+                migResult.deferredFollowUps
+              );
+          }
+        }
+      } else {
+        const prevStored = await getStoredAuth();
+        const prevCurrentUser = initialStoreSnap.currentUser;
+        const isDifferentServer =
+          Boolean(prevStored.serverUrl) && prevStored.serverUrl !== normalizedUrl;
+
+        const hadPreviousUser = Boolean(
+          prevStored.username || prevCurrentUser?.username || (prevCurrentUser && prevCurrentUser.id > 0)
+        );
+
+        let isDifferentUser = false;
+        if (authUser && prevCurrentUser && authUser.id > 0 && prevCurrentUser.id > 0) {
+          isDifferentUser = authUser.id !== prevCurrentUser.id;
+        } else if (hadPreviousUser) {
+          const prevIdentifiers = new Set(
+            [
+              prevStored.username,
+              prevCurrentUser?.username,
+              prevCurrentUser?.email,
+            ]
+              .filter((v): v is string => Boolean(v))
+              .map((v) => v.toLowerCase())
+          );
+          const nextIdentifiers = [
+            resolvedUsername,
+            username.trim(),
+            authUser?.username,
+            authUser?.email,
+          ]
+            .filter((v): v is string => Boolean(v))
+            .map((v) => v.toLowerCase());
+
+          // Fail-closed: if we had a previous user and cannot confirm overlap with the new identity, isolate!
+          isDifferentUser =
+            prevIdentifiers.size > 0 &&
+            (nextIdentifiers.length === 0 || !nextIdentifiers.some((id) => prevIdentifiers.has(id)));
+        }
+
+        if (isDifferentServer || isDifferentUser) {
+          await useTaskStore.getState().clearSession();
+          await setBiometricEnabled(false);
+        }
+        if (isDifferentServer || isDifferentUser || isTokenAuth) {
+          // Only clear native cookies after login if token auth, or if switching users without fresh cookie refresh
+          if (isTokenAuth || !activeRefreshToken) {
+            await clearNativeCookies();
+          }
+        }
+
+        // Persist token, rotating refresh token, normalized server URL, and canonical username ONLY (zero plaintext passwords!)
+        await setStoredAuth(activeToken, normalizedUrl, resolvedUsername || undefined, {
+          refreshToken: activeRefreshToken,
+        });
+
+        await initialize(normalizedUrl, activeToken, activeRefreshToken);
+        if (authUser && authUser.username) {
+          useTaskStore.setState({ currentUser: authUser });
+        }
       }
 
       setPendingStoredSession(null);
+      setPendingLocalSession(false);
       setShowReauthLogin(false);
+      setShowConnectServerFromLocal(false);
       setLockError(null);
       setPendingLockLogoutCount(null);
+      setPendingLockEraseLocal(false);
+      isLockedRef.current = false;
       setIsLocked(false);
       setIsAuthenticated(true);
 
       syncAll().catch(() => {});
     } finally {
       isConnectingRef.current = false;
+      setIsConnecting(false);
     }
   };
 
   const handleLogout = async () => {
+    const myLogoutEpoch = ++logoutEpochRef.current;
+
     // Capture active client (or locked pending session) to revoke server refresh token best-effort,
-    // while STILL calling `clearSession()` synchronously on tick 0 so `store.client` is immediately `null`
-    // before unmounting authenticated screens!
+    // while IMMEDIATELY clearing local credentials & store state at T=0ms before awaiting network!
     const activeClient = useTaskStore.getState().client;
     let serverLogoutPromise: Promise<void> = Promise.resolve();
     if (activeClient && !isPersonalApiToken(activeClient.getToken())) {
@@ -557,19 +905,58 @@ export default function App() {
       }).logoutServer();
     }
 
+    const clearCredsPromise = clearStoredCredentialsOnly();
     const clearPromise = useTaskStore.getState().clearSession();
     setIsDrawerOpen(false);
     setShowReauthLogin(false);
+    setShowConnectServerFromLocal(false);
     setLockError(null);
     setPendingLockLogoutCount(null);
+    setPendingLockEraseLocal(false);
+    isLockedRef.current = false;
     setIsLocked(false);
     setPendingStoredSession(null);
+    setPendingLocalSession(false);
     setIsAuthenticated(false);
+
     await serverLogoutPromise;
-    await Promise.all([clearStoredAuth(), clearPromise]);
+    if (logoutEpochRef.current === myLogoutEpoch) {
+      await clearNativeCookies();
+    }
+    await Promise.all([clearCredsPromise, clearPromise]);
   };
 
   const handleLockRequestLogout = async () => {
+    const isLockedLocalMode =
+      pendingLocalSession || Boolean(useTaskStore.getState().isLocalMode);
+
+    if (isLockedLocalMode) {
+      const title = t('settings.eraseLocalTitle');
+      const message = t('settings.eraseLocalConfirmMessage');
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+          if (window.confirm(`${title}\n\n${message}`)) {
+            await handleLogout();
+          }
+        } else {
+          setPendingLockEraseLocal(true);
+        }
+        return;
+      }
+
+      Alert.alert(title, message, [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('settings.eraseBtn'),
+          style: 'destructive',
+          onPress: () => {
+            handleLogout().catch(() => {});
+          },
+        },
+      ]);
+      return;
+    }
+
     let unsyncedCount = pendingSyncCount;
     if (unsyncedCount <= 0) {
       try {
@@ -617,6 +1004,7 @@ export default function App() {
     needsAutoUnlockPromptRef.current = false;
     setLockError(null);
     setPendingLockLogoutCount(null);
+    setPendingLockEraseLocal(false);
     const passed = await promptBiometricUnlock({ forceReset: true });
     if (passed) {
       isLockedRef.current = false;
@@ -626,7 +1014,24 @@ export default function App() {
     }
   };
 
-  const showAppShell = isAuthenticated && !isLocked && !showReauthLogin;
+  const showLoginOverlay = showReauthLogin || showConnectServerFromLocal;
+  const showAppShell = isAuthenticated && !isLocked && !showLoginOverlay;
+  const isLockedInLocalMode = pendingLocalSession || Boolean(isLocalMode);
+
+  const localMigrationStats = React.useMemo(() => {
+    if (!showConnectServerFromLocal || !isLocalMode) return undefined;
+    const safeProjs = Array.isArray(projects)
+      ? projects.filter((p) => p && p.id > 0 && !p.is_saved_filter)
+      : [];
+    const safeTasks = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
+    const nonEmptyOrCustomLists = safeProjs.filter(
+      (p) => !isUntouchedEmptyStarterProject(p, safeProjs, safeTasks)
+    ).length;
+    return {
+      lists: nonEmptyOrCustomLists,
+      tasks: safeTasks.length,
+    };
+  }, [showConnectServerFromLocal, isLocalMode, projects, tasks]);
 
   return (
     <SafeAreaProvider style={{ flex: 1 }}>
@@ -688,7 +1093,7 @@ export default function App() {
                 </View>
               )}
 
-              {pendingLockLogoutCount !== null && (
+              {(pendingLockLogoutCount !== null || pendingLockEraseLocal) && (
                 <View
                   testID="lock-logout-confirm-banner"
                   accessibilityRole="alert"
@@ -710,7 +1115,9 @@ export default function App() {
                       { color: theme.colors.text, marginBottom: 10 },
                     ]}
                   >
-                    {t('lock.discardUnsyncedBanner', { count: pendingLockLogoutCount })}
+                    {pendingLockEraseLocal
+                      ? t('settings.eraseLocalBannerConfirm')
+                      : t('lock.discardUnsyncedBanner', { count: pendingLockLogoutCount || 0 })}
                   </Text>
                   <View style={styles.lockConfirmActions}>
                     <TouchableOpacity
@@ -723,7 +1130,10 @@ export default function App() {
                           borderColor: theme.colors.borderStrong,
                         },
                       ]}
-                      onPress={() => setPendingLockLogoutCount(null)}
+                      onPress={() => {
+                        setPendingLockLogoutCount(null);
+                        setPendingLockEraseLocal(false);
+                      }}
                     >
                       <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
                         {t('common.cancel')}
@@ -741,7 +1151,7 @@ export default function App() {
                       }}
                     >
                       <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>
-                        {t('auth.signOut')}
+                        {pendingLockEraseLocal ? t('settings.eraseBtn') : t('auth.signOut')}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -771,14 +1181,14 @@ export default function App() {
                     { color: theme.colors.textSecondary },
                   ]}
                 >
-                  {t('auth.signOut')}
+                  {isLockedInLocalMode ? t('settings.eraseLocalDataBtn') : t('auth.signOut')}
                 </Text>
               </TouchableOpacity>
             </View>
           </SafeAreaView>
-        ) : !isAuthenticated || showReauthLogin ? (
+        ) : !isAuthenticated || showLoginOverlay ? (
           <View style={styles.content}>
-            {showReauthLogin && (
+            {showLoginOverlay && (
               <SafeAreaView edges={['top']}>
                 <View
                   style={[
@@ -792,7 +1202,14 @@ export default function App() {
                   <TouchableOpacity
                     testID="reauth-back-btn"
                     accessibilityRole="button"
-                    onPress={() => setShowReauthLogin(false)}
+                    accessibilityState={{ disabled: isConnecting }}
+                    disabled={isConnecting}
+                    style={isConnecting ? { opacity: 0.5 } : undefined}
+                    onPress={() => {
+                      if (isConnectingRef.current) return;
+                      setShowReauthLogin(false);
+                      setShowConnectServerFromLocal(false);
+                    }}
                   >
                     <Text style={[styles.reauthBackText, { color: theme.colors.accent }]}>
                       {t('common.back')}
@@ -803,9 +1220,14 @@ export default function App() {
             )}
             <LoginScreen
               onConnect={handleConnect}
+              onUseOffline={!showLoginOverlay ? handleStartLocalMode : undefined}
+              isConnectingFromLocal={showConnectServerFromLocal}
+              localStats={localMigrationStats}
               onBiometricUnlock={
                 pendingStoredSession
                   ? () => unlockOfflineSession(pendingStoredSession)
+                  : pendingLocalSession
+                  ? () => unlockOfflineSession()
                   : undefined
               }
             />
@@ -866,6 +1288,7 @@ export default function App() {
                     inline={true}
                     onClose={() => {}}
                     onLogout={handleLogout}
+                    onConnectServer={() => setShowConnectServerFromLocal(true)}
                   />
                 </View>
                 <View style={styles.tabletContent}>
@@ -882,6 +1305,7 @@ export default function App() {
                   visible={isDrawerOpen}
                   onClose={() => setIsDrawerOpen(false)}
                   onLogout={handleLogout}
+                  onConnectServer={() => setShowConnectServerFromLocal(true)}
                 />
               </View>
             )}

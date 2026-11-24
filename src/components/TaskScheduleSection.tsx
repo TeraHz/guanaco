@@ -203,20 +203,33 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
     onChangeDueDate(formatIsoForVikunja(shifted));
   };
 
+  const pruneRelativeRemindersForAnchor = (
+    clearedAnchor: 'due_date' | 'start_date' | 'end_date'
+  ) => {
+    if (!Array.isArray(reminders) || reminders.length === 0) return;
+    const filtered = reminders.filter((r) => r?.relative_to !== clearedAnchor);
+    if (filtered.length !== reminders.length) {
+      onChangeReminders(filtered);
+    }
+  };
+
   const handleClearDueDate = () => {
     safeHaptics.selection();
+    pruneRelativeRemindersForAnchor('due_date');
     onChangeDueDate(null);
   };
 
   const handleClearStartDate = () => {
     safeHaptics.selection();
     setDateValidationError(null);
+    pruneRelativeRemindersForAnchor('start_date');
     onChangeStartDate(null);
   };
 
   const handleClearEndDate = () => {
     safeHaptics.selection();
     setDateValidationError(null);
+    pruneRelativeRemindersForAnchor('end_date');
     onChangeEndDate(null);
   };
 
@@ -331,8 +344,21 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
   const handleAddReminderPreset = (relativePeriod: number) => {
     safeHaptics.selection();
+    let targetAnchor: TaskReminder['relative_to'] = ReminderRelativeTo.DueDate;
+    if (safeDueDate) {
+      targetAnchor = ReminderRelativeTo.DueDate;
+    } else if (safeStartDate) {
+      targetAnchor = ReminderRelativeTo.StartDate;
+    } else if (safeEndDate) {
+      targetAnchor = ReminderRelativeTo.EndDate;
+    } else {
+      const fallbackToday = getDatePreset('today', new Date(), weekStartDay);
+      if (fallbackToday) {
+        onChangeDueDate(formatIsoForVikunja(fallbackToday));
+      }
+    }
     const newReminder: TaskReminder = {
-      relative_to: ReminderRelativeTo.DueDate,
+      relative_to: targetAnchor,
       relative_period: relativePeriod,
     };
     onChangeReminders([...reminders, newReminder]);

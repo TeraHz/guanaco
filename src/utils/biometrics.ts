@@ -152,19 +152,32 @@ export async function authenticateWithBiometrics(
   }
 }
 
+let cachedBiometricEnabled: boolean | null = null;
+
+export function getCachedBiometricEnabled(): boolean | null {
+  return cachedBiometricEnabled;
+}
+
 export async function isBiometricEnabled(): Promise<boolean> {
   try {
     const value = await AsyncStorage.getItem(STORAGE_KEY_BIOMETRIC_ENABLED);
-    return value === 'true';
+    const enabled = value === 'true';
+    cachedBiometricEnabled = enabled;
+    return enabled;
   } catch (_) {
+    cachedBiometricEnabled = false;
     return false;
   }
 }
 
 export async function setBiometricEnabled(enabled: boolean): Promise<void> {
+  cachedBiometricEnabled = enabled;
   try {
     await AsyncStorage.setItem(STORAGE_KEY_BIOMETRIC_ENABLED, enabled ? 'true' : 'false');
-  } catch (_) {}
+  } catch (err) {
+    cachedBiometricEnabled = null;
+    throw err;
+  }
 }
 
 export interface StoredAuth {
@@ -377,7 +390,8 @@ export async function clearNativeCookies(): Promise<void> {
   } catch (_) {}
 }
 
-export async function clearStoredAuth(): Promise<void> {
+export async function clearStoredCredentialsOnly(): Promise<void> {
+  cachedBiometricEnabled = false;
   try {
     const secureAvailable = await isSecureStoreAvailable();
     await purgeLegacyPasswords(secureAvailable);
@@ -395,8 +409,14 @@ export async function clearStoredAuth(): Promise<void> {
       LEGACY_STORAGE_KEY_PASSWORD,
       STORAGE_KEY_USERNAME,
       STORAGE_KEY_SAVED_USERNAME,
+      STORAGE_KEY_BIOMETRIC_ENABLED,
     ]);
+  } catch (_) {}
+}
 
+export async function clearStoredAuth(): Promise<void> {
+  try {
+    await clearStoredCredentialsOnly();
     await clearNativeCookies();
   } catch (_) {}
 }

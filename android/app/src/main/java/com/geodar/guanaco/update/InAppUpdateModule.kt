@@ -32,6 +32,9 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
     companion object {
         const val NAME = "InAppUpdate"
         private const val REQUEST_CODE_UPDATE = 42123
+        private const val REQUEST_CODE_CREATE_JSON = 42124
+        private const val REQUEST_CODE_OPEN_JSON = 42125
+        private const val MAX_JSON_DOCUMENT_BYTES = 10 * 1024 * 1024
     }
 
     private val appUpdateManager: AppUpdateManager by lazy {
@@ -40,6 +43,9 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
 
     private val promiseLock = Any()
     private var pendingPromise: Promise? = null
+    private var pendingDocPromise: Promise? = null
+    private var pendingDocRequestCode: Int = 0
+    private var pendingExportJson: String? = null
 
     private fun takePendingPromise(): Promise? = synchronized(promiseLock) {
         val current = pendingPromise
@@ -115,6 +121,109 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                         promise.resolve(result)
                     }
                 }
+                return
+            }
+
+            if (requestCode == REQUEST_CODE_CREATE_JSON) {
+                val (docPromise, exportJson) = synchronized(promiseLock) {
+                    if (pendingDocRequestCode != REQUEST_CODE_CREATE_JSON) {
+                        Pair(null, null)
+                    } else {
+                        val p = pendingDocPromise
+                        val c = pendingExportJson
+                        pendingDocPromise = null
+                        pendingDocRequestCode = 0
+                        pendingExportJson = null
+                        Pair(p, c)
+                    }
+                }
+                if (docPromise == null) return
+
+                if (resultCode != Activity.RESULT_OK || data?.data == null) {
+                    val res = Arguments.createMap().apply { putString("status", "canceled") }
+                    docPromise.resolve(res)
+                    return
+                }
+
+                if (exportJson == null) {
+                    docPromise.reject("SAVE_JSON_FAILED", "Missing backup payload for document write")
+                    return
+                }
+
+                val targetUri = data.data!!
+                Thread {
+                    try {
+                        val utf8Bytes = exportJson.toByteArray(Charsets.UTF_8)
+                        val pfd = openSafeExternalDescriptor(targetUri, isWrite = true)
+                        android.os.ParcelFileDescriptor.AutoCloseOutputStream(pfd).use { os ->
+                            os.write(utf8Bytes)
+                            os.flush()
+                        }
+                        val res = Arguments.createMap().apply { putString("status", "saved") }
+                        docPromise.resolve(res)
+                    } catch (oom: OutOfMemoryError) {
+                        docPromise.reject("OUT_OF_MEMORY", "Not enough memory to export backup JSON")
+                    } catch (e: Throwable) {
+                        docPromise.reject("SAVE_JSON_FAILED", e.message ?: "Failed to write backup JSON")
+                    }
+                }.start()
+                return
+            }
+
+            if (requestCode == REQUEST_CODE_OPEN_JSON) {
+                val docPromise = synchronized(promiseLock) {
+                    if (pendingDocRequestCode != REQUEST_CODE_OPEN_JSON) {
+                        null
+                    } else {
+                        val p = pendingDocPromise
+                        pendingDocPromise = null
+                        pendingDocRequestCode = 0
+                        pendingExportJson = null
+                        p
+                    }
+                } ?: return
+
+                if (resultCode != Activity.RESULT_OK || data?.data == null) {
+                    val res = Arguments.createMap().apply { putString("status", "canceled") }
+                    docPromise.resolve(res)
+                    return
+                }
+
+                val sourceUri = data.data!!
+                Thread {
+                    try {
+                        val pfd = openSafeExternalDescriptor(sourceUri, isWrite = false)
+                        android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd).use { ins ->
+                            val buffer = java.io.ByteArrayOutputStream()
+                            val chunk = ByteArray(16 * 1024)
+                            var totalRead = 0
+                            while (true) {
+                                val read = ins.read(chunk)
+                                if (read <= 0) break
+                                totalRead += read
+                                if (totalRead > MAX_JSON_DOCUMENT_BYTES) {
+                                    docPromise.reject(
+                                        "FILE_TOO_LARGE",
+                                        "Backup file exceeds the 10 MB safety limit."
+                                    )
+                                    return@Thread
+                                }
+                                buffer.write(chunk, 0, read)
+                            }
+                            val content = buffer.toString(Charsets.UTF_8.name())
+                            val res = Arguments.createMap().apply {
+                                putString("status", "loaded")
+                                putString("content", content)
+                            }
+                            docPromise.resolve(res)
+                        }
+                    } catch (oom: OutOfMemoryError) {
+                        docPromise.reject("OUT_OF_MEMORY", "Backup file is too large for available memory")
+                    } catch (e: Throwable) {
+                        docPromise.reject("OPEN_JSON_FAILED", e.message ?: "Failed to read backup file")
+                    }
+                }.start()
+                return
             }
         }
 
@@ -142,6 +251,16 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                 "MODULE_INVALIDATED",
                 "InAppUpdateModule invalidated before update flow completed"
             )
+        } catch (_: Exception) {}
+        try {
+            val staleDoc = synchronized(promiseLock) {
+                val p = pendingDocPromise
+                pendingDocPromise = null
+                pendingDocRequestCode = 0
+                pendingExportJson = null
+                p
+            }
+            staleDoc?.reject("MODULE_INVALIDATED", "Module invalidated before document picker completed")
         } catch (_: Exception) {}
         super.invalidate()
     }
@@ -395,6 +514,165 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
             } catch (_: Exception) {
                 promise.resolve(false)
             }
+        }
+    }
+
+    private fun openSafeExternalDescriptor(
+        uri: Uri,
+        isWrite: Boolean
+    ): android.os.ParcelFileDescriptor {
+        if (!android.content.ContentResolver.SCHEME_CONTENT.equals(uri.scheme, ignoreCase = true)) {
+            throw SecurityException("Rejected non-content URI scheme")
+        }
+        val rawAuthority = uri.authority?.takeIf { it.isNotBlank() }
+            ?: throw SecurityException("Rejected content URI without authority")
+        val cleanAuthority = rawAuthority.substringAfter('@').takeIf { it.isNotBlank() }
+            ?: throw SecurityException("Rejected content URI without authority")
+
+        // Best-effort resolve: an app always has PackageManager visibility into its own package,
+        // whereas Android 11+ package filtering may hide third-party cloud DocumentsProviders and
+        // external FileProviders deliberately set exported="false" + grantUriPermissions="true".
+        val providerInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            reactContext.packageManager.resolveContentProvider(
+                cleanAuthority,
+                android.content.pm.PackageManager.ComponentInfoFlags.of(0)
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            reactContext.packageManager.resolveContentProvider(cleanAuthority, 0)
+        }
+
+        val myUid = android.os.Process.myUid()
+        if (providerInfo != null && (
+                providerInfo.packageName == reactContext.packageName ||
+                providerInfo.applicationInfo?.uid == myUid
+            )
+        ) {
+            throw SecurityException("Rejected internal ContentProvider URI")
+        }
+
+        val resolver = reactContext.contentResolver
+        val pfd = if (isWrite) {
+            runCatching { resolver.openFileDescriptor(uri, "wt") }.getOrNull()
+                ?: runCatching { resolver.openFileDescriptor(uri, "w") }.getOrNull()
+                ?: resolver.openFileDescriptor(uri, "rw")
+        } else {
+            resolver.openFileDescriptor(uri, "r")
+        } ?: throw IllegalStateException("Unable to open file descriptor")
+
+        try {
+            val stat = android.system.Os.fstat(pfd.fileDescriptor)
+            if (stat.st_uid == myUid) {
+                throw SecurityException("Rejected file descriptor owned by app UID")
+            }
+            try {
+                val resolvedPath =
+                    java.io.File(android.system.Os.readlink("/proc/self/fd/${pfd.fd}")).canonicalPath
+                val privateRoots = listOfNotNull(
+                    reactContext.applicationInfo?.dataDir?.let { java.io.File(it).canonicalPath },
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+                        reactContext.applicationInfo?.deviceProtectedDataDir?.let {
+                            java.io.File(it).canonicalPath
+                        }
+                    else null,
+                    "/data/data/${reactContext.packageName}",
+                    "/data/user/0/${reactContext.packageName}"
+                )
+                if (privateRoots.any { resolvedPath == it || resolvedPath.startsWith("$it/") }) {
+                    throw SecurityException("Rejected descriptor targeting private app storage")
+                }
+            } catch (sec: SecurityException) {
+                throw sec
+            } catch (_: Exception) {
+                // Pipe descriptors from cloud SAF providers are safe once st_uid != myUid is verified
+            }
+            if (isWrite) {
+                try {
+                    android.system.Os.ftruncate(pfd.fileDescriptor, 0L)
+                } catch (_: Exception) {}
+            }
+            return pfd
+        } catch (t: Throwable) {
+            try {
+                pfd.close()
+            } catch (_: Exception) {}
+            throw t
+        }
+    }
+
+    @ReactMethod
+    fun saveJsonDocument(fileName: String, jsonContent: String, promise: Promise) {
+        val act = reactContext.currentActivity
+        if (!isActivityUsable(act) || act == null) {
+            promise.reject("NO_ACTIVITY", "Current activity is unavailable")
+            return
+        }
+        val stale = synchronized(promiseLock) {
+            val prev = pendingDocPromise
+            pendingDocPromise = promise
+            pendingDocRequestCode = REQUEST_CODE_CREATE_JSON
+            pendingExportJson = jsonContent
+            prev
+        }
+        try {
+            stale?.reject("DOC_PICKER_SUPERSEDED", "Previous document request superseded")
+        } catch (_: Exception) {}
+
+        try {
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/json"
+                putExtra(Intent.EXTRA_TITLE, fileName)
+            }
+            act.startActivityForResult(intent, REQUEST_CODE_CREATE_JSON)
+        } catch (e: Exception) {
+            synchronized(promiseLock) {
+                if (pendingDocPromise === promise) {
+                    pendingDocPromise = null
+                    pendingDocRequestCode = 0
+                    pendingExportJson = null
+                }
+            }
+            promise.reject("CREATE_DOC_UNAVAILABLE", e.message ?: "Could not launch file saver", e)
+        }
+    }
+
+    @ReactMethod
+    fun openJsonDocument(promise: Promise) {
+        val act = reactContext.currentActivity
+        if (!isActivityUsable(act) || act == null) {
+            promise.reject("NO_ACTIVITY", "Current activity is unavailable")
+            return
+        }
+        val stale = synchronized(promiseLock) {
+            val prev = pendingDocPromise
+            pendingDocPromise = promise
+            pendingDocRequestCode = REQUEST_CODE_OPEN_JSON
+            pendingExportJson = null
+            prev
+        }
+        try {
+            stale?.reject("DOC_PICKER_SUPERSEDED", "Previous document request superseded")
+        } catch (_: Exception) {}
+
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                putExtra(
+                    Intent.EXTRA_MIME_TYPES,
+                    arrayOf("application/json", "text/json", "text/plain", "application/octet-stream")
+                )
+            }
+            act.startActivityForResult(intent, REQUEST_CODE_OPEN_JSON)
+        } catch (e: Exception) {
+            synchronized(promiseLock) {
+                if (pendingDocPromise === promise) {
+                    pendingDocPromise = null
+                    pendingDocRequestCode = 0
+                }
+            }
+            promise.reject("OPEN_DOC_UNAVAILABLE", e.message ?: "Could not launch file picker", e)
         }
     }
 

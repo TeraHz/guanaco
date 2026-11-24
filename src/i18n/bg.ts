@@ -52,6 +52,19 @@ export const bg: Record<TranslationKey, string> = {
   'auth.unencryptedHttpBody': '{url} изпраща данните за вход без криптиране.',
   'auth.useHttps': 'Използвай HTTPS',
   'auth.insecureHttpError': 'Некриптираната HTTP връзка изисква изрично потвърждение.',
+  'auth.orDivider': 'ИЛИ',
+  'auth.useOfflineBtn': 'Използвай офлайн на това устройство',
+  'auth.useOfflineSub': 'Без нужда от сървър или профил. Добавете сървър Vikunja по всяко време.',
+  'auth.connectServerHeading': 'Свързване със сървър Vikunja',
+  'auth.migrationSectionLabel': 'ЛОКАЛНИ ДАННИ НА УСТРОЙСТВОТО',
+  'auth.migrationSummary': 'Списъци: {lists} · Задачи: {tasks} на това устройство.',
+  'auth.migrationKeepUpload': 'Качи локалните задачи на сървъра',
+  'auth.migrationStartFresh': 'Замени с данните от сървъра',
+  'auth.migratingProgress': 'Качване на локалните задачи...',
+
+  // Standalone Local Mode
+  'local.starterTasksList': 'Задачи',
+  'local.starterGroceriesList': 'Списък за пазар',
 
   // URL Validation Errors
   'urlError.required': 'Адресът на сървъра е задължителен',
@@ -112,6 +125,7 @@ export const bg: Record<TranslationKey, string> = {
   'listEditor.parentListLabel': 'РОДИТЕЛСКИ СПИСЪК',
   'listEditor.favoriteList': 'Любим списък',
   'listEditor.duplicateList': 'Дублирай списъка',
+  'listEditor.copyTitle': '{title} (Копие)',
   'listEditor.saveChanges': 'Запази промените',
   'listEditor.createList': 'Създай списък',
   'listEditor.closeA11y': 'Затвори редактора на списък',
@@ -169,6 +183,7 @@ export const bg: Record<TranslationKey, string> = {
   'tasks.searchCloseA11y': 'Затвори търсенето',
   'tasks.searchClearA11y': 'Изчисти текста за търсене',
   'tasks.searchAllPlaceholder': 'Търси във всички списъци, бележки, #етикети, @хора...',
+  'tasks.searchAllLocalPlaceholder': 'Търси във всички списъци, бележки, #етикети...',
   'tasks.searchInListPlaceholder': 'Търси в {title}...',
   'tasks.searchInListFallback': 'Търси в списъка...',
   'tasks.scopeAllLists': 'Всички списъци',
@@ -476,6 +491,49 @@ export const bg: Record<TranslationKey, string> = {
   'settings.logoutConfirmPending':
     'Имате {count} несинхронизирани офлайн промени. Излизането сега ще ги изтрие безвъзвратно. Искате ли все пак да излезете?',
   'settings.logoutBannerConfirm': 'Отхвърляне на {count} несинхронизирани промени и изход?',
+  'settings.storageMode': 'Съхранение',
+  'settings.localModeBadge': 'Само на устройството',
+  'settings.localModeHint':
+    'Списъците и задачите се пазят локално на това устройство. Експортирайте резервно копие при смяна на телефона.',
+  'settings.connectServerBtn': 'Свържи сървър Vikunja',
+  'settings.backupSection': 'РЕЗЕРВНО КОПИЕ',
+  'settings.exportBackupBtn': 'Експортирай копие (JSON)',
+  'settings.importBackupBtn': 'Импортирай копие (JSON)',
+  'settings.backupExportedDone': '✓ Копието е експортирано',
+  'settings.backupExportError': 'Неуспешно експортиране на резервно копие.',
+  'settings.backupImportedDone': '✓ Възстановени задачи: {tasks} (списъци: {lists})',
+  'settings.importModalTitle': 'Импортиране на копие',
+  'settings.importModeMerge': 'Обедини с текущите списъци',
+  'settings.importModeReplace': 'Замени всички локални данни',
+  'settings.importPickFileBtn': 'Избери .json файл',
+  'settings.importPasteLabel': 'ИЛИ ПОСТАВИ JSON КОПИЕ',
+  'settings.importPasteOnlyLabel': 'ПОСТАВИ JSON КОПИЕ',
+  'settings.importPastePlaceholder': 'Постави съдържанието на JSON копието тук...',
+  'settings.importApplyBtn': 'Импортирай',
+  'settings.importReplaceTitle': 'Замяна на локалните данни?',
+  'settings.importReplaceConfirm':
+    'Импортирането в режим на замяна ще презапише безвъзвратно текущите ви локални списъци и задачи. Продължавате ли?',
+  'settings.importReplaceBannerConfirm':
+    'Презаписване на всички текущи локални списъци и задачи с това копие?',
+  'settings.backupReadError': 'Неуспешно прочитане на файла с резервно копие.',
+  'settings.backupInvalidError': 'Невалиден файл с резервно копие.',
+  'settings.eraseLocalDataBtn': 'Изтрий локалните данни и излез',
+  'settings.eraseLocalTitle': 'Изтриване на локалните данни?',
+  'settings.eraseLocalConfirmMessage':
+    'Всички локални списъци и задачи ще бъдат изтрити безвъзвратно от устройството. Експортирайте JSON копие предварително, ако искате да ги запазите.',
+  'settings.eraseLocalBannerConfirm': 'Безвъзвратно изтриване на всички локални списъци и задачи?',
+  'settings.eraseBtn': 'Изтрий данните',
+
+  // Backup Validation Errors
+  'backupError.empty': 'Файлът с резервно копие е празен.',
+  'backupError.tooLarge': 'Файлът с резервно копие надвишава лимита от 10 MB.',
+  'backupError.tooDeep': 'JSON структурата на копието е твърде дълбоко вложена.',
+  'backupError.invalidJson': 'Невалиден JSON формат във файла с резервно копие.',
+  'backupError.invalidRoot': 'Невалидна основна структура на резервното копие.',
+  'backupError.unrecognizedFormat': 'Неразпознат формат на резервното копие.',
+  'backupError.unsupportedVersion': 'Неподдържана версия на резервното копие: {version}',
+  'backupError.missingArrays': 'Резервното копие трябва да съдържа масиви „projects“ и „tasks“.',
+  'backupError.tooManyItems': 'Резервното копие надвишава максималния брой елементи.',
 
   // Store Sync Errors
   'store.connectionLostRenewing':

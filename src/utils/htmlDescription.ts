@@ -179,28 +179,10 @@ export function htmlToPlainText(raw?: string | null): string {
     .trim();
 }
 
-/**
- * Serializes user-edited plain text back to Vikunja's description field:
- * - Preserves `originalRaw` untouched when `isDirty === false` so unopened/unedited HTML never loses formatting.
- * - Preserves plain text when `originalRaw` was not HTML.
- * - Serializes paragraphs, bullets, numbered lists, and `- [x]` / `- [ ]` checklists into clean HTML when `originalRaw` was HTML.
- */
-export function serializeDescriptionForServer(
-  editedText: string,
-  originalRaw?: string | null,
-  isDirty = true
-): string {
-  if (!isDirty && originalRaw !== undefined && originalRaw !== null) {
-    return originalRaw;
-  }
-
-  const normalized = (editedText || '').replace(/\r\n/g, '\n').trim();
+export function plainTextToVikunjaHtml(rawText: string): string {
+  const normalized = (rawText || '').replace(/\r\n/g, '\n').trim();
   if (!normalized) {
     return '';
-  }
-
-  if (!containsHtmlMarkup(originalRaw)) {
-    return normalized;
   }
 
   const blocks = normalized.split(/\n{2,}/);
@@ -249,4 +231,31 @@ export function serializeDescriptionForServer(
   }
 
   return htmlBlocks.join('');
+}
+
+/**
+ * Serializes user-edited plain text back to Vikunja's description field:
+ * - Preserves `originalRaw` untouched when `isDirty === false` so unopened/unedited HTML never loses formatting.
+ * - Preserves plain text when `originalRaw` was not HTML.
+ * - Serializes paragraphs, bullets, numbered lists, and `- [x]` / `- [ ]` checklists into clean HTML when `originalRaw` was HTML.
+ */
+export function serializeDescriptionForServer(
+  editedText: string,
+  originalRaw?: string | null,
+  isDirty = true
+): string {
+  if (!isDirty && originalRaw !== undefined && originalRaw !== null) {
+    return originalRaw;
+  }
+
+  const normalized = (editedText || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (!containsHtmlMarkup(originalRaw)) {
+    return normalized;
+  }
+
+  return plainTextToVikunjaHtml(normalized);
 }

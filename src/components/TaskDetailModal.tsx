@@ -32,6 +32,7 @@ interface TaskDetailModalProps {
   availableProjects?: Project[];
   defaultProjectId?: number;
   weekStartDay?: WeekStartDay;
+  hideAssignees?: boolean;
   onClose: () => void;
   onSave: (taskId: number, updates: Partial<Task>) => void;
   onDelete: (taskId: number) => void;
@@ -85,6 +86,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   availableProjects = [],
   defaultProjectId,
   weekStartDay = 1,
+  hideAssignees = false,
   onClose,
   onSave,
   onDelete,
@@ -1111,6 +1113,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               </View>
 
               {/* Assignees */}
+              {(!hideAssignees || assignees.length > 0) && (
               <View
                 style={[
                   styles.sectionCard,
@@ -1205,6 +1208,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   </View>
                 )}
               </View>
+              )}
 
               {/* Labels */}
               <View

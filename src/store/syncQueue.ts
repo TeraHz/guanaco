@@ -84,6 +84,7 @@ export class SyncQueue {
 
   /** Persistent store-level callbacks that survive cold app restarts (`loadFromStorage`). */
   public onTaskCreated?: (tempId: number, remoteTask: Task) => void;
+  public onTaskUpdated?: (taskId: number, remoteTask: Task) => void;
   public onTaskLabelsSynced?: (taskId: number, labels: Label[]) => void;
   public onTaskAssigneesSynced?: (taskId: number, assignees: User[]) => void;
   public onTaskRelationSynced?: (taskId: number, otherTaskId: number, relationKind: string) => void;
@@ -346,6 +347,47 @@ export class SyncQueue {
                 this.remapTaskIdInQueue(tempId, result.id);
               }
 
+              // Ensure done: true persists even on Vikunja versions where PUT /projects/:id/tasks defaults done=false
+              if (
+                sanitizedCreateData?.done &&
+                result &&
+                result.id > 0 &&
+                !result.done &&
+                typeof this.client.updateTask === 'function'
+              ) {
+                try {
+                  const toggled = await this.client.updateTask(result.id, {
+                    ...sanitizedCreateData,
+                    id: result.id,
+                    done: true,
+                  });
+                  if (toggled && typeof toggled.id === 'number') {
+                    result = { ...result, ...toggled };
+                  } else {
+                    result = { ...result, done: true };
+                  }
+                } catch (doneErr: any) {
+                  result = {
+                    ...result,
+                    done: true,
+                    done_at: sanitizedCreateData.done_at ?? result.done_at,
+                  };
+                  const errStatus = doneErr?.status || doneErr?.response?.status;
+                  if (!isPermanent4xxError(errStatus)) {
+                    followUpMutations.push({
+                      id: `create-done-${result.id}-${Date.now()}`,
+                      type: 'TOGGLE_TASK',
+                      payload: {
+                        taskId: result.id,
+                        done: true,
+                        data: { ...sanitizedCreateData, id: result.id, done: true },
+                      },
+                      timestamp: Date.now(),
+                    });
+                  }
+                }
+              }
+
               // Sync labels attached at creation; if this sub-step fails transiently,
               // propagate into a retryable SET_TASK_LABELS mutation so labels are never lost
               // and CREATE_TASK is never re-run (which would duplicate the task).
@@ -544,6 +586,20 @@ export class SyncQueue {
           ) {
             try {
               this.onTaskCreated(resolvedCreateTempId, result);
+            } catch (_) {}
+          }
+
+          if (
+            (item.type === 'TOGGLE_TASK' || item.type === 'UPDATE_TASK') &&
+            this.onTaskUpdated &&
+            typeof item.payload?.taskId === 'number' &&
+            item.payload.taskId > 0 &&
+            result &&
+            typeof result.id === 'number' &&
+            !this.hasPendingForTask(item.payload.taskId)
+          ) {
+            try {
+              this.onTaskUpdated(item.payload.taskId, result);
             } catch (_) {}
           }
 

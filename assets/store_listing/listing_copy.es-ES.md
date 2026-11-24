@@ -9,7 +9,7 @@ Guanaco: Tareas de Vikunja
 
 ## 2. Short Description (Max 80 characters)
 ```
-Tareas, listas de compras y recordatorios offline para tu servidor Vikunja.
+Tareas, compras y recordatorios privados offline — en tu móvil o con Vikunja.
 ```
 
 ---
@@ -17,14 +17,15 @@ Tareas, listas de compras y recordatorios offline para tu servidor Vikunja.
 ## 3. Full Description (Max 4,000 characters)
 
 ```markdown
-Guanaco es un gestor rápido, privado y de código abierto de tareas, listas de pendientes y listas de la compra para móvil y tablet, diseñado para tu servidor Vikunja propio o en la nube.
+Guanaco es un gestor rápido, privado y de código abierto de tareas, listas de pendientes y listas de la compra para móvil y tablet. Úsalo de forma 100% independiente en tu dispositivo sin servidor ni cuenta, o conéctalo cuando quieras a tu servidor Vikunja propio o en la nube.
 
-Organiza tus recados diarios, listas de compras compartidas, equipaje de viaje y proyectos del hogar con subtareas, recordatorios locales y clasificación automática por pasillos del supermercado — incluso sin conexión, sin anuncios y sin rastreadores.
+Organiza tus recados diarios, listas de compras, equipaje de viaje y proyectos del hogar con subtareas, recordatorios locales y clasificación automática por pasillos del supermercado — sin anuncios y sin rastreadores.
 
-Nota: Guanaco se conecta directamente a un servidor Vikunja existente (autoalojado o Vikunja Cloud) y requiere la dirección de un servidor para iniciar sesión.
+Uso local o sincronizado:
+Empieza al instante en tu dispositivo, exporta o importa copias de seguridad JSON en cualquier momento y conecta un servidor Vikunja más adelante para subir tus listas y tareas locales sin complicaciones.
 
 Características principales:
-• Funciona sin conexión: Consulta tus listas, marca compras o recados, añade tareas y edita detalles sin señal; los cambios se sincronizan automáticamente al recuperar la conexión.
+• Modo local y sincronización sin conexión: Úsalo 100% en tu dispositivo o conectado a Vikunja con caché sin conexión que se sincroniza automáticamente al volver a tener red.
 • Agrupación inteligente de compras y listas: Ordena automáticamente la lista de la compra por pasillos del supermercado (Frutas y verduras, Lácteos, Panadería, Carnes) o agrupa listas de viaje y proyectos del hogar en tu propio dispositivo.
 • Subtareas y filtros guardados: Divide proyectos en subtareas con indicadores de progreso, duplica plantillas y abre tus filtros guardados de Vikunja desde el menú lateral.
 • Entrada rápida en una línea: Añade tareas con atajos naturales en español, búlgaro e inglés para #etiquetas, +listas, !prioridad, @asignados, fechas ("mañana a las 18:30", "en 3 días") y repeticiones ("cada 2 semanas").

@@ -1,12 +1,12 @@
 # Guanaco User Manual
 
-**Guanaco** is a fast, offline-capable to-do list, grocery list, and task manager for phones and tablets that connects to your self-hosted or cloud [Vikunja](https://vikunja.io/) task server. This guide covers connecting your server, organizing everyday tasks and shopping lists, setting reminders, and customizing how the app looks and behaves.
+**Guanaco** is a fast, private to-do list, grocery list, and task manager for phones and tablets. You can use it **100% standalone on your device** with no server or account required, or connect to your self-hosted or cloud [Vikunja](https://vikunja.io/) task server anytime. This guide covers both standalone on-device mode and Vikunja server sync, organizing everyday tasks and shopping lists, setting reminders, and customizing how the app looks and behaves.
 
 ---
 
 ## Contents
 
-1. [Signing In](#1-signing-in)
+1. [Getting Started (Standalone Offline or Vikunja Server)](#1-getting-started-standalone-offline-or-vikunja-server)
 2. [Lists, Sublists & Saved Filters](#2-lists-sublists--saved-filters)
 3. [Adding Tasks Quickly](#3-adding-tasks-quickly)
 4. [Organizing, Sorting & Searching](#4-organizing-sorting--searching)
@@ -17,8 +17,15 @@
 
 ---
 
-## 1. Signing In
+## 1. Getting Started (Standalone Offline or Vikunja Server)
 
+### Using Guanaco Standalone on Your Device (No Server Needed)
+Tap **Use Offline on This Device** at the bottom of the welcome screen to start immediately with starter `Tasks` and `Groceries` lists — no server, account, or internet connection required.
+- All lists, nested sublists, recurring tasks, subtasks, labels, smart aisle grouping, biometric lock, and interactive reminders work locally on your device.
+- **Backups (`Settings → Backup & Restore`):** Because Guanaco disables cloud auto-backup (`android:allowBackup="false"`) for privacy, you can export a portable `.json` backup file anytime and import backups in **Merge** or **Replace** mode when switching phones.
+- **Connecting a Server Later (`Settings → Connect a Vikunja Server`):** Whenever you're ready to sync across devices, connect a Vikunja server from Settings and choose whether to **Upload local tasks to server** (preserving sublists, colors, favorites, archive status, labels, tasks, recurrence, reminders, and subtasks) or **Replace with server data**.
+
+### Connecting to a Vikunja Server
 Enter your Vikunja **Server Address** on the welcome screen (for example, `https://tasks.example.com`). You can paste the normal web address you use in your browser — Guanaco cleans up trailing `/login` or `/api` paths automatically.
 
 <p align="center">

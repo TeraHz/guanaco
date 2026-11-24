@@ -38,6 +38,7 @@ export interface LoginConnectOptions {
   authMethod?: 'password' | 'api_token';
   totpPasscode?: string;
   allowInsecureHttp?: boolean;
+  migrationMode?: 'merge' | 'replace';
 }
 
 export interface LoginScreenProps {
@@ -48,12 +49,18 @@ export interface LoginScreenProps {
     options?: LoginConnectOptions
   ) => Promise<void>;
   onBiometricUnlock?: () => Promise<void>;
+  onUseOffline?: () => Promise<void> | void;
+  isConnectingFromLocal?: boolean;
+  localStats?: { lists: number; tasks: number };
   defaultServerUrl?: string;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onConnect,
   onBiometricUnlock,
+  onUseOffline,
+  isConnectingFromLocal = false,
+  localStats,
   defaultServerUrl = '',
 }) => {
   const theme = useAppTheme();
@@ -61,6 +68,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
   const [serverUrl, setServerUrl] = useState(defaultServerUrl);
   const [authMode, setAuthMode] = useState<'password' | 'api_token'>('password');
+  const [migrationMode, setMigrationMode] = useState<'merge' | 'replace'>('merge');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [totpPasscode, setTotpPasscode] = useState('');
@@ -89,8 +97,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           (await isBiometricEnabled()) && (await checkBiometricAvailable());
         if (!mounted) return;
 
-        if (biometricActive && stored.serverUrl && stored.token && onBiometricUnlock) {
+        if (
+          !isConnectingFromLocal &&
+          biometricActive &&
+          stored.serverUrl &&
+          stored.token &&
+          onBiometricUnlock
+        ) {
           setCanBiometricUnlock(true);
+        } else {
+          setCanBiometricUnlock(false);
         }
       } catch (_) {}
     };
@@ -98,7 +114,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     return () => {
       mounted = false;
     };
-  }, [onBiometricUnlock]);
+  }, [onBiometricUnlock, isConnectingFromLocal]);
 
   const handleBiometricUnlock = async () => {
     if (!onBiometricUnlock) return;
@@ -161,13 +177,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     try {
       const cleanTotp = totpPasscode.trim();
       const needsOptions =
-        effectiveTokenMode || Boolean(cleanTotp) || isInsecureHttp;
+        effectiveTokenMode ||
+        Boolean(cleanTotp) ||
+        isInsecureHttp ||
+        isConnectingFromLocal;
 
       if (needsOptions) {
         const opts: LoginConnectOptions = {};
         if (effectiveTokenMode) opts.authMethod = 'api_token';
         if (cleanTotp && !effectiveTokenMode) opts.totpPasscode = cleanTotp;
         if (isInsecureHttp) opts.allowInsecureHttp = true;
+        if (isConnectingFromLocal) opts.migrationMode = migrationMode;
         await onConnect(normalizedUrl, cleanUser, secretValue, opts);
       } else {
         await onConnect(normalizedUrl, cleanUser, secretValue);
@@ -222,7 +242,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     executeConnect(true);
   };
 
+  const handleUseOfflinePress = async () => {
+    if (!onUseOffline || loading) return;
+    setErrorMessage(null);
+    setLoading(true);
+    try {
+      safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+      await onUseOffline();
+    } catch (err: any) {
+      setErrorMessage(err?.message || t('auth.failedToConnect'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const isTokenMode = authMode === 'api_token';
+  const showMigrationChoice =
+    isConnectingFromLocal &&
+    Boolean(localStats && (localStats.tasks > 0 || localStats.lists > 0));
 
   return (
     <SafeAreaView
@@ -242,7 +279,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               style={styles.logoImage}
               resizeMode="cover"
             />
-            <Text style={[styles.title, { color: theme.colors.text }]}>Guanaco</Text>
+            <Text style={[styles.title, { color: theme.colors.text }]}>
+              {isConnectingFromLocal ? t('auth.connectServerHeading') : 'Guanaco'}
+            </Text>
           </View>
 
           <View
@@ -609,9 +648,98 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               </>
             )}
 
+            {showMigrationChoice && localStats && (
+              <View
+                testID="login-migration-choice-box"
+                style={[
+                  styles.migrationBox,
+                  {
+                    backgroundColor: theme.colors.surfaceSecondary,
+                    borderColor: theme.colors.borderStrong,
+                  },
+                ]}
+              >
+                <Text style={[styles.migrationLabel, { color: theme.colors.textSecondary }]}>
+                  {t('auth.migrationSectionLabel')}
+                </Text>
+                <Text style={[styles.migrationSummary, { color: theme.colors.text }]}>
+                  {t('auth.migrationSummary', {
+                    lists: localStats.lists,
+                    tasks: localStats.tasks,
+                  })}
+                </Text>
+                <View
+                  style={styles.migrationOptionsCol}
+                  accessibilityRole="radiogroup"
+                >
+                  {(
+                    [
+                      { key: 'merge', label: t('auth.migrationKeepUpload') },
+                      { key: 'replace', label: t('auth.migrationStartFresh') },
+                    ] as const
+                  ).map((opt) => {
+                    const selected = migrationMode === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        testID={`migration-mode-${opt.key}`}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: selected, disabled: loading }}
+                        style={[
+                          styles.migrationOptionBtn,
+                          selected
+                            ? {
+                                backgroundColor: hexToRgba(theme.colors.accent, 0.14),
+                                borderColor: theme.colors.accent,
+                              }
+                            : {
+                                backgroundColor: theme.colors.cardBackground,
+                                borderColor: theme.colors.cardBorder,
+                              },
+                        ]}
+                        onPress={() => {
+                          safeHaptics.selection();
+                          setMigrationMode(opt.key);
+                        }}
+                        disabled={loading}
+                      >
+                        <Text
+                          accessible={false}
+                          importantForAccessibility="no"
+                          style={[
+                            styles.migrationOptionRadio,
+                            { color: selected ? theme.colors.accent : theme.colors.textTertiary },
+                          ]}
+                        >
+                          {selected ? '◉' : '○'}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.migrationOptionText,
+                            {
+                              color: theme.colors.text,
+                              fontWeight: selected ? '700' : '500',
+                            },
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
             <TouchableOpacity
               testID="login-submit-btn"
               accessibilityRole="button"
+              accessibilityLabel={
+                loading && isConnectingFromLocal && migrationMode === 'merge'
+                  ? t('auth.migratingProgress')
+                  : t('auth.connect')
+              }
+              accessibilityState={{ disabled: loading, busy: loading }}
               style={[
                 styles.button,
                 { backgroundColor: theme.colors.accent },
@@ -622,11 +750,55 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               activeOpacity={0.8}
             >
               {loading ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator color="#FFFFFF" />
+                  {isConnectingFromLocal && migrationMode === 'merge' && (
+                    <Text style={styles.buttonText}>{t('auth.migratingProgress')}</Text>
+                  )}
+                </View>
               ) : (
                 <Text style={styles.buttonText}>{t('auth.connect')}</Text>
               )}
             </TouchableOpacity>
+
+            {onUseOffline && !isConnectingFromLocal && (
+              <View style={styles.offlineSection}>
+                <View style={styles.dividerRow}>
+                  <View
+                    style={[styles.dividerLine, { backgroundColor: theme.colors.cardBorder }]}
+                  />
+                  <Text style={[styles.dividerText, { color: theme.colors.textSecondary }]}>
+                    {t('auth.orDivider')}
+                  </Text>
+                  <View
+                    style={[styles.dividerLine, { backgroundColor: theme.colors.cardBorder }]}
+                  />
+                </View>
+                <TouchableOpacity
+                  testID="login-use-offline-btn"
+                  accessibilityRole="button"
+                  style={[
+                    styles.biometricButton,
+                    {
+                      backgroundColor: theme.colors.surfaceSecondary,
+                      borderColor: theme.colors.borderStrong,
+                      marginTop: 0,
+                    },
+                    loading && styles.buttonDisabled,
+                  ]}
+                  onPress={handleUseOfflinePress}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.biometricButtonText, { color: theme.colors.text }]}>
+                    {t('auth.useOfflineBtn')}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={[styles.offlineSubtitle, { color: theme.colors.textSecondary }]}>
+                  {t('auth.useOfflineSub')}
+                </Text>
+              </View>
+            )}
 
             {canBiometricUnlock && (
               <TouchableOpacity
@@ -732,6 +904,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: '800',
+    textAlign: 'center',
   },
   card: {
     borderRadius: 20,
@@ -843,6 +1016,7 @@ const styles = StyleSheet.create({
   button: {
     borderRadius: 12,
     paddingVertical: 14,
+    paddingHorizontal: 14,
     alignItems: 'center',
     marginTop: 6,
   },
@@ -850,12 +1024,82 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     paddingVertical: 13,
+    paddingHorizontal: 14,
     alignItems: 'center',
     marginTop: 10,
   },
   biometricButtonText: {
     fontSize: 15,
     fontWeight: '600',
+    textAlign: 'center',
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  offlineSection: {
+    marginTop: 14,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 10,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+  },
+  dividerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  offlineSubtitle: {
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  migrationBox: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  migrationLabel: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  migrationSummary: {
+    fontSize: 12.5,
+    fontWeight: '500',
+    marginBottom: 10,
+  },
+  migrationOptionsCol: {
+    gap: 6,
+  },
+  migrationOptionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 9,
+    paddingVertical: 9,
+    paddingHorizontal: 11,
+    gap: 8,
+  },
+  migrationOptionRadio: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  migrationOptionText: {
+    flex: 1,
+    fontSize: 13,
   },
   buttonDisabled: {
     opacity: 0.6,

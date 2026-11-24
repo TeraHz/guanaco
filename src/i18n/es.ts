@@ -52,6 +52,19 @@ export const es: Record<TranslationKey, string> = {
   'auth.unencryptedHttpBody': '{url} envía las credenciales sin cifrar.',
   'auth.useHttps': 'Usar HTTPS',
   'auth.insecureHttpError': 'La conexión HTTP sin cifrar requiere confirmación explícita.',
+  'auth.orDivider': 'O',
+  'auth.useOfflineBtn': 'Usar sin conexión en este dispositivo',
+  'auth.useOfflineSub': 'Sin servidor ni cuenta. Conecta un servidor Vikunja cuando quieras.',
+  'auth.connectServerHeading': 'Conectar un servidor Vikunja',
+  'auth.migrationSectionLabel': 'DATOS LOCALES EN ESTE DISPOSITIVO',
+  'auth.migrationSummary': '{lists} lista(s) y {tasks} tarea(s) en este dispositivo.',
+  'auth.migrationKeepUpload': 'Subir tareas locales al servidor',
+  'auth.migrationStartFresh': 'Reemplazar con datos del servidor',
+  'auth.migratingProgress': 'Sincronizando tareas locales...',
+
+  // Standalone Local Mode
+  'local.starterTasksList': 'Tareas',
+  'local.starterGroceriesList': 'Compras',
 
   // URL Validation Errors
   'urlError.required': 'La URL del servidor es obligatoria',
@@ -113,6 +126,7 @@ export const es: Record<TranslationKey, string> = {
   'listEditor.parentListLabel': 'LISTA PRINCIPAL',
   'listEditor.favoriteList': 'Lista favorita',
   'listEditor.duplicateList': 'Duplicar lista',
+  'listEditor.copyTitle': '{title} (Copia)',
   'listEditor.saveChanges': 'Guardar cambios',
   'listEditor.createList': 'Crear lista',
   'listEditor.closeA11y': 'Cerrar editor de lista',
@@ -170,6 +184,7 @@ export const es: Record<TranslationKey, string> = {
   'tasks.searchCloseA11y': 'Cerrar búsqueda',
   'tasks.searchClearA11y': 'Borrar texto de búsqueda',
   'tasks.searchAllPlaceholder': 'Buscar en listas, notas, #etiquetas, @usuarios...',
+  'tasks.searchAllLocalPlaceholder': 'Buscar en listas, notas, #etiquetas...',
   'tasks.searchInListPlaceholder': 'Buscar en {title}...',
   'tasks.searchInListFallback': 'Buscar en la lista...',
   'tasks.scopeAllLists': 'Todas las listas',
@@ -477,6 +492,51 @@ export const es: Record<TranslationKey, string> = {
   'settings.logoutConfirmPending':
     'Tienes {count} cambio(s) sin conexión pendientes. Si cierras sesión ahora, se descartarán permanentemente. ¿Cerrar sesión de todos modos?',
   'settings.logoutBannerConfirm': '¿Descartar {count} cambio(s) sin sincronizar y cerrar sesión?',
+  'settings.storageMode': 'Almacenamiento',
+  'settings.localModeBadge': 'Solo en este dispositivo',
+  'settings.localModeHint':
+    'Tus listas y tareas se guardan de forma privada en este dispositivo. Exporta una copia antes de cambiar de teléfono.',
+  'settings.connectServerBtn': 'Conectar un servidor Vikunja',
+  'settings.backupSection': 'COPIA DE SEGURIDAD',
+  'settings.exportBackupBtn': 'Exportar copia (JSON)',
+  'settings.importBackupBtn': 'Importar copia (JSON)',
+  'settings.backupExportedDone': '✓ Copia exportada',
+  'settings.backupExportError': 'No se pudo exportar la copia de seguridad.',
+  'settings.backupImportedDone': '✓ Restauradas {tasks} tarea(s) en {lists} lista(s)',
+  'settings.importModalTitle': 'Importar copia de seguridad',
+  'settings.importModeMerge': 'Combinar con listas actuales',
+  'settings.importModeReplace': 'Reemplazar datos locales',
+  'settings.importPickFileBtn': 'Elegir archivo .json',
+  'settings.importPasteLabel': 'O PEGA EL JSON DE COPIA',
+  'settings.importPasteOnlyLabel': 'PEGA EL JSON DE COPIA',
+  'settings.importPastePlaceholder': 'Pega aquí el contenido JSON de la copia...',
+  'settings.importApplyBtn': 'Importar copia',
+  'settings.importReplaceTitle': '¿Reemplazar datos locales?',
+  'settings.importReplaceConfirm':
+    'Importar en modo reemplazo sobrescribirá permanentemente tus listas y tareas locales actuales. ¿Continuar?',
+  'settings.importReplaceBannerConfirm':
+    '¿Sobrescribir todas las listas y tareas locales actuales con esta copia?',
+  'settings.backupReadError': 'No se pudo leer el archivo de copia de seguridad.',
+  'settings.backupInvalidError': 'Archivo de copia de seguridad no válido.',
+  'settings.eraseLocalDataBtn': 'Borrar datos locales y salir',
+  'settings.eraseLocalTitle': '¿Borrar datos del dispositivo?',
+  'settings.eraseLocalConfirmMessage':
+    'Todas las listas y tareas locales se eliminarán permanentemente de este dispositivo. Exporta antes una copia JSON si deseas conservarlas.',
+  'settings.eraseLocalBannerConfirm': '¿Eliminar permanentemente todas las listas y tareas locales?',
+  'settings.eraseBtn': 'Borrar datos',
+
+  // Backup Validation Errors
+  'backupError.empty': 'El archivo de copia de seguridad está vacío.',
+  'backupError.tooLarge': 'El archivo de copia de seguridad supera el límite de 10 MB.',
+  'backupError.tooDeep': 'El JSON de la copia supera la profundidad máxima permitida.',
+  'backupError.invalidJson': 'Formato JSON no válido en el archivo de copia de seguridad.',
+  'backupError.invalidRoot': 'Estructura raíz de la copia de seguridad no válida.',
+  'backupError.unrecognizedFormat': 'Formato de copia de seguridad no reconocido.',
+  'backupError.unsupportedVersion': 'Versión de copia de seguridad no compatible: {version}',
+  'backupError.missingArrays':
+    'La copia de seguridad debe contener las listas "projects" y "tasks".',
+  'backupError.tooManyItems':
+    'La copia de seguridad supera el número máximo de elementos admitidos.',
 
   // Store Sync Errors
   'store.connectionLostRenewing':

@@ -391,4 +391,74 @@ describe('TaskScheduleSection', () => {
     const pickedNextWeekIso = mockOnChangeDueDate.mock.calls[0][0];
     expect(new Date(pickedNextWeekIso).getDay()).toBe(0);
   });
+
+  it('anchors reminder presets to startDate when dueDate is null, auto-populates Today when all dates are unset, and prunes relative reminders on date clear', () => {
+    const { getByTestId, rerender } = render(
+      <TaskScheduleSection
+        dueDate={null}
+        startDate="2026-10-15T09:00:00Z"
+        endDate={null}
+        repeatAfter={0}
+        repeatMode={RepeatMode.FromDueDate}
+        reminders={[]}
+        onChangeDueDate={mockOnChangeDueDate}
+        onChangeStartDate={mockOnChangeStartDate}
+        onChangeEndDate={mockOnChangeEndDate}
+        onChangeRepeat={mockOnChangeRepeat}
+        onChangeReminders={mockOnChangeReminders}
+      />
+    );
+
+    fireEvent.press(getByTestId('quick-add-reminder-btn'));
+    fireEvent.press(getByTestId('reminder-preset-15m'));
+    expect(mockOnChangeReminders).toHaveBeenCalledWith([
+      { relative_to: ReminderRelativeTo.StartDate, relative_period: -900 },
+    ]);
+
+    // Clearing startDate prunes start_date relative reminders automatically
+    mockOnChangeReminders.mockClear();
+    rerender(
+      <TaskScheduleSection
+        dueDate={null}
+        startDate="2026-10-15T09:00:00Z"
+        endDate={null}
+        repeatAfter={0}
+        repeatMode={RepeatMode.FromDueDate}
+        reminders={[{ relative_to: ReminderRelativeTo.StartDate, relative_period: -900 }]}
+        onChangeDueDate={mockOnChangeDueDate}
+        onChangeStartDate={mockOnChangeStartDate}
+        onChangeEndDate={mockOnChangeEndDate}
+        onChangeRepeat={mockOnChangeRepeat}
+        onChangeReminders={mockOnChangeReminders}
+      />
+    );
+    fireEvent.press(getByTestId('clear-start-date-btn'));
+    expect(mockOnChangeReminders).toHaveBeenCalledWith([]);
+    expect(mockOnChangeStartDate).toHaveBeenCalledWith(null);
+
+    // When all dates are null, adding a preset reminder auto-sets dueDate to Today so the reminder actually fires
+    mockOnChangeDueDate.mockClear();
+    mockOnChangeReminders.mockClear();
+    rerender(
+      <TaskScheduleSection
+        dueDate={null}
+        startDate={null}
+        endDate={null}
+        repeatAfter={0}
+        repeatMode={RepeatMode.FromDueDate}
+        reminders={[]}
+        onChangeDueDate={mockOnChangeDueDate}
+        onChangeStartDate={mockOnChangeStartDate}
+        onChangeEndDate={mockOnChangeEndDate}
+        onChangeRepeat={mockOnChangeRepeat}
+        onChangeReminders={mockOnChangeReminders}
+      />
+    );
+    fireEvent.press(getByTestId('quick-add-reminder-btn'));
+    fireEvent.press(getByTestId('reminder-preset-15m'));
+    expect(mockOnChangeDueDate).toHaveBeenCalledWith(expect.any(String));
+    expect(mockOnChangeReminders).toHaveBeenCalledWith([
+      { relative_to: ReminderRelativeTo.DueDate, relative_period: -900 },
+    ]);
+  });
 });

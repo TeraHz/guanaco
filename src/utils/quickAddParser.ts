@@ -109,7 +109,15 @@ const NAMED_PRIORITIES: Record<string, number> = {
 const MAX_REPEAT_COUNT = 10000;
 const MAX_IN_DAYS = 36500; // 100 years
 
-export function parseQuickAdd(rawInput: string, now: Date = new Date()): ParsedTaskInput {
+export interface ParseQuickAddOptions {
+  extractAssignees?: boolean;
+}
+
+export function parseQuickAdd(
+  rawInput: string,
+  now: Date = new Date(),
+  options?: ParseQuickAddOptions
+): ParsedTaskInput {
   const safeNow = now instanceof Date && !isNaN(now.getTime()) ? now : new Date();
   const trimmed = (typeof rawInput === 'string' ? rawInput : '').trim();
 
@@ -156,12 +164,14 @@ export function parseQuickAdd(rawInput: string, now: Date = new Date()): ParsedT
     (_, dateKw) => ` ${dateKw}`
   );
 
-  // 3b. Extract Assignees: @user or @"multi word user"
-  text = text.replace(/(?:^|\s)@(?:"([^"]+)"|([^\s*#+@!]+))/g, (_, quoted, unquoted) => {
-    const val = (quoted || unquoted || '').trim();
-    pushUniqueCaseInsensitive(assignees, val);
-    return ' ';
-  });
+  // 3b. Extract Assignees: @user or @"multi word user" (unless disabled in standalone Local Mode)
+  if (options?.extractAssignees !== false) {
+    text = text.replace(/(?:^|\s)@(?:"([^"]+)"|([^\s*#+@!]+))/g, (_, quoted, unquoted) => {
+      const val = (quoted || unquoted || '').trim();
+      pushUniqueCaseInsensitive(assignees, val);
+      return ' ';
+    });
+  }
 
   // 4. Extract Project: +Project or +"Project Name"
   text = text.replace(/(?:^|\s)\+(?:"([^"]+)"|([^\s*#+@!]+))/g, (_, quoted, unquoted) => {

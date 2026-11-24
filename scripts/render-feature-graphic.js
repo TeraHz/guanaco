@@ -70,7 +70,7 @@ const html = `<!DOCTYPE html>
     <img src="${iconDataUri}" class="app-icon" alt="Guanaco Icon" />
   </div>
   <div class="app-title">Guanaco</div>
-  <div class="app-subtitle">Tasks, to-do lists &amp; reminders for Vikunja</div>
+  <div class="app-subtitle">Private tasks, grocery lists &amp; reminders — offline or with Vikunja</div>
 </body>
 </html>`;
 

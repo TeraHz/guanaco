@@ -10,6 +10,8 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -18,6 +20,13 @@ import { AppBadgeMode, LanguagePreference, ThemeMode, WeekStartDay } from '../ty
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import { useTranslation } from '../i18n';
+import {
+  exportBackupToSystem,
+  isNativeFileImportAvailable,
+  parseAndValidateBackup,
+  pickBackupFileFromSystem,
+} from '../utils/localBackup';
+import { isUntouchedEmptyStarterProject } from '../services/localMigration';
 import {
   checkBiometricAvailable,
   isBiometricEnabled,
@@ -35,6 +44,7 @@ interface SettingsModalProps {
   visible: boolean;
   onClose: () => void;
   onLogout?: () => void;
+  onConnectServer?: () => void;
   onOpenLabelManagement?: () => void;
 }
 
@@ -42,6 +52,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   visible,
   onClose,
   onLogout,
+  onConnectServer,
   onOpenLabelManagement,
 }) => {
   const theme = useAppTheme();
@@ -52,6 +63,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   } = useTranslation();
   const {
     client,
+    isLocalMode = false,
     currentUser: storeCurrentUser,
     cachedUsers,
     reenableStaples,
@@ -71,6 +83,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     appBadgeMode = 'off',
     setAppBadgeMode,
     resetAndSyncFromServer,
+    exportBackupJson,
+    importLocalBackup,
     syncStatus,
     pendingSyncCount,
   } = useTaskStore();
@@ -83,8 +97,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isResetting, setIsResetting] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
-  const [pendingConfirmAction, setPendingConfirmAction] = useState<'reset' | 'logout' | null>(null);
+  const [pendingConfirmAction, setPendingConfirmAction] = useState<
+    'reset' | 'logout' | 'erase_local' | 'import_replace' | null
+  >(null);
+  const [pendingReplaceRawJson, setPendingReplaceRawJson] = useState<string | null>(null);
   const resetTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [importJsonText, setImportJsonText] = useState('');
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
+  const [isImportingBackup, setIsImportingBackup] = useState(false);
+  const backupNoticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = React.useRef(true);
 
   const serverUrl = client ? client.getBaseApiUrl().replace(/\/api\/v1$/, '') : '';
   const displayUsername =
@@ -131,10 +158,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
       if (aiCacheTimerRef.current) clearTimeout(aiCacheTimerRef.current);
       if (updateStatusTimerRef.current) clearTimeout(updateStatusTimerRef.current);
+      if (backupNoticeTimerRef.current) clearTimeout(backupNoticeTimerRef.current);
     };
   }, []);
 
@@ -164,7 +194,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     if (visible) {
       setPendingConfirmAction(null);
+      setPendingReplaceRawJson(null);
       setResetError(null);
+      setBackupError(null);
+      setBackupNotice(null);
+      setShowImportPanel(false);
+      setImportMode('merge');
+      setImportJsonText('');
       loadSettingsMetadata();
     }
     return () => {
@@ -246,7 +282,173 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     onLogout?.();
   };
 
+  const handleExportBackup = async () => {
+    if (isExportingBackup || isImportingBackup) return;
+    setIsExportingBackup(true);
+    setBackupError(null);
+    setBackupNotice(null);
+    try {
+      safeHaptics.impact(Haptics.ImpactFeedbackStyle.Light);
+      const jsonStr =
+        typeof exportBackupJson === 'function'
+          ? exportBackupJson()
+          : useTaskStore.getState().exportBackupJson();
+      const status = await exportBackupToSystem(jsonStr);
+      if (!isMountedRef.current) return;
+      if (status !== 'canceled') {
+        safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+        setBackupNotice(t('settings.backupExportedDone'));
+        if (backupNoticeTimerRef.current) clearTimeout(backupNoticeTimerRef.current);
+        backupNoticeTimerRef.current = setTimeout(() => {
+          if (isMountedRef.current) setBackupNotice(null);
+        }, 3500);
+      }
+    } catch (err: any) {
+      if (!isMountedRef.current) return;
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setBackupError(err?.message || t('settings.backupExportError'));
+    } finally {
+      if (isMountedRef.current) {
+        setIsExportingBackup(false);
+      }
+    }
+  };
+
+  const applyImportedJsonString = async (rawJson: string, skipReplaceConfirm = false) => {
+    const storeNow = useTaskStore.getState();
+    if (!storeNow.isLocalMode || storeNow.client) return;
+
+    if (!skipReplaceConfirm) {
+      // Validate backup JSON upfront BEFORE showing any destructive Replace confirmation prompt
+      try {
+        parseAndValidateBackup(rawJson);
+      } catch (err: any) {
+        if (!isMountedRef.current) return;
+        safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+        setBackupError(err?.message || t('settings.backupInvalidError'));
+        return;
+      }
+
+      if (importMode === 'replace') {
+        const safeProjs = Array.isArray(storeNow.projects)
+          ? storeNow.projects.filter((p) => p && p.id > 0 && !p.is_saved_filter)
+          : [];
+        const safeTasks = Array.isArray(storeNow.tasks) ? storeNow.tasks.filter(Boolean) : [];
+        const safeLabels = Array.isArray(storeNow.labels) ? storeNow.labels.filter(Boolean) : [];
+        const hasLocalData =
+          safeTasks.length > 0 ||
+          safeLabels.length > 0 ||
+          safeProjs.some((p) => !isUntouchedEmptyStarterProject(p, safeProjs, safeTasks));
+
+        if (hasLocalData) {
+          const title = t('settings.importReplaceTitle');
+          const message = t('settings.importReplaceConfirm');
+          if (Platform.OS === 'web') {
+            if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+              if (!window.confirm(`${title}\n\n${message}`)) {
+                return;
+              }
+            } else {
+              setPendingReplaceRawJson(rawJson);
+              setPendingConfirmAction('import_replace');
+              return;
+            }
+          } else {
+            Alert.alert(title, message, [
+              { text: t('common.cancel'), style: 'cancel' },
+              {
+                text: t('settings.importApplyBtn'),
+                style: 'destructive',
+                onPress: () => {
+                  applyImportedJsonString(rawJson, true).catch(() => {});
+                },
+              },
+            ]);
+            return;
+          }
+        }
+      }
+    }
+
+    setPendingConfirmAction(null);
+    setPendingReplaceRawJson(null);
+    setIsImportingBackup(true);
+    setBackupError(null);
+    setBackupNotice(null);
+    try {
+      const fn =
+        typeof importLocalBackup === 'function'
+          ? importLocalBackup
+          : useTaskStore.getState().importLocalBackup;
+      const result = await fn(rawJson, importMode);
+      if (!isMountedRef.current) return;
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+      setShowImportPanel(false);
+      setImportMode('merge');
+      setImportJsonText('');
+      setBackupNotice(
+        t('settings.backupImportedDone', {
+          tasks: result.importedTasks,
+          lists: result.importedProjects,
+        })
+      );
+      if (backupNoticeTimerRef.current) clearTimeout(backupNoticeTimerRef.current);
+      backupNoticeTimerRef.current = setTimeout(() => {
+        if (isMountedRef.current) setBackupNotice(null);
+      }, 4500);
+    } catch (err: any) {
+      if (!isMountedRef.current) return;
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setBackupError(err?.message || t('settings.backupInvalidError'));
+    } finally {
+      if (isMountedRef.current) {
+        setIsImportingBackup(false);
+      }
+    }
+  };
+
+  const handlePickBackupFile = async () => {
+    if (isImportingBackup || isExportingBackup) return;
+    setBackupError(null);
+    try {
+      const picked = await pickBackupFileFromSystem();
+      if (!isMountedRef.current) return;
+      if (picked.status === 'loaded' && typeof picked.content === 'string') {
+        await applyImportedJsonString(picked.content);
+      }
+    } catch (err: any) {
+      if (!isMountedRef.current) return;
+      safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+      setBackupError(err?.message || t('settings.backupReadError'));
+    }
+  };
+
   const handleRequestLogout = () => {
+    if (isLocalMode) {
+      const title = t('settings.eraseLocalTitle');
+      const message = t('settings.eraseLocalConfirmMessage');
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+          if (window.confirm(`${title}\n\n${message}`)) {
+            executeLogout();
+          }
+        } else {
+          setPendingConfirmAction('erase_local');
+        }
+        return;
+      }
+
+      Alert.alert(title, message, [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('settings.eraseBtn'),
+          style: 'destructive',
+          onPress: executeLogout,
+        },
+      ]);
+      return;
+    }
+
     if (pendingSyncCount > 0) {
       const message = t('settings.logoutConfirmPending', { count: pendingSyncCount });
       if (Platform.OS === 'web') {
@@ -347,6 +549,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {pendingConfirmAction ? (
             <View
               testID="settings-confirm-banner"
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
               style={[
                 styles.confirmBanner,
                 {
@@ -358,13 +562,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
                 {pendingConfirmAction === 'reset'
                   ? t('settings.overwriteBannerConfirm')
+                  : pendingConfirmAction === 'erase_local'
+                  ? t('settings.eraseLocalBannerConfirm')
+                  : pendingConfirmAction === 'import_replace'
+                  ? t('settings.importReplaceBannerConfirm')
                   : t('settings.logoutBannerConfirm', { count: pendingSyncCount })}
               </Text>
               <View style={styles.confirmBannerActions}>
                 <TouchableOpacity
                   testID="settings-confirm-cancel-btn"
                   style={[styles.confirmCancelBtn, secondaryBtnSurface]}
-                  onPress={() => setPendingConfirmAction(null)}
+                  onPress={() => {
+                    setPendingConfirmAction(null);
+                    setPendingReplaceRawJson(null);
+                  }}
                   accessibilityRole="button"
                 >
                   <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
@@ -374,12 +585,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <TouchableOpacity
                   testID="settings-confirm-proceed-btn"
                   style={[styles.confirmProceedBtn, { backgroundColor: theme.colors.danger }]}
-                  onPress={pendingConfirmAction === 'reset' ? executeResetAndSync : executeLogout}
+                  onPress={() => {
+                    if (pendingConfirmAction === 'reset') {
+                      executeResetAndSync();
+                    } else if (
+                      pendingConfirmAction === 'import_replace' &&
+                      pendingReplaceRawJson !== null
+                    ) {
+                      applyImportedJsonString(pendingReplaceRawJson, true).catch(() => {});
+                    } else {
+                      executeLogout();
+                    }
+                  }}
                   accessibilityRole="button"
                 >
                   <Text style={styles.confirmProceedBtnText}>
                     {pendingConfirmAction === 'reset'
                       ? t('settings.overwriteBtn')
+                      : pendingConfirmAction === 'erase_local'
+                      ? t('settings.eraseBtn')
+                      : pendingConfirmAction === 'import_replace'
+                      ? t('settings.importApplyBtn')
                       : t('settings.logOut')}
                   </Text>
                 </TouchableOpacity>
@@ -387,10 +613,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </View>
           ) : null}
 
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.content}
+          >
           <ScrollView
             style={styles.content}
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
           >
             {/* Account Section */}
             <View
@@ -405,33 +636,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
                 {t('settings.accountSection')}
               </Text>
-              <View style={styles.infoRow}>
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
-                  {t('settings.server')}
-                </Text>
-                <Text style={[styles.infoValue, { color: theme.colors.text }]} numberOfLines={1}>
-                  {serverUrl}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.infoRow,
-                  {
-                    borderTopColor: theme.colors.cardBorder,
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                  },
-                ]}
-              >
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
-                  {t('settings.user')}
-                </Text>
-                <Text
-                  testID="settings-display-username"
-                  style={[styles.infoValue, { color: theme.colors.text }]}
-                >
-                  {displayUsername ? `@${displayUsername}` : t('settings.connected')}
-                </Text>
-              </View>
+              {isLocalMode ? (
+                <>
+                  <View style={styles.infoRow}>
+                    <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                      {t('settings.storageMode')}
+                    </Text>
+                    <Text
+                      testID="settings-local-mode-badge"
+                      style={[styles.infoValue, { color: theme.colors.accent }]}
+                    >
+                      {t('settings.localModeBadge')}
+                    </Text>
+                  </View>
+                  <Text style={[styles.settingSub, { color: theme.colors.textSecondary }]}>
+                    {t('settings.localModeHint')}
+                  </Text>
+                  {onConnectServer && (
+                    <TouchableOpacity
+                      testID="settings-connect-server-btn"
+                      style={[styles.primaryActionBtn, { backgroundColor: theme.colors.accent }]}
+                      onPress={() => {
+                        safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+                        onClose();
+                        onConnectServer();
+                      }}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.primaryActionBtnText}>
+                        {t('settings.connectServerBtn')}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              ) : (
+                <>
+                  <View style={styles.infoRow}>
+                    <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                      {t('settings.server')}
+                    </Text>
+                    <Text
+                      style={[styles.infoValue, { color: theme.colors.text }]}
+                      numberOfLines={1}
+                    >
+                      {serverUrl}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.infoRow,
+                      {
+                        borderTopColor: theme.colors.cardBorder,
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>
+                      {t('settings.user')}
+                    </Text>
+                    <Text
+                      testID="settings-display-username"
+                      style={[styles.infoValue, { color: theme.colors.text }]}
+                    >
+                      {displayUsername ? `@${displayUsername}` : t('settings.connected')}
+                    </Text>
+                  </View>
+                </>
+              )}
             </View>
 
             {/* Preferences Section */}
@@ -1196,7 +1468,219 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </View>
             )}
 
+            {/* Backup & Restore Section (Local Mode) */}
+            {isLocalMode && (
+              <View
+                testID="settings-backup-section"
+                style={[
+                  styles.sectionCard,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.cardBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                  {t('settings.backupSection')}
+                </Text>
+
+                {backupNotice ? (
+                  <Text
+                    testID="settings-backup-notice"
+                    accessibilityRole="alert"
+                    accessibilityLiveRegion="polite"
+                    style={[styles.inlineSuccessText, { color: theme.colors.success }]}
+                  >
+                    {backupNotice}
+                  </Text>
+                ) : null}
+
+                {backupError ? (
+                  <Text
+                    testID="settings-backup-error"
+                    accessibilityRole="alert"
+                    accessibilityLiveRegion="polite"
+                    style={[styles.inlineErrorText, { color: theme.colors.danger }]}
+                  >
+                    {backupError}
+                  </Text>
+                ) : null}
+
+                <TouchableOpacity
+                  testID="settings-export-backup-btn"
+                  style={[
+                    styles.secondaryActionBtn,
+                    secondaryBtnSurface,
+                    isExportingBackup && styles.btnDisabled,
+                  ]}
+                  onPress={handleExportBackup}
+                  disabled={isExportingBackup || isImportingBackup}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.secondaryActionText, { color: theme.colors.text }]}>
+                    {t('settings.exportBackupBtn')}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  testID="settings-import-backup-btn"
+                  style={[styles.secondaryActionBtn, secondaryBtnSurface]}
+                  onPress={() => {
+                    safeHaptics.selection();
+                    setBackupError(null);
+                    setShowImportPanel((prev) => !prev);
+                  }}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: showImportPanel }}
+                >
+                  <Text style={[styles.secondaryActionText, { color: theme.colors.text }]}>
+                    {t('settings.importBackupBtn')}
+                  </Text>
+                </TouchableOpacity>
+
+                {showImportPanel && (
+                  <View
+                    testID="settings-import-panel"
+                    style={[
+                      styles.importPanel,
+                      {
+                        borderTopColor: theme.colors.cardBorder,
+                      },
+                    ]}
+                  >
+                    <View style={styles.presetChipsRow}>
+                      {(
+                        [
+                          { key: 'merge', label: t('settings.importModeMerge') },
+                          { key: 'replace', label: t('settings.importModeReplace') },
+                        ] as const
+                      ).map((opt) => {
+                        const selected = importMode === opt.key;
+                        return (
+                          <TouchableOpacity
+                            key={opt.key}
+                            testID={`settings-import-mode-${opt.key}`}
+                            style={[
+                              styles.presetChip,
+                              selected
+                                ? {
+                                    backgroundColor: theme.colors.accent,
+                                    borderColor: theme.colors.accent,
+                                  }
+                                : secondaryBtnSurface,
+                            ]}
+                            onPress={() => {
+                              safeHaptics.selection();
+                              setImportMode(opt.key);
+                            }}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected }}
+                          >
+                            <Text
+                              style={[
+                                styles.presetChipText,
+                                {
+                                  color: selected ? '#FFFFFF' : theme.colors.textSecondary,
+                                  fontWeight: selected ? '700' : '500',
+                                },
+                              ]}
+                            >
+                              {opt.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {isNativeFileImportAvailable() && (
+                      <TouchableOpacity
+                        testID="settings-import-pick-file-btn"
+                        style={[
+                          styles.primaryActionBtn,
+                          { backgroundColor: theme.colors.accent },
+                          isImportingBackup && styles.btnDisabled,
+                        ]}
+                        onPress={handlePickBackupFile}
+                        disabled={isImportingBackup}
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.primaryActionBtnText}>
+                          {t('settings.importPickFileBtn')}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <Text
+                      style={[
+                        styles.sectionLabel,
+                        { color: theme.colors.textSecondary, marginTop: 12, marginBottom: 6 },
+                      ]}
+                    >
+                      {isNativeFileImportAvailable()
+                        ? t('settings.importPasteLabel')
+                        : t('settings.importPasteOnlyLabel')}
+                    </Text>
+                    <TextInput
+                      testID="settings-import-json-input"
+                      accessibilityLabel={t('settings.importPasteOnlyLabel')}
+                      style={[
+                        styles.importJsonInput,
+                        {
+                          backgroundColor: theme.colors.inputBg,
+                          borderColor: theme.colors.borderStrong,
+                          color: theme.colors.text,
+                        },
+                      ]}
+                      placeholder={t('settings.importPastePlaceholder')}
+                      placeholderTextColor={theme.colors.placeholder}
+                      value={importJsonText}
+                      onChangeText={setImportJsonText}
+                      multiline
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      textAlignVertical="top"
+                    />
+                    <View style={styles.confirmBannerActions}>
+                      <TouchableOpacity
+                        testID="settings-import-cancel-btn"
+                        style={[styles.confirmCancelBtn, secondaryBtnSurface]}
+                        onPress={() => {
+                          setShowImportPanel(false);
+                          setImportJsonText('');
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
+                          {t('common.cancel')}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="settings-import-apply-btn"
+                        style={[
+                          styles.confirmProceedBtn,
+                          { backgroundColor: theme.colors.accent },
+                          (!importJsonText.trim() || isImportingBackup) && styles.btnDisabled,
+                        ]}
+                        disabled={!importJsonText.trim() || isImportingBackup}
+                        onPress={() => applyImportedJsonString(importJsonText)}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.confirmProceedBtnText}>
+                          {t('settings.importApplyBtn')}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Sync & Server Actions */}
+            {!isLocalMode && (
             <View
               style={[
                 styles.sectionCard,
@@ -1262,8 +1746,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
               </TouchableOpacity>
             </View>
+            )}
 
-            {/* Logout Action */}
+            {/* Logout / Erase Local Data Action */}
             {onLogout && (
               <TouchableOpacity
                 testID="settings-logout-btn"
@@ -1283,7 +1768,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 accessibilityRole="button"
               >
                 <Text style={[styles.logoutBtnText, { color: theme.colors.danger }]}>
-                  {t('settings.logOut')}
+                  {isLocalMode ? t('settings.eraseLocalDataBtn') : t('settings.logOut')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -1298,6 +1783,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </Text>
             </View>
           </ScrollView>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </View>
     </Modal>
@@ -1393,6 +1879,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
     paddingVertical: 8,
   },
   infoLabel: {
@@ -1402,11 +1889,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     maxWidth: '70%',
+    flexShrink: 1,
+    textAlign: 'right',
   },
   inlineErrorText: {
     fontSize: 12,
     fontWeight: '600',
     marginTop: 6,
+  },
+  inlineSuccessText: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  importPanel: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  importJsonInput: {
+    minHeight: 88,
+    maxHeight: 160,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    marginBottom: 10,
   },
   settingRow: {
     flexDirection: 'row',
@@ -1529,6 +2038,7 @@ const styles = StyleSheet.create({
   presetChip: {
     flex: 1,
     paddingVertical: 6,
+    paddingHorizontal: 6,
     borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',
@@ -1536,6 +2046,7 @@ const styles = StyleSheet.create({
   },
   presetChipText: {
     fontSize: 11,
+    textAlign: 'center',
   },
   hiddenAutomation: {
     width: 0,

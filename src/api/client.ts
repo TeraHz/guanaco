@@ -18,6 +18,7 @@ import {
   User,
 } from '../types/vikunja';
 import { isPersonalApiToken } from '../utils/biometrics';
+import { isZeroDate } from '../utils/dates';
 import { APP_NAME, APP_VERSION } from '../constants/version';
 import { t } from '../i18n';
 
@@ -1312,12 +1313,41 @@ export class VikunjaClient {
     return allTasks;
   }
 
+  private sanitizePayloadReminders(payload: Record<string, any>, isCreate: boolean): void {
+    if (!Array.isArray(payload.reminders)) return;
+    payload.reminders = payload.reminders
+      .map((r: any) => {
+        if (!r || typeof r !== 'object') return null;
+        const relTo =
+          r.relative_to === 'due_date' ||
+          r.relative_to === 'start_date' ||
+          r.relative_to === 'end_date'
+            ? r.relative_to
+            : '';
+        if (relTo) {
+          const val = payload[relTo];
+          const anchorMissing = isCreate
+            ? !val || isZeroDate(val)
+            : val === null || val === '' || isZeroDate(val);
+          if (anchorMissing) {
+            return null;
+          }
+        }
+        return r;
+      })
+      .filter(Boolean);
+    if (isCreate && payload.reminders.length === 0) {
+      delete payload.reminders;
+    }
+  }
+
   public async createTask(projectId: number, data: CreateTaskInput): Promise<Task> {
     const payload: any = { ...data };
     delete payload.related_tasks;
     if (payload.color !== undefined && payload.hex_color === undefined) {
       payload.hex_color = payload.color;
     }
+    this.sanitizePayloadReminders(payload, true);
     if (Array.isArray(payload.labels)) {
       payload.labels = payload.labels.filter((l: Label) => l && l.id > 0);
       if (payload.labels.length === 0) delete payload.labels;
@@ -1345,6 +1375,7 @@ export class VikunjaClient {
     if (payload.color !== undefined && payload.hex_color === undefined) {
       payload.hex_color = payload.color;
     }
+    this.sanitizePayloadReminders(payload, false);
     if (Array.isArray(payload.labels)) {
       payload.labels = payload.labels.filter((l: Label) => l && l.id > 0);
     }

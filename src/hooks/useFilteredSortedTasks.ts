@@ -25,6 +25,7 @@ export interface UseFilteredSortedTasksParams {
   searchAllLists?: boolean;
   minPriority?: number;
   dueFilter?: DueFilterType;
+  isLocalMode?: boolean;
 }
 
 export interface UseFilteredSortedTasksResult {
@@ -55,6 +56,7 @@ export function useFilteredSortedTasks({
   searchAllLists = false,
   minPriority = 0,
   dueFilter = 'all',
+  isLocalMode = false,
 }: UseFilteredSortedTasksParams): UseFilteredSortedTasksResult {
   const { t, locale } = useTranslation();
   const safePositiveProjects = useMemo(
@@ -63,17 +65,17 @@ export function useFilteredSortedTasks({
   );
   const savedFilterProjects = useMemo(
     () =>
-      Array.isArray(projects)
+      !isLocalMode && Array.isArray(projects)
         ? projects.filter(
             (p) => p && (p.is_saved_filter || (p.id < 0 && p.id !== MY_TASKS_PROJECT_ID))
           )
         : [],
-    [projects]
+    [projects, isLocalMode]
   );
   const safeTasks = useMemo(() => (Array.isArray(tasks) ? tasks.filter(Boolean) : []), [tasks]);
 
   const isAllTasksView = selectedProjectId === null;
-  const isMyTasksView = selectedProjectId === MY_TASKS_PROJECT_ID;
+  const isMyTasksView = !isLocalMode && selectedProjectId === MY_TASKS_PROJECT_ID;
   const matchedSavedFilter = useMemo(
     () =>
       selectedProjectId !== null && selectedProjectId < 0 && !isMyTasksView

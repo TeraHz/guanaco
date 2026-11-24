@@ -10,6 +10,17 @@ export const TASK_REMINDER_CATEGORY = 'GUANACO_TASK_REMINDER';
 export const NOTIF_ACTION_MARK_DONE = 'MARK_DONE';
 export const NOTIF_ACTION_SNOOZE_15M = 'SNOOZE_15M';
 
+const MAX_SCHEDULED_NOTIFICATIONS_IOS = 60;
+const MAX_SCHEDULED_NOTIFICATIONS_ANDROID = 240;
+
+export function buildTaskOccurrenceAnchor(task: Pick<Task, 'due_date' | 'start_date' | 'updated'>): string | null {
+  return (
+    normalizeVikunjaDate(task.due_date) ||
+    normalizeVikunjaDate(task.start_date) ||
+    (typeof task.updated === 'string' && task.updated.trim() ? task.updated.trim() : null)
+  );
+}
+
 let notifChain: Promise<void> = Promise.resolve();
 
 function serializeNotificationOp<T>(fn: () => Promise<T>): Promise<T> {
@@ -106,26 +117,30 @@ async function scheduleUpcomingForTask(
   upcoming: { index: number; reminder: TaskReminder; triggerDate: Date }[]
 ): Promise<void> {
   const normalizedTaskDue = normalizeVikunjaDate(task.due_date);
+  const occurrenceAnchor = buildTaskOccurrenceAnchor(task);
   for (const { index, reminder, triggerDate } of upcoming) {
     const description = formatReminderDescription(reminder);
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: task.title,
-        body: t('notifications.reminderBody', { description }),
-        categoryIdentifier: TASK_REMINDER_CATEGORY,
-        data: {
-          taskId: task.id,
-          reminderIndex: index,
-          taskDueDate: normalizedTaskDue,
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: task.title,
+          body: t('notifications.reminderBody', { description }),
+          categoryIdentifier: TASK_REMINDER_CATEGORY,
+          data: {
+            taskId: task.id,
+            reminderIndex: index,
+            taskDueDate: normalizedTaskDue,
+            occurrenceAnchor,
+          },
+          sound: 'default',
+          ...(Platform.OS === 'android' ? { channelId: REMINDER_CHANNEL_ID } : {}),
         },
-        sound: 'default',
-        ...(Platform.OS === 'android' ? { channelId: REMINDER_CHANNEL_ID } : {}),
-      },
-      trigger: {
-        type: (Notifications.SchedulableTriggerInputTypes?.DATE ?? 'date') as any,
-        date: triggerDate,
-      },
-    });
+        trigger: {
+          type: (Notifications.SchedulableTriggerInputTypes?.DATE ?? 'date') as any,
+          date: triggerDate,
+        },
+      });
+    } catch (_) {}
   }
 }
 
@@ -191,6 +206,7 @@ export async function scheduleSnoozedReminder(task: Task, minutes = 15): Promise
           taskId: task.id,
           reminderIndex: -1,
           taskDueDate: normalizeVikunjaDate(task.due_date),
+          occurrenceAnchor: buildTaskOccurrenceAnchor(task),
         },
         sound: 'default',
         ...(Platform.OS === 'android' ? { channelId: REMINDER_CHANNEL_ID } : {}),
@@ -208,6 +224,20 @@ export async function cancelTaskReminders(taskId: number): Promise<void> {
   return serializeNotificationOp(() => cancelTaskRemindersInternal(taskId));
 }
 
+export async function clearAllNotifications(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  return serializeNotificationOp(async () => {
+    try {
+      await Notifications.cancelAllScheduledNotificationsAsync();
+    } catch (_) {}
+    try {
+      if (typeof Notifications.dismissAllNotificationsAsync === 'function') {
+        await Notifications.dismissAllNotificationsAsync();
+      }
+    } catch (_) {}
+  });
+}
+
 export async function syncAllTaskReminders(tasks: Task[]): Promise<void> {
   if (Platform.OS === 'web') return;
   return serializeNotificationOp(async () => {
@@ -215,51 +245,81 @@ export async function syncAllTaskReminders(tasks: Task[]): Promise<void> {
       await Notifications.cancelAllScheduledNotificationsAsync();
 
       const nowMs = Date.now();
-      const tasksToSchedule: {
+      const flatTriggers: {
         task: Task;
-        upcoming: { index: number; reminder: TaskReminder; triggerDate: Date }[];
+        index: number;
+        reminder: TaskReminder;
+        triggerDate: Date;
       }[] = [];
 
       for (const task of tasks) {
         if (!task.done && task.reminders && task.reminders.length > 0) {
           const upcoming = collectFutureReminders(task, nowMs);
-          if (upcoming.length > 0) {
-            tasksToSchedule.push({ task, upcoming });
+          for (const item of upcoming) {
+            flatTriggers.push({
+              task,
+              index: item.index,
+              reminder: item.reminder,
+              triggerDate: item.triggerDate,
+            });
           }
         }
       }
 
-      if (tasksToSchedule.length === 0) return;
+      if (flatTriggers.length === 0) return;
 
       const granted = await requestNotificationPermissions();
       if (!granted) return;
 
-      for (const { task, upcoming } of tasksToSchedule) {
-        await scheduleUpcomingForTask(task, upcoming);
+      const maxBudget =
+        Platform.OS === 'ios'
+          ? MAX_SCHEDULED_NOTIFICATIONS_IOS
+          : MAX_SCHEDULED_NOTIFICATIONS_ANDROID;
+
+      const capped =
+        flatTriggers.length > maxBudget
+          ? [...flatTriggers]
+              .sort((a, b) => a.triggerDate.getTime() - b.triggerDate.getTime())
+              .slice(0, maxBudget)
+          : flatTriggers;
+
+      for (const { task, index, reminder, triggerDate } of capped) {
+        await scheduleUpcomingForTask(task, [{ index, reminder, triggerDate }]);
       }
     } catch (_) {}
   });
 }
 
 /**
- * Idempotency guard for `MARK_DONE` notification action:
- * Prevents double-completing a recurring task if the user already completed that occurrence in-app
- * (advancing `task.due_date` to the next cycle while the older notification remained in the tray).
+ * Idempotency guard for `MARK_DONE` and `SNOOZE_15M` notification actions:
+ * Prevents double-completing or re-snoozing a recurring task if the user already completed that occurrence
+ * (advancing `due_date`, `start_date`, or `updated` while an older notification remained in the tray).
  */
 export function shouldCompleteTaskFromNotification(
   task: Task | null | undefined,
-  notifData?: { taskId?: number; taskDueDate?: string | null } | null
+  notifData?: {
+    taskId?: number;
+    taskDueDate?: string | null;
+    occurrenceAnchor?: string | null;
+  } | null
 ): boolean {
   if (!task || task.done) return false;
 
   const isRecurring = Boolean(
     (task.repeat_after && task.repeat_after > 0) || task.repeat_mode === RepeatMode.Monthly
   );
-  if (isRecurring && notifData?.taskDueDate) {
-    const currentDue = normalizeVikunjaDate(task.due_date);
-    const notifDue = normalizeVikunjaDate(notifData.taskDueDate);
-    if (notifDue && currentDue !== notifDue) {
-      return false;
+  if (isRecurring) {
+    if (notifData?.taskDueDate) {
+      const currentDue = normalizeVikunjaDate(task.due_date);
+      const notifDue = normalizeVikunjaDate(notifData.taskDueDate);
+      if (notifDue && currentDue !== notifDue) {
+        return false;
+      }
+    } else if (notifData?.occurrenceAnchor) {
+      const currentAnchor = buildTaskOccurrenceAnchor(task);
+      if (currentAnchor && currentAnchor !== notifData.occurrenceAnchor) {
+        return false;
+      }
     }
   }
 

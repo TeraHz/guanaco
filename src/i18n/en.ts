@@ -50,6 +50,19 @@ export const en = {
   'auth.unencryptedHttpBody': '{url} sends credentials unencrypted.',
   'auth.useHttps': 'Use HTTPS',
   'auth.insecureHttpError': 'Insecure HTTP connection requires explicit confirmation.',
+  'auth.orDivider': 'OR',
+  'auth.useOfflineBtn': 'Use Offline on This Device',
+  'auth.useOfflineSub': 'No server or account needed. Connect a Vikunja server anytime.',
+  'auth.connectServerHeading': 'Connect a Vikunja Server',
+  'auth.migrationSectionLabel': 'LOCAL DATA ON THIS DEVICE',
+  'auth.migrationSummary': '{lists} list(s) and {tasks} task(s) stored on this device.',
+  'auth.migrationKeepUpload': 'Upload local tasks to server',
+  'auth.migrationStartFresh': 'Replace with server data',
+  'auth.migratingProgress': 'Syncing local tasks...',
+
+  // Standalone Local Mode
+  'local.starterTasksList': 'Tasks',
+  'local.starterGroceriesList': 'Groceries',
 
   // URL Validation Errors
   'urlError.required': 'Server URL is required',
@@ -110,6 +123,7 @@ export const en = {
   'listEditor.parentListLabel': 'PARENT LIST',
   'listEditor.favoriteList': 'Favorite List',
   'listEditor.duplicateList': 'Duplicate List',
+  'listEditor.copyTitle': '{title} (Copy)',
   'listEditor.saveChanges': 'Save Changes',
   'listEditor.createList': 'Create List',
   'listEditor.closeA11y': 'Close list editor',
@@ -167,6 +181,7 @@ export const en = {
   'tasks.searchCloseA11y': 'Close search',
   'tasks.searchClearA11y': 'Clear search text',
   'tasks.searchAllPlaceholder': 'Search all lists, notes, #labels, @users...',
+  'tasks.searchAllLocalPlaceholder': 'Search all lists, notes, #labels...',
   'tasks.searchInListPlaceholder': 'Search in {title}...',
   'tasks.searchInListFallback': 'Search in list...',
   'tasks.scopeAllLists': 'All Lists',
@@ -474,6 +489,49 @@ export const en = {
   'settings.logoutConfirmPending':
     'You have {count} unsynced offline change(s). Logging out now will permanently discard them. Log out anyway?',
   'settings.logoutBannerConfirm': 'Discard {count} unsynced change(s) and log out?',
+  'settings.storageMode': 'Storage',
+  'settings.localModeBadge': 'On-Device Only',
+  'settings.localModeHint':
+    'Your lists and tasks are stored privately on this device. Export a backup before switching phones.',
+  'settings.connectServerBtn': 'Connect a Vikunja Server',
+  'settings.backupSection': 'BACKUP & RESTORE',
+  'settings.exportBackupBtn': 'Export Backup (JSON)',
+  'settings.importBackupBtn': 'Import Backup (JSON)',
+  'settings.backupExportedDone': '✓ Backup exported',
+  'settings.backupExportError': 'Failed to export backup.',
+  'settings.backupImportedDone': '✓ Restored {tasks} task(s) across {lists} list(s)',
+  'settings.importModalTitle': 'Import Backup',
+  'settings.importModeMerge': 'Merge with current lists',
+  'settings.importModeReplace': 'Replace all local data',
+  'settings.importPickFileBtn': 'Choose .json Backup File',
+  'settings.importPasteLabel': 'OR PASTE BACKUP JSON',
+  'settings.importPasteOnlyLabel': 'PASTE BACKUP JSON',
+  'settings.importPastePlaceholder': 'Paste guanaco-backup JSON here...',
+  'settings.importApplyBtn': 'Import Backup',
+  'settings.importReplaceTitle': 'Replace Local Data?',
+  'settings.importReplaceConfirm':
+    'Importing in Replace mode will permanently overwrite your current on-device lists and tasks. Continue?',
+  'settings.importReplaceBannerConfirm':
+    'Overwrite all current local lists and tasks with this backup?',
+  'settings.backupReadError': 'Failed to read backup file.',
+  'settings.backupInvalidError': 'Invalid backup file.',
+  'settings.eraseLocalDataBtn': 'Erase Local Data & Exit',
+  'settings.eraseLocalTitle': 'Erase On-Device Data?',
+  'settings.eraseLocalConfirmMessage':
+    'All on-device lists and tasks will be permanently deleted from this device. Export a JSON backup first if you want to keep a copy.',
+  'settings.eraseLocalBannerConfirm': 'Permanently erase all on-device lists and tasks?',
+  'settings.eraseBtn': 'Erase Data',
+
+  // Backup Validation Errors
+  'backupError.empty': 'Backup file is empty.',
+  'backupError.tooLarge': 'Backup file exceeds the 10 MB safety limit.',
+  'backupError.tooDeep': 'Backup JSON exceeds maximum nesting depth.',
+  'backupError.invalidJson': 'Invalid JSON format in backup file.',
+  'backupError.invalidRoot': 'Invalid backup root structure.',
+  'backupError.unrecognizedFormat': 'Unrecognized backup format.',
+  'backupError.unsupportedVersion': 'Unsupported backup version: {version}',
+  'backupError.missingArrays': 'Backup must contain "projects" and "tasks" arrays.',
+  'backupError.tooManyItems': 'Backup exceeds maximum supported item count.',
 
   // Store Sync Errors
   'store.connectionLostRenewing': 'Connection lost while renewing session. Offline changes are safe.',
