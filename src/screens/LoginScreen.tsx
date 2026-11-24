@@ -101,7 +101,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     if (!onBiometricUnlock) return;
     setErrorMessage(null);
     try {
-      const passed = await authenticateWithBiometrics('Unlock Guanaco');
+      const passed = await authenticateWithBiometrics('Unlock Guanaco', { forceReset: true });
       if (passed) {
         setLoading(true);
         await onBiometricUnlock();

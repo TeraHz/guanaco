@@ -682,4 +682,82 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
       rctNetworking.clearCookies = origClearCookies;
     }
   });
+
+  it('recovers when screen-wake auto-prompt hangs or Android keyguard is still locked so manual Unlock triggers biometrics cleanly', async () => {
+    const { NativeModules, Platform } = require('react-native');
+    const origOS = Platform.OS;
+    (Platform as any).OS = 'android';
+
+    let changeHandler: ((state: AppStateStatus) => void) | null = null;
+    let focusHandler: (() => void) | null = null;
+    const origImpl = (AppState.addEventListener as jest.Mock)?.getMockImplementation?.();
+    const addListenerSpy = jest
+      .spyOn(AppState, 'addEventListener')
+      .mockImplementation((type: any, listener: any) => {
+        if (type === 'change') changeHandler = listener;
+        if (type === 'focus') focusHandler = listener;
+        return { remove: jest.fn() } as any;
+      });
+
+    const baseNow = Date.now();
+    const nowSpy = jest.spyOn(Date, 'now');
+
+    try {
+      await setStoredAuth('stored-valid-token', 'https://try.vikunja.io', 'alice');
+      await setBiometricEnabled(true);
+
+      // Cold start unlock passes
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+      const { findByText, findByTestId, queryByTestId } = render(<App />);
+      expect(await findByText('Main Project')).toBeTruthy();
+
+      // Case A: Screen wakes while Android Keyguard is still locked -> locks UI immediately WITHOUT premature authenticateAsync
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockClear();
+      nowSpy.mockReturnValue(baseNow);
+      await act(async () => {
+        changeHandler!('background');
+      });
+
+      (NativeModules.InAppUpdate.isActivityReadyForBiometrics as jest.Mock).mockResolvedValueOnce(
+        false
+      );
+      nowSpy.mockReturnValue(baseNow + BIOMETRIC_LOCK_GRACE_MS + 2_000);
+      await act(async () => {
+        changeHandler!('active');
+      });
+
+      expect(await findByTestId('biometric-lock-screen')).toBeTruthy();
+      expect(LocalAuthentication.authenticateAsync).not.toHaveBeenCalled();
+
+      // User unlocks OS lockscreen -> window focus event triggers biometric prompt, which hangs (simulating dropped AndroidX fragment callback)
+      (NativeModules.InAppUpdate.isActivityReadyForBiometrics as jest.Mock).mockResolvedValue(true);
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockImplementationOnce(
+        () => new Promise(() => {}) // never resolves!
+      );
+      await act(async () => {
+        focusHandler?.();
+      });
+      expect(LocalAuthentication.authenticateAsync).toHaveBeenCalledTimes(1);
+
+      // Case B: User taps "Unlock" while previous prompt promise hung -> cancels hung prompt, triggers fresh biometric dialog, and unlocks!
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+      await act(async () => {
+        fireEvent.press(await findByTestId('login-biometric-btn'));
+      });
+
+      await waitFor(() => {
+        expect(LocalAuthentication.cancelAuthenticate).toHaveBeenCalled();
+        expect(LocalAuthentication.authenticateAsync).toHaveBeenCalledTimes(2);
+        expect(queryByTestId('biometric-lock-screen') === null).toBe(true);
+        expect(queryByTestId('lock-error-banner')).toBeNull();
+      });
+    } finally {
+      (Platform as any).OS = origOS;
+      nowSpy.mockRestore();
+      addListenerSpy.mockRestore();
+      if (origImpl && jest.isMockFunction(AppState.addEventListener)) {
+        (AppState.addEventListener as jest.Mock).mockImplementation(origImpl);
+      }
+    }
+  });
 });

@@ -31,6 +31,8 @@ import {
   checkBiometricAvailable,
   isBiometricEnabled,
   authenticateWithBiometrics,
+  cancelBiometricPrompt,
+  isAndroidActivityReadyForBiometrics,
   isPersonalApiToken,
 } from './utils/biometrics';
 import * as Notifications from 'expo-notifications';
@@ -67,6 +69,8 @@ export default function App() {
 
   const backgroundedAtRef = useRef<number | null>(null);
   const biometricPromptInFlightRef = useRef(false);
+  const biometricAttemptSeqRef = useRef(0);
+  const needsAutoUnlockPromptRef = useRef(false);
   const isConnectingRef = useRef(false);
   const isLockedRef = useRef(isLocked);
   isLockedRef.current = isLocked;
@@ -144,15 +148,26 @@ export default function App() {
     };
   }, []);
 
-  const promptBiometricUnlock = useCallback(async (): Promise<boolean> => {
-    if (biometricPromptInFlightRef.current) return false;
-    biometricPromptInFlightRef.current = true;
-    try {
-      return await authenticateWithBiometrics('Unlock Guanaco');
-    } finally {
-      biometricPromptInFlightRef.current = false;
-    }
-  }, []);
+  const promptBiometricUnlock = useCallback(
+    async (options?: { forceReset?: boolean }): Promise<boolean> => {
+      if (biometricPromptInFlightRef.current && !options?.forceReset) {
+        return false;
+      }
+      const hadInFlight = biometricPromptInFlightRef.current;
+      const seq = ++biometricAttemptSeqRef.current;
+      biometricPromptInFlightRef.current = true;
+      try {
+        return await authenticateWithBiometrics('Unlock Guanaco', {
+          forceReset: Boolean(options?.forceReset || hadInFlight),
+        });
+      } finally {
+        if (biometricAttemptSeqRef.current === seq) {
+          biometricPromptInFlightRef.current = false;
+        }
+      }
+    },
+    []
+  );
 
   const unlockOfflineSession = useCallback(
     async (sessionOverride?: {
@@ -217,7 +232,16 @@ export default function App() {
         };
         setPendingStoredSession(sessionData);
         setLockError(null);
+        isLockedRef.current = true;
         setIsLocked(true);
+
+        const readyForPrompt = await isAndroidActivityReadyForBiometrics();
+        if (!mounted) return;
+        if (!readyForPrompt) {
+          // Device Keyguard is still locked — defer auto-prompt until Android window focus arrives
+          needsAutoUnlockPromptRef.current = true;
+          return;
+        }
 
         const passed = await promptBiometricUnlock();
         if (!mounted) return;
@@ -230,6 +254,7 @@ export default function App() {
         if (!mounted) return;
         setPendingStoredSession(null);
         setIsAuthenticated(true);
+        isLockedRef.current = false;
         setIsLocked(false);
         syncAll().catch(() => {});
         return;
@@ -247,6 +272,31 @@ export default function App() {
       mounted = false;
     };
   }, [initialize, promptBiometricUnlock, syncAll]);
+
+  // On Android, when the screen wakes behind a locked Keyguard, defer auto-prompt until window focus arrives
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const focusSub = AppState.addEventListener('focus', () => {
+      if (!isLockedRef.current || !needsAutoUnlockPromptRef.current) return;
+
+      (async () => {
+        const ready = await isAndroidActivityReadyForBiometrics();
+        if (!ready || !isLockedRef.current || !needsAutoUnlockPromptRef.current) return;
+        needsAutoUnlockPromptRef.current = false;
+
+        const passed = await promptBiometricUnlock();
+        if (!passed) return;
+
+        isLockedRef.current = false;
+        await unlockOfflineSession();
+      })().catch(() => {});
+    });
+
+    return () => {
+      focusSub?.remove?.();
+    };
+  }, [promptBiometricUnlock, unlockOfflineSession]);
 
   // Resume-aware biometric lock (grace period) + bi-directional foreground sync
   useEffect(() => {
@@ -276,8 +326,13 @@ export default function App() {
 
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'background') {
-        if (!biometricPromptInFlightRef.current && backgroundedAtRef.current === null) {
+        if (backgroundedAtRef.current === null) {
           backgroundedAtRef.current = Date.now();
+        }
+        if (biometricPromptInFlightRef.current) {
+          biometricAttemptSeqRef.current += 1;
+          biometricPromptInFlightRef.current = false;
+          cancelBiometricPrompt().catch(() => {});
         }
         stopPolling();
         return;
@@ -299,6 +354,14 @@ export default function App() {
               setIsLocked(true);
               setIsDrawerOpen(false);
               stopPolling();
+
+              const readyNow = await isAndroidActivityReadyForBiometrics();
+              if (!readyNow) {
+                needsAutoUnlockPromptRef.current = true;
+                return;
+              }
+
+              needsAutoUnlockPromptRef.current = false;
               const passed = await promptBiometricUnlock();
               if (!passed) {
                 return;
@@ -540,10 +603,12 @@ export default function App() {
   };
 
   const handleManualLockUnlock = async () => {
+    needsAutoUnlockPromptRef.current = false;
     setLockError(null);
     setPendingLockLogoutCount(null);
-    const passed = await promptBiometricUnlock();
+    const passed = await promptBiometricUnlock({ forceReset: true });
     if (passed) {
+      isLockedRef.current = false;
       await unlockOfflineSession();
     } else {
       setLockError('Authentication failed. Try again.');

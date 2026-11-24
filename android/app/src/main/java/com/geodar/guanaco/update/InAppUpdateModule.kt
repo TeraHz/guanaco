@@ -1,9 +1,12 @@
 package com.geodar.guanaco.update
 
 import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import androidx.fragment.app.FragmentActivity
 import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -347,6 +350,50 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                 promise.resolve(true)
             } catch (err: Exception) {
                 promise.reject("OPEN_PLAY_STORE_FAILED", err.message ?: "Failed to open Play Store", err)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun isActivityReadyForBiometrics(promise: Promise) {
+        reactContext.runOnUiQueueThread {
+            try {
+                val km = reactContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                if (km?.isKeyguardLocked == true) {
+                    promise.resolve(false)
+                    return@runOnUiQueueThread
+                }
+                val act = reactContext.currentActivity
+                if (!isActivityUsable(act) || act == null || !act.hasWindowFocus()) {
+                    promise.resolve(false)
+                    return@runOnUiQueueThread
+                }
+                if (act is FragmentActivity && act.supportFragmentManager.isStateSaved) {
+                    promise.resolve(false)
+                    return@runOnUiQueueThread
+                }
+                promise.resolve(true)
+            } catch (_: Exception) {
+                promise.resolve(true)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun resetOrphanedBiometricFragment(promise: Promise) {
+        reactContext.runOnUiQueueThread {
+            try {
+                val act = reactContext.currentActivity as? FragmentActivity
+                if (act != null && !act.isFinishing && !act.isDestroyed) {
+                    val fm = act.supportFragmentManager
+                    val existing = fm.findFragmentByTag("androidx.biometric.BiometricFragment")
+                    if (existing != null) {
+                        fm.beginTransaction().remove(existing).commitNowAllowingStateLoss()
+                    }
+                }
+                promise.resolve(true)
+            } catch (_: Exception) {
+                promise.resolve(false)
             }
         }
     }

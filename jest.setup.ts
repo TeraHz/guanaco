@@ -33,6 +33,7 @@ jest.mock('expo-local-authentication', () => ({
   hasHardwareAsync: jest.fn().mockResolvedValue(true),
   isEnrolledAsync: jest.fn().mockResolvedValue(true),
   authenticateAsync: jest.fn().mockResolvedValue({ success: true }),
+  cancelAuthenticate: jest.fn().mockResolvedValue(undefined),
   supportedAuthenticationTypesAsync: jest.fn().mockResolvedValue([1, 2]),
   AuthenticationType: {
     FINGERPRINT: 1,
@@ -243,6 +244,7 @@ NativeModules.InAppUpdate = {
   startUpdateFlow: jest.fn().mockResolvedValue({ status: 'accepted' }),
   completeUpdate: jest.fn().mockResolvedValue(true),
   openPlayStore: jest.fn().mockResolvedValue(true),
+  isActivityReadyForBiometrics: jest.fn().mockResolvedValue(true),
 };
 
 

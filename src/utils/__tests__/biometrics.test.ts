@@ -1,10 +1,11 @@
-import { Platform } from 'react-native';
+import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import {
   checkBiometricAvailable,
   authenticateWithBiometrics,
+  isAndroidActivityReadyForBiometrics,
   isBiometricEnabled,
   setBiometricEnabled,
   getStoredAuth,
@@ -70,6 +71,36 @@ describe('Biometrics & Auth Persistence', () => {
       (Platform as any).OS = 'web';
       expect(await checkBiometricAvailable()).toBe(false);
       expect(await authenticateWithBiometrics('Unlock Guanaco')).toBe(false);
+    });
+
+    it('cancels stale native prompt before authenticating when forceReset is true, and self-heals on app_cancel', async () => {
+      (Platform as any).OS = 'android';
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+
+      expect(await authenticateWithBiometrics('Unlock Guanaco', { forceReset: true })).toBe(true);
+      expect(LocalAuthentication.cancelAuthenticate).toHaveBeenCalledTimes(1);
+      expect(LocalAuthentication.authenticateAsync).toHaveBeenCalledTimes(1);
+
+      // Self-heal when native LocalAuthenticationModule.isAuthenticating was stuck and returned app_cancel
+      jest.clearAllMocks();
+      (LocalAuthentication.authenticateAsync as jest.Mock)
+        .mockResolvedValueOnce({ success: false, error: 'app_cancel' })
+        .mockResolvedValueOnce({ success: true });
+
+      expect(await authenticateWithBiometrics('Unlock Guanaco')).toBe(true);
+      expect(LocalAuthentication.cancelAuthenticate).toHaveBeenCalledTimes(1);
+      expect(LocalAuthentication.authenticateAsync).toHaveBeenCalledTimes(2);
+    });
+
+    it('checks native Android keyguard/window readiness via isAndroidActivityReadyForBiometrics', async () => {
+      (Platform as any).OS = 'android';
+      (NativeModules.InAppUpdate.isActivityReadyForBiometrics as jest.Mock).mockResolvedValueOnce(
+        false
+      );
+      expect(await isAndroidActivityReadyForBiometrics()).toBe(false);
+
+      (Platform as any).OS = 'ios';
+      expect(await isAndroidActivityReadyForBiometrics()).toBe(true);
     });
   });
 

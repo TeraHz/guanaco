@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
@@ -75,18 +75,77 @@ export async function checkBiometricAvailable(): Promise<boolean> {
   }
 }
 
+export interface AuthenticateBiometricsOptions {
+  /** Cancels any hung native BiometricPrompt / orphaned BiometricFragment before prompting. */
+  forceReset?: boolean;
+}
+
+/**
+ * Cancels any in-flight native biometric prompt and detaches any orphaned AndroidX BiometricFragment
+ * (for example if Android woke briefly behind a locked Keyguard and dropped the prompt callback).
+ */
+export async function cancelBiometricPrompt(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    if (typeof LocalAuthentication.cancelAuthenticate === 'function') {
+      await LocalAuthentication.cancelAuthenticate();
+    }
+  } catch (_) {}
+  if (Platform.OS === 'android') {
+    try {
+      const resetFn = NativeModules?.InAppUpdate?.resetOrphanedBiometricFragment;
+      if (typeof resetFn === 'function') {
+        await resetFn();
+      }
+    } catch (_) {}
+  }
+}
+
+/**
+ * Checks on Android whether the OS lockscreen (Keyguard) is unlocked, the Activity has window focus,
+ * and FragmentManager state is not saved — preventing BiometricPrompt from silently hanging on screen wake.
+ */
+export async function isAndroidActivityReadyForBiometrics(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  try {
+    const checkFn = NativeModules?.InAppUpdate?.isActivityReadyForBiometrics;
+    if (typeof checkFn === 'function') {
+      return Boolean(await checkFn());
+    }
+    return true;
+  } catch (_) {
+    return true;
+  }
+}
+
 export async function authenticateWithBiometrics(
-  reason = 'Unlock Guanaco'
+  reason = 'Unlock Guanaco',
+  options?: AuthenticateBiometricsOptions
 ): Promise<boolean> {
   if (Platform.OS === 'web') return false;
+  const promptConfig: LocalAuthentication.LocalAuthenticationOptions = {
+    promptMessage: reason,
+    fallbackLabel: 'Enter PIN / Password',
+    cancelLabel: 'Cancel',
+    disableDeviceFallback: false,
+  };
+
   try {
-    const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: reason,
-      fallbackLabel: 'Enter PIN / Password',
-      cancelLabel: 'Cancel',
-      disableDeviceFallback: false,
-    });
-    return result.success;
+    if (options?.forceReset) {
+      await cancelBiometricPrompt();
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
+    let result = await LocalAuthentication.authenticateAsync(promptConfig);
+
+    // Self-heal if Expo's native `isAuthenticating` flag was left stuck (`error: "app_cancel"`)
+    if (!result.success && (result as any).error === 'app_cancel') {
+      await cancelBiometricPrompt();
+      await new Promise((r) => setTimeout(r, 80));
+      result = await LocalAuthentication.authenticateAsync(promptConfig);
+    }
+
+    return Boolean(result?.success);
   } catch (_) {
     return false;
   }
