@@ -1,11 +1,11 @@
-# Guanaco — Mobile & Tablet App for Vikunja
+# Guanaco — Tasks, Lists & Reminders for Vikunja
 
 <p align="center">
   <img src="assets/icon.png" width="120" height="120" alt="Guanaco app icon" style="border-radius: 26px;" />
 </p>
 
 <p align="center">
-  <strong>A fast, private mobile and tablet app for <a href="https://vikunja.io/">Vikunja</a>.</strong>
+  <strong>A fast, private to-do list, grocery, and task manager for Android, iOS, and tablets — powered by <a href="https://vikunja.io/">Vikunja</a>.</strong>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 ---
 
-**Guanaco** brings your self-hosted or cloud **Vikunja** tasks to Android, iPhone, iPad, and tablets. It connects directly to your server, stays responsive even when you have no signal, and keeps your reminders and data strictly on your own devices.
+**Guanaco** is an offline-capable task, grocery list, and project manager for Android, iPhone, iPad, and tablets that connects directly to your self-hosted or cloud **[Vikunja](https://vikunja.io/)** task server. Check off errands, sort shopping lists by store aisle, break projects into subtasks, and get local reminders — with zero ads, trackers, or third-party cloud intermediaries.
 
 ---
 

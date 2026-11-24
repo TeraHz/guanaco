@@ -1,6 +1,6 @@
 # Guanaco User Manual
 
-**Guanaco** is a mobile and tablet app for [Vikunja](https://vikunja.io/). This guide covers connecting your account, organizing everyday tasks, setting reminders, and customizing how the app looks and behaves.
+**Guanaco** is a fast, offline-capable to-do list, grocery list, and task manager for phones and tablets that connects to your self-hosted or cloud [Vikunja](https://vikunja.io/) task server. This guide covers connecting your server, organizing everyday tasks and shopping lists, setting reminders, and customizing how the app looks and behaves.
 
 ---
 

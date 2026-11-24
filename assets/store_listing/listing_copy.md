@@ -2,25 +2,27 @@
 
 ## 1. App Name (Max 30 characters)
 ```
-Guanaco - Vikunja Client
+Guanaco: Vikunja Tasks & Lists
 ```
 
 ---
 
 ## 2. Short Description (Max 80 characters)
 ```
-Fast, private mobile & tablet app for Vikunja — works offline, zero tracking.
+Offline to-do lists, grocery sorting & reminders for your Vikunja task server.
 ```
-*(Length: 77 characters)*
+*(Length: 78 characters)*
 
 ---
 
 ## 3. Full Description (Max 4,000 characters)
 
 ```markdown
-Guanaco is a fast, private, open-source mobile and tablet app for Vikunja.
+Guanaco is a fast, private, open-source to-do list, grocery list, and task manager for phones and tablets, built for your self-hosted or cloud Vikunja task server.
 
-It connects directly to your self-hosted or cloud Vikunja server, works smoothly offline, and includes no ads, trackers, or third-party cloud services.
+Organize everyday errands, shared shopping lists, trip packing checklists, and home projects with subtasks, local reminders, and automatic supermarket aisle sorting — even when you have no signal, with zero ads or tracking.
+
+Note: Guanaco connects directly to an existing Vikunja server (self-hosted or Vikunja Cloud) and requires a server URL to sign in.
 
 Features:
 • Works Offline: View lists, check off groceries or errands, add tasks, and edit details without a signal — changes sync automatically once you reconnect.
@@ -33,9 +35,6 @@ Features:
 • Multilingual: Full interface, natural-language quick-add, and smart grocery aisle grouping in English, Bulgarian (Български), and Spanish (Español).
 • Built for Self-Hosting: Supports password + 2FA login, API tokens, custom home-server certificates on Android, and fingerprint / Face ID lock.
 
-Requirements:
-Requires a Vikunja server account (self-hosted or hosted).
-
 Open Source:
 Free and open-source software licensed under the GNU General Public License v3.0.
 Website: https://terahz.github.io/guanaco/
@@ -47,9 +46,9 @@ Source code: https://github.com/TeraHz/guanaco
 ## 4. Categorization & GitHub Search Settings
 - **Application Type**: App
 - **Category**: Productivity
-- **Play Store Tags**: Task manager, To-do list, Productivity, Self-hosted, Vikunja
+- **Play Store Tags**: Task manager, To-do list, Grocery list, Productivity, Self-hosted
 - **Recommended GitHub Repository About Description**:
-  `Fast, private mobile & tablet app for Vikunja — works offline on Android, iPhone, iPad, and tablets.`
+  `Fast, private offline to-do list, grocery & task manager for Android, iOS, and tablets — powered by Vikunja.`
 - **Recommended GitHub Website URL**:
   `https://terahz.github.io/guanaco/`
 - **Recommended GitHub Repository Topics**:
