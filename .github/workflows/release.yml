@@ -7,21 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       publish_github_release:
-        description: 'Attach APK + SHA256SUMS to a GitHub Release for the current version tag'
+        description: 'Attach APK + SHA256SUMS to the GitHub Release for the current version'
         required: false
         type: boolean
         default: false
-      play_store_track:
-        description: 'Optional Google Play track upload (requires PLAY_SERVICE_ACCOUNT_JSON secret)'
-        required: false
-        type: choice
-        default: 'none'
-        options:
-          - 'none'
-          - 'internal'
-          - 'alpha'
-          - 'beta'
-          - 'production'
 
 # Default to zero permissions across all jobs; grant minimal per-job scopes explicitly
 permissions: {}
@@ -82,7 +71,6 @@ jobs:
       contents: read
 
     outputs:
-      built: ${{ steps.signing_check.outputs.configured }}
       version: ${{ steps.meta.outputs.version }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       apk_filename: ${{ steps.meta.outputs.apk_filename }}
@@ -93,47 +81,36 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check Android signing secrets availability
-        id: signing_check
+      - name: Validate Android signing secrets are present
         env:
-          EVENT_NAME: ${{ github.event_name }}
           HAS_KEYSTORE_B64: ${{ secrets.GUANACO_KEYSTORE_BASE64 != '' }}
           HAS_KEYSTORE_PW: ${{ secrets.GUANACO_KEYSTORE_PASSWORD != '' }}
           HAS_KEY_ALIAS: ${{ secrets.GUANACO_KEY_ALIAS != '' }}
           HAS_KEY_PW: ${{ secrets.GUANACO_KEY_PASSWORD != '' }}
         run: |
-          if [ "$HAS_KEYSTORE_B64" = "true" ] && [ "$HAS_KEYSTORE_PW" = "true" ] && [ "$HAS_KEY_ALIAS" = "true" ] && [ "$HAS_KEY_PW" = "true" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "::error::Missing Android release signing secrets. Configure GUANACO_KEYSTORE_BASE64, GUANACO_KEYSTORE_PASSWORD, GUANACO_KEY_ALIAS, and GUANACO_KEY_PASSWORD under Repository Settings -> Secrets and variables -> Actions."
+          if [ "$HAS_KEYSTORE_B64" != "true" ] || [ "$HAS_KEYSTORE_PW" != "true" ] || [ "$HAS_KEY_ALIAS" != "true" ] || [ "$HAS_KEY_PW" != "true" ]; then
+            echo "::error::Missing Android release signing secrets (GUANACO_KEYSTORE_BASE64, GUANACO_KEYSTORE_PASSWORD, GUANACO_KEY_ALIAS, GUANACO_KEY_PASSWORD)."
             exit 1
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Android signing secrets are not configured yet in Repository Settings -> Secrets and variables -> Actions. Skipping binary packaging until secrets are added."
           fi
 
       - name: Set up Node.js
-        if: steps.signing_check.outputs.configured == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: 'npm'
 
       - name: Set up Temurin JDK 21
-        if: steps.signing_check.outputs.configured == 'true'
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: 'temurin'
           java-version: '21'
 
       - name: Set up Gradle with dependency caching
-        if: steps.signing_check.outputs.configured == 'true'
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           cache-read-only: false
 
       - name: Verify version consistency across manifest files and Git tag
-        if: steps.signing_check.outputs.configured == 'true'
         id: meta
         env:
           REF_TYPE: ${{ github.ref_type }}
@@ -174,11 +151,9 @@ jobs:
           '
 
       - name: Install locked npm dependencies
-        if: steps.signing_check.outputs.configured == 'true'
         run: npm ci
 
       - name: Materialize ephemeral signing keystore in isolated temp storage
-        if: steps.signing_check.outputs.configured == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.GUANACO_KEYSTORE_BASE64 }}
         run: |
@@ -188,24 +163,16 @@ jobs:
           chmod 600 "$KEYSTORE_TMP"
           echo "GUANACO_KEYSTORE_FILE=${KEYSTORE_TMP}" >> "$GITHUB_ENV"
 
-      - name: Build signed Android Release APK (and AAB when publishing to Play Store)
-        if: steps.signing_check.outputs.configured == 'true'
+      - name: Build signed Android Release APK
         env:
           EXPO_OFFLINE: '1'
-          PLAY_TRACK: ${{ inputs.play_store_track || 'none' }}
           GUANACO_KEYSTORE_PASSWORD: ${{ secrets.GUANACO_KEYSTORE_PASSWORD }}
           GUANACO_KEY_ALIAS: ${{ secrets.GUANACO_KEY_ALIAS }}
           GUANACO_KEY_PASSWORD: ${{ secrets.GUANACO_KEY_PASSWORD }}
         working-directory: android
-        run: |
-          if [ "$PLAY_TRACK" != "none" ]; then
-            ./gradlew --no-daemon --no-build-scan assembleRelease bundleRelease
-          else
-            ./gradlew --no-daemon --no-build-scan assembleRelease
-          fi
+        run: ./gradlew --no-daemon --no-build-scan assembleRelease
 
       - name: Audit compiled APK signature and zero-telemetry manifest guarantees
-        if: steps.signing_check.outputs.configured == 'true'
         env:
           APK_FILENAME: ${{ steps.meta.outputs.apk_filename }}
         run: |
@@ -215,9 +182,14 @@ jobs:
             exit 1
           fi
 
-          # Locate apksigner and apkanalyzer from preinstalled Android SDK
-          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
-          APKANALYZER="$(find "$ANDROID_HOME/cmdline-tools" -name apkanalyzer | sort -V | tail -n 1)"
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          APKSIGNER="$(find "$SDK_DIR/build-tools" -name apksigner 2>/dev/null | sort -V | tail -n 1)"
+          APKANALYZER="$(find "$SDK_DIR/cmdline-tools" -name apkanalyzer 2>/dev/null | sort -V | tail -n 1)"
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found under $SDK_DIR/build-tools"
+            exit 1
+          fi
 
           echo "Verifying APK v2/v3 cryptographic signature..."
           "$APKSIGNER" verify --verbose "$APK_RAW"
@@ -226,8 +198,8 @@ jobs:
             echo "Auditing merged release AndroidManifest.xml for privacy & zero-telemetry invariants..."
             MERGED_MANIFEST="$("$APKANALYZER" manifest print "$APK_RAW")"
 
-            echo "$MERGED_MANIFEST" | grep -q 'android:allowBackup="false"' || {
-              echo "::error::Privacy audit failed: android:allowBackup=\"false\" missing in release APK!"
+            echo "$MERGED_MANIFEST" | grep -Eq 'allowBackup="false"' || {
+              echo "::error::Privacy audit failed: allowBackup=\"false\" missing in release APK!"
               exit 1
             }
 
@@ -255,35 +227,15 @@ jobs:
             cat SHA256SUMS.txt
           )
 
-      - name: Optional upload to Google Play Console (private TLS channel only)
-        if: ${{ steps.signing_check.outputs.configured == 'true' && (inputs.play_store_track || 'none') != 'none' }}
-        env:
-          PLAY_TRACK: ${{ inputs.play_store_track }}
-          PLAY_SA_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-        run: |
-          if [ -z "$PLAY_SA_JSON" ]; then
-            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is required when play_store_track is set."
-            exit 1
-          fi
-          umask 077
-          SA_TMP="${RUNNER_TEMP}/play-service-account.json"
-          printf '%s' "$PLAY_SA_JSON" > "$SA_TMP"
-          chmod 600 "$SA_TMP"
-          PLAY_SERVICE_ACCOUNT_PATH="$SA_TMP" node scripts/publish-play-store.js \
-            --track "$PLAY_TRACK" \
-            --aab android/app/build/outputs/bundle/release/app-release.aab
-
-      - name: Shred ephemeral signing & service-account credentials
+      - name: Shred ephemeral signing keystore
         if: always()
         run: |
-          for SECRET_FILE in "${RUNNER_TEMP}/guanaco-release.keystore" "${RUNNER_TEMP}/play-service-account.json"; do
-            if [ -f "$SECRET_FILE" ]; then
-              shred -u "$SECRET_FILE" 2>/dev/null || rm -f "$SECRET_FILE"
-            fi
-          done
+          KEYSTORE_TMP="${RUNNER_TEMP}/guanaco-release.keystore"
+          if [ -f "$KEYSTORE_TMP" ]; then
+            shred -u "$KEYSTORE_TMP" 2>/dev/null || rm -f "$KEYSTORE_TMP"
+          fi
 
       - name: Upload verified public APK & SHA-256 checksum artifact
-        if: steps.signing_check.outputs.configured == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guanaco-android-release
@@ -296,7 +248,7 @@ jobs:
   publish-github-release:
     name: Attest Provenance & Publish GitHub Release
     needs: build-android
-    if: ${{ needs.build-android.outputs.built == 'true' && (github.ref_type == 'tag' || inputs.publish_github_release == true) }}
+    if: ${{ github.ref_type == 'tag' || inputs.publish_github_release == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -325,16 +277,15 @@ jobs:
         run: |
           CHECKSUM_LINE="$(cat release-dist/SHA256SUMS.txt)"
           NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
-          cat <<EOF > "$NOTES_FILE"
-          ### Direct Android Download
-          - **APK:** \`${APK_FILENAME}\` (signed universal \`arm64-v8a\` / \`armeabi-v7a\` build)
-          - **SHA-256:** \`${CHECKSUM_LINE}\`
-
-          Verify build provenance with the [GitHub CLI](https://cli.github.com/):
-          \`\`\`bash
-          gh attestation verify "${APK_FILENAME}" --repo "${REPO}"
-          \`\`\`
-          EOF
+          {
+            printf '%s\n' "### Direct Android Download"
+            printf '%s\n' "- **APK:** \`${APK_FILENAME}\` (signed universal \`arm64-v8a\` / \`armeabi-v7a\` build)"
+            printf '%s\n' "- **SHA-256:** \`${CHECKSUM_LINE}\`"
+            printf '\n%s\n' "Verify cryptographic build provenance with the [GitHub CLI](https://cli.github.com/):"
+            printf '%s\n' '```bash'
+            printf '%s\n' "gh attestation verify \"${APK_FILENAME}\" --repo \"${REPO}\""
+            printf '%s\n' '```'
+          } > "$NOTES_FILE"
 
           if gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" \
