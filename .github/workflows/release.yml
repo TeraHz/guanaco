@@ -184,7 +184,7 @@ jobs:
           export GUANACO_KEYSTORE_PASSWORD="$(printf '%s' "$KEYSTORE_PW_RAW" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           export GUANACO_KEY_ALIAS="$(printf '%s' "$KEY_ALIAS_RAW" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           export GUANACO_KEY_PASSWORD="$(printf '%s' "$KEY_PW_RAW" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-          ./gradlew --no-daemon --no-build-scan --stacktrace assembleRelease
+          ./gradlew --no-daemon --no-scan --stacktrace assembleRelease
 
       - name: Audit compiled APK signature and zero-telemetry manifest guarantees
         env:
