@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, act, cleanup } from '@testing-library/react-native';
 import { ProjectSharingModal } from '../ProjectSharingModal';
 import { useTaskStore } from '../../store/taskStore';
 import { Project, ProjectUserShare, ProjectTeamShare, Team } from '../../types/vikunja';
@@ -139,16 +139,17 @@ describe('ProjectSharingModal', () => {
 
     await waitFor(() => expect(getByText('bob')).toBeTruthy());
 
-    fireEvent.press(getByTestId('share-user-perm-20'));
-    await waitFor(() => {
-      expect(mockClient.updateProjectUser).toHaveBeenCalledWith(1, 20, 1);
+    await act(async () => {
+      fireEvent.press(getByTestId('share-user-perm-20'));
     });
+    expect(mockClient.updateProjectUser).toHaveBeenCalledWith(1, 20, 1);
+    expect(queryByText('Read ▾')).toBeNull();
 
-    fireEvent.press(getByTestId('share-remove-user-20'));
-    await waitFor(() => {
-      expect(mockClient.removeProjectUser).toHaveBeenCalledWith(1, 20);
-      expect(queryByText('bob')).toBeNull();
+    await act(async () => {
+      fireEvent.press(getByTestId('share-remove-user-20'));
     });
+    expect(mockClient.removeProjectUser).toHaveBeenCalledWith(1, 20);
+    expect(queryByText('bob')).toBeNull();
   });
 
   it('allows adding, cycling team permissions (updateProjectTeam), and removing a team share', async () => {
@@ -175,29 +176,29 @@ describe('ProjectSharingModal', () => {
     await waitFor(() => expect(getByText('Core Team')).toBeTruthy());
 
     // Cycle Core Team permission (2 Admin -> 0 Read) via updateProjectTeam!
-    fireEvent.press(getByTestId('share-team-perm-5'));
-    await waitFor(() => {
-      expect(mockClient.updateProjectTeam).toHaveBeenCalledWith(1, 5, 0);
+    await act(async () => {
+      fireEvent.press(getByTestId('share-team-perm-5'));
     });
+    expect(mockClient.updateProjectTeam).toHaveBeenCalledWith(1, 5, 0);
+    expect(getByText('Read ▾')).toBeTruthy();
 
     // Add Designers team
     fireEvent.press(getByTestId('share-select-team-6'));
-    fireEvent.press(getByTestId('share-add-team-btn'));
-
-    await waitFor(() => {
-      expect(mockClient.addProjectTeam).toHaveBeenCalledWith(1, {
-        team_id: 6,
-        permission: 0,
-      });
-      expect(getByText('Designers')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(getByTestId('share-add-team-btn'));
     });
+    expect(mockClient.addProjectTeam).toHaveBeenCalledWith(1, {
+      team_id: 6,
+      permission: 0,
+    });
+    expect(getByText('Designers')).toBeTruthy();
 
     // Remove Designers team
-    fireEvent.press(getByTestId('share-remove-team-6'));
-    await waitFor(() => {
-      expect(mockClient.removeProjectTeam).toHaveBeenCalledWith(1, 6);
-      expect(queryByTestId('share-remove-team-6')).toBeNull();
+    await act(async () => {
+      fireEvent.press(getByTestId('share-remove-team-6'));
     });
+    expect(mockClient.removeProjectTeam).toHaveBeenCalledWith(1, 6);
+    expect(queryByTestId('share-remove-team-6')).toBeNull();
   });
 
   it('displays offline warning if client is not connected', () => {

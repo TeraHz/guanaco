@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { androidpublisher } = require('@googleapis/androidpublisher');
 const { GoogleAuth } = require('google-auth-library');
 
@@ -58,8 +59,68 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
+async function verifyCleanGitAndGreenCi() {
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    // Running inside GitHub Actions release workflow after the verify-matrix gate has passed
+    return;
+  }
+
+  const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim();
+  if (dirty) {
+    console.error('\n❌ Refusing to publish release from a dirty git working tree.');
+    console.error('Commit and push your changes first so GitHub CI verifies the exact release commit.\n');
+    process.exit(1);
+  }
+
+  const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  console.log(`🔍 Verifying GitHub Actions CI status for commit ${headSha.slice(0, 7)}...`);
+
+  const resp = await fetch(
+    `https://api.github.com/repos/TeraHz/guanaco/commits/${headSha}/check-runs`,
+    {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'guanaco-release-gate',
+      },
+    }
+  );
+
+  if (!resp.ok) {
+    console.error(`\n❌ Could not verify GitHub CI status for ${headSha} (HTTP ${resp.status}).`);
+    console.error('Push HEAD to GitHub and wait for CI to pass before publishing a release.\n');
+    process.exit(1);
+  }
+
+  const data = await resp.json();
+  const ciChecks = (data.check_runs || []).filter((c) =>
+    String(c.name || '').startsWith('Typecheck & Test')
+  );
+
+  if (ciChecks.length < 3) {
+    console.error(
+      `\n❌ Expected 3 timezone CI checks on ${headSha.slice(0, 7)}, found ${ciChecks.length}.`
+    );
+    console.error('Push to GitHub and wait for all CI jobs to finish before publishing.\n');
+    process.exit(1);
+  }
+
+  const incomplete = ciChecks.filter((c) => c.status !== 'completed' || c.conclusion !== 'success');
+  if (incomplete.length > 0) {
+    console.error('\n❌ Refusing to publish release — GitHub CI is not green:');
+    for (const c of incomplete) {
+      console.error(`   - ${c.name}: status=${c.status}, conclusion=${c.conclusion}`);
+    }
+    console.error('');
+    process.exit(1);
+  }
+
+  console.log(`✅ All ${ciChecks.length} GitHub CI checks passed for ${headSha.slice(0, 7)}.`);
+}
+
 async function main() {
   console.log('=== Guanaco Google Play Publisher ===');
+
+  await verifyCleanGitAndGreenCi();
 
   // 1. Verify service account key
   if (!fs.existsSync(SERVICE_ACCOUNT_PATH)) {

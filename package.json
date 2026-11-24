@@ -32,6 +32,7 @@
     "ios": "EXPO_NO_TELEMETRY=1 expo run:ios",
     "web": "EXPO_NO_TELEMETRY=1 expo start --web",
     "test": "jest --runInBand",
+    "test:ci": "TZ=UTC jest --runInBand && TZ=America/Los_Angeles jest --runInBand && TZ=Asia/Tokyo jest --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "typecheck": "tsc --noEmit",

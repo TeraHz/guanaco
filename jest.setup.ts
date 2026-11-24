@@ -1,6 +1,11 @@
 // Global __DEV__ for React Native
 (global as any).__DEV__ = true;
 
+import { configure } from '@testing-library/react-native';
+
+// Give async waitFor/findBy queries generous headroom on shared CI VMs
+configure({ asyncUtilTimeout: 5000 });
+
 // Mock AsyncStorage
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')

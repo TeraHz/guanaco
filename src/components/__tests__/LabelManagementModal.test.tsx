@@ -93,7 +93,7 @@ describe('LabelManagementModal', () => {
 
     await waitFor(() => {
       expect(getByText('#Costco Wholesale')).toBeTruthy();
-      expect(queryByText('#Costco')).toBeNull();
+      expect(queryByText('#Costco') === null).toBe(true);
     });
 
     const updated = useTaskStore.getState().labels.find((l) => l.id === 1);
@@ -153,7 +153,7 @@ describe('LabelManagementModal', () => {
     );
 
     await waitFor(() => {
-      expect(queryByText('#Produce')).toBeNull();
+      expect(queryByText('#Produce') === null).toBe(true);
     });
 
     // Verify Web confirmation guard (does NOT delete when cancelled)

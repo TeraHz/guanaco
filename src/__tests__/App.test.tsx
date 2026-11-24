@@ -245,10 +245,12 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
       (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({
         success: true,
       });
-      fireEvent.press(await findByTestId('login-biometric-btn'));
+      await act(async () => {
+        fireEvent.press(await findByTestId('login-biometric-btn'));
+      });
 
       await waitFor(() => {
-        expect(queryByTestId('biometric-lock-screen')).toBeNull();
+        expect(queryByTestId('biometric-lock-screen') === null).toBe(true);
       });
     } finally {
       nowSpy.mockRestore();

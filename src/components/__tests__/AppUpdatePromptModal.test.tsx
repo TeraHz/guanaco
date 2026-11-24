@@ -119,7 +119,7 @@ describe('AppUpdatePromptModal', () => {
     });
 
     await waitFor(() => {
-      expect(queryByTestId('app-update-prompt-modal')).toBeNull();
+      expect(queryByTestId('app-update-prompt-modal') === null).toBe(true);
     });
     expect(useUpdateStore.getState().isPromptVisible).toBe(false);
   });
@@ -274,7 +274,7 @@ describe('AppUpdatePromptModal', () => {
     });
 
     await waitFor(() => {
-      expect(queryByTestId('app-update-prompt-modal')).toBeNull();
+      expect(queryByTestId('app-update-prompt-modal') === null).toBe(true);
     });
     expect(useUpdateStore.getState().isPromptVisible).toBe(false);
     expect(useUpdateStore.getState().isDownloadedDismissed).toBe(true);

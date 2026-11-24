@@ -26,6 +26,14 @@ fi
 
 echo "Using Android SDK: $ANDROID_HOME"
 
+if [ "${SKIP_PREBUILD_TESTS:-0}" != "1" ]; then
+  echo "Running pre-release typecheck and multi-timezone test gate (UTC, America/Los_Angeles, Asia/Tokyo)..."
+  npm run typecheck
+  TZ=UTC npx jest --runInBand --silent
+  TZ=America/Los_Angeles npx jest --runInBand --silent
+  TZ=Asia/Tokyo npx jest --runInBand --silent
+fi
+
 # Verify tracked native android project exists
 if [ ! -d "android" ] || [ ! -f "android/app/build.gradle" ]; then
   echo "❌ Error: Tracked android/ directory or android/app/build.gradle is missing."

@@ -109,7 +109,9 @@ npm start
 npm run screenshots
 ```
 
-For signed Android Play Store bundles, supply `GUANACO_KEYSTORE_FILE`, `GUANACO_KEYSTORE_PASSWORD`, `GUANACO_KEY_ALIAS`, and `GUANACO_KEY_PASSWORD` in your environment and run `npm run build:bundle`.
+For signed Android Play Store bundles locally, supply `GUANACO_KEYSTORE_FILE`, `GUANACO_KEYSTORE_PASSWORD`, `GUANACO_KEY_ALIAS`, and `GUANACO_KEY_PASSWORD` in your environment and run `npm run build:bundle`.
+
+Automated GitHub Release APK builds ([`.github/workflows/release.yml`](.github/workflows/release.yml)) run on `v*` tags once `GUANACO_KEYSTORE_BASE64`, `GUANACO_KEYSTORE_PASSWORD`, `GUANACO_KEY_ALIAS`, and `GUANACO_KEY_PASSWORD` are added to GitHub Actions repository secrets.
 </details>
 
 ---
