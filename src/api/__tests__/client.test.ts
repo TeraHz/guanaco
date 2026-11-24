@@ -1798,4 +1798,146 @@ describe('VikunjaClient & URL Security', () => {
       await expect(fastTimeoutClient.getProjects()).rejects.toThrow(/timed out|timeout|aborted/i);
     });
   });
+
+  describe('Client Identification, Task Relations (Subtasks), and Saved Filters', () => {
+    beforeEach(() => {
+      client.setToken('token-123');
+    });
+
+    it('sends Guanaco User-Agent header on native platforms and omits it on web for CORS safety', async () => {
+      const { Platform } = require('react-native');
+      const originalOS = Platform.OS;
+
+      try {
+        Platform.OS = 'android';
+        global.fetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [],
+        } as Response);
+
+        await client.getProjects();
+        const androidHeaders = (global.fetch as jest.Mock).mock.calls[0][1].headers;
+        expect(androidHeaders['User-Agent']).toMatch(/^Guanaco\/\d+\.\d+\.\d+ \(Android\)$/);
+
+        Platform.OS = 'web';
+        global.fetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [],
+        } as Response);
+
+        await client.getProjects();
+        const webHeaders = (global.fetch as jest.Mock).mock.calls[0][1].headers;
+        expect(webHeaders['User-Agent']).toBeUndefined();
+      } finally {
+        Platform.OS = originalOS;
+      }
+    });
+
+    it('creates and deletes subtask relations via /tasks/{id}/relations endpoints', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            task_id: 10,
+            other_task_id: 25,
+            relation_kind: 'subtask',
+          }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ message: 'deleted' }),
+        } as Response);
+
+      const created = await client.createTaskRelation(10, 25, 'subtask');
+      expect(created).toEqual({
+        task_id: 10,
+        other_task_id: 25,
+        relation_kind: 'subtask',
+      });
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        1,
+        'https://try.vikunja.io/api/v1/tasks/10/relations',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({
+            task_id: 10,
+            other_task_id: 25,
+            relation_kind: 'subtask',
+          }),
+        })
+      );
+
+      await client.deleteTaskRelation(10, 'subtask', 25);
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
+        'https://try.vikunja.io/api/v1/tasks/10/relations/subtask/25',
+        expect.objectContaining({ method: 'DELETE' })
+      );
+    });
+
+    it('fetches saved filter tasks via list view endpoint with fallback to /projects/{id}/tasks', async () => {
+      const makePageHeaders = () =>
+        ({
+          get: (k: string) => {
+            const lower = k.toLowerCase();
+            if (lower === 'content-type') return 'application/json';
+            if (lower === 'x-pagination-total-pages') return '1';
+            return null;
+          },
+        }) as any;
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: makePageHeaders(),
+        json: async () => [{ id: 77, title: 'Urgent Cross-Project Task', done: false, priority: 4, project_id: 3 }],
+      } as Response);
+
+      const tasksFromView = await client.getSavedFilterTasks({
+        id: -2,
+        title: 'High Priority',
+        views: [{ id: 19, title: 'List', project_id: -2, view_kind: 'list' }],
+      });
+      expect(tasksFromView).toHaveLength(1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://try.vikunja.io/api/v1/projects/-2/views/19/tasks',
+        expect.objectContaining({ method: 'GET' })
+      );
+
+      // Fallback to /projects/{serverId}/tasks when view endpoint returns 404
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          json: async () => ({ message: 'No view route' }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: makePageHeaders(),
+          json: async () => [{ id: 88, title: 'Fallback Filter Task', done: false, priority: 3, project_id: 2 }],
+        } as Response);
+
+      const fallbackTasks = await client.getSavedFilterTasks({
+        id: -1000001,
+        server_project_id: -1,
+        is_saved_filter: true,
+        title: 'First Saved Filter',
+        views: [{ id: 12, title: 'List', project_id: -1, view_kind: 'list' }],
+      });
+      expect(fallbackTasks).toHaveLength(1);
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
+        'https://try.vikunja.io/api/v1/projects/-1/tasks',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+  });
 });

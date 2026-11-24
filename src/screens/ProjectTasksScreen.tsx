@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   StatusBar,
@@ -28,7 +29,12 @@ import { ProjectEditorModal } from '../components/ProjectEditorModal';
 import { ProjectSharingModal } from '../components/ProjectSharingModal';
 import { SortOption } from '../utils/sorting';
 import { isAICoreSupported, classifyTaskWithAI } from '../utils/aiCore';
-import { useFilteredSortedTasks, FilterType } from '../hooks/useFilteredSortedTasks';
+import {
+  useFilteredSortedTasks,
+  FilterType,
+  DueFilterType,
+} from '../hooks/useFilteredSortedTasks';
+import { MY_TASKS_PROJECT_ID } from '../utils/taskFilters';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles, hexToRgba, normalizeHexColor } from '../utils/colors';
@@ -139,15 +145,23 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     largeTaskItems,
     taskItemScale = 100,
     taskItemTextScale = 100,
+    weekStartDay = 1,
+    savedFilterTaskIds = {},
+    pendingOpenTaskId = null,
+    setPendingOpenTaskId,
     toggleTask,
     reenableTask,
     updateTaskLabels,
     updateTaskDetails,
     addTask,
+    addSubtask,
+    unlinkSubtask,
+    duplicateTask,
     moveTask,
     reorderTasks,
     deleteTask,
     fetchTasks,
+    fetchSavedFilterTasks,
     retrySync,
     syncAll,
     fetchAllTasks,
@@ -193,9 +207,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const [filter, setFilter] = useState<FilterType>('active');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('default');
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchAllLists, setSearchAllLists] = useState(false);
+  const [dueFilter, setDueFilter] = useState<DueFilterType>('all');
+  const [minPriority, setMinPriority] = useState<number>(0);
   const [isReordering, setIsReordering] = useState(false);
   const [reorderNotice, setReorderNotice] = useState<string | null>(null);
   const reorderNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [duplicatedTaskRef, setDuplicatedTaskRef] = useState<TrackedTaskRef | null>(null);
+  const duplicatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Modal states — strictly mutually exclusive so two <Modal>s are NEVER visible simultaneously!
   const [showSortModal, setShowSortModal] = useState(false);
@@ -243,6 +264,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     return () => {
       if (reorderNoticeTimerRef.current) {
         clearTimeout(reorderNoticeTimerRef.current);
+      }
+      if (duplicatedTimerRef.current) {
+        clearTimeout(duplicatedTimerRef.current);
       }
       if (pendingDeleteRef.current) {
         const { ref, timer } = pendingDeleteRef.current;
@@ -330,6 +354,26 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     () => resolveLiveTask(tasks, pendingDeleteTaskRef),
     [tasks, pendingDeleteTaskRef]
   );
+  const liveDuplicatedTask = useMemo(
+    () => resolveLiveTask(tasks, duplicatedTaskRef),
+    [tasks, duplicatedTaskRef]
+  );
+
+  // Open task detail modal when user taps a local reminder notification
+  useEffect(() => {
+    if (pendingOpenTaskId === null || pendingOpenTaskId === undefined) return;
+    const found = (Array.isArray(tasks) ? tasks : []).find((t) => t.id === pendingOpenTaskId);
+    setPendingOpenTaskId?.(null);
+    if (found) {
+      closeAllModals();
+      setSelectedTaskRef({
+        id: found.id,
+        title: found.title,
+        project_id: found.project_id,
+        done: Boolean(found.done),
+      });
+    }
+  }, [pendingOpenTaskId, tasks, setPendingOpenTaskId]);
 
   useEffect(() => {
     if (!pendingDeleteTaskRef) return;
@@ -421,6 +465,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     setIsReordering(false);
     if (selectedProjectId && selectedProjectId > 0) {
       fetchTasks(selectedProjectId);
+    } else if (
+      selectedProjectId !== null &&
+      selectedProjectId < 0 &&
+      selectedProjectId !== MY_TASKS_PROJECT_ID
+    ) {
+      fetchSavedFilterTasks?.(selectedProjectId);
     } else {
       fetchAllTasks();
     }
@@ -429,6 +479,13 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const handleRefresh = async () => {
     setRefreshing(true);
     await syncAll();
+    if (
+      selectedProjectId !== null &&
+      selectedProjectId < 0 &&
+      selectedProjectId !== MY_TASKS_PROJECT_ID
+    ) {
+      await fetchSavedFilterTasks?.(selectedProjectId);
+    }
     setRefreshing(false);
   };
 
@@ -436,6 +493,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     activeProject,
     isAllTasksView,
     isMyTasksView,
+    isSavedFilterView,
     isShopping,
     availableLabels,
     projectTasks,
@@ -451,6 +509,11 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     filter,
     selectedLabel,
     sortBy,
+    savedFilterTaskIds,
+    searchQuery: showSearch ? searchQuery : '',
+    searchAllLists: showSearch ? searchAllLists : false,
+    minPriority: showSearch ? minPriority : 0,
+    dueFilter: showSearch ? dueFilter : 'all',
   });
 
   const visibleTasks = useMemo(
@@ -462,7 +525,13 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   );
 
   const hasAICore = isAICoreSupported();
-  const isVirtualView = isAllTasksView || isMyTasksView || !activeProject || activeProject.id <= 0;
+  const isVirtualView =
+    isAllTasksView ||
+    isMyTasksView ||
+    isSavedFilterView ||
+    (showSearch && searchAllLists) ||
+    !activeProject ||
+    activeProject.id <= 0;
 
   const showTemporaryNotice = (msg: string) => {
     setReorderNotice(msg);
@@ -716,6 +785,42 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             </TouchableOpacity>
           )}
 
+          {/* Search Toggle Button */}
+          <TouchableOpacity
+            testID="header-search-btn"
+            style={[
+              styles.headerSearchBtn,
+              showSearch && {
+                backgroundColor: hexToRgba(theme.colors.accent, 0.16),
+                borderColor: theme.colors.accent,
+              },
+            ]}
+            onPress={() => {
+              safeHaptics.selection();
+              setShowSearch((prev) => {
+                if (prev) {
+                  setSearchQuery('');
+                  setSearchAllLists(false);
+                  setDueFilter('all');
+                  setMinPriority(0);
+                }
+                return !prev;
+              });
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={showSearch ? 'Close search' : 'Search tasks'}
+          >
+            <Text
+              style={[
+                styles.headerSearchIcon,
+                { color: showSearch ? theme.colors.accent : theme.colors.text },
+              ]}
+            >
+              ⌕
+            </Text>
+          </TouchableOpacity>
+
           {/* Live Sync Status Indicator */}
           <TouchableOpacity
             testID="sync-indicator-btn"
@@ -776,6 +881,199 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Collapsible Search & Multi-Facet Filter Bar */}
+        {showSearch && (
+          <View
+            testID="search-panel"
+            style={[
+              styles.searchPanel,
+              {
+                backgroundColor: theme.colors.cardBackground,
+                borderBottomColor: theme.colors.cardBorder,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.searchInputWrap,
+                {
+                  backgroundColor: theme.colors.inputBg,
+                  borderColor: theme.colors.borderStrong,
+                },
+              ]}
+            >
+              <TextInput
+                testID="task-search-input"
+                style={[styles.searchInput, { color: theme.colors.text }]}
+                placeholder={
+                  searchAllLists
+                    ? 'Search all lists, notes, #labels, @users...'
+                    : `Search in ${activeProject?.title || 'list'}...`
+                }
+                placeholderTextColor={theme.colors.placeholder}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+                returnKeyType="search"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity
+                  testID="clear-search-btn"
+                  onPress={() => setSearchQuery('')}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear search text"
+                >
+                  <Text style={[styles.clearLabelText, { color: theme.colors.textSecondary }]}>
+                    ✕
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.searchFilterChipsRow}>
+              <TouchableOpacity
+                testID="search-scope-all-lists"
+                style={[
+                  styles.filterPill,
+                  {
+                    backgroundColor: searchAllLists
+                      ? theme.colors.accent
+                      : theme.colors.surfaceSecondary,
+                  },
+                ]}
+                onPress={() => {
+                  safeHaptics.selection();
+                  setSearchAllLists((v) => !v);
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: searchAllLists }}
+              >
+                <Text
+                  style={[
+                    styles.filterPillText,
+                    { color: searchAllLists ? '#FFFFFF' : theme.colors.textSecondary },
+                  ]}
+                >
+                  All Lists
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                testID="search-due-overdue"
+                style={[
+                  styles.filterPill,
+                  {
+                    backgroundColor:
+                      dueFilter === 'overdue'
+                        ? theme.colors.danger
+                        : theme.colors.surfaceSecondary,
+                  },
+                ]}
+                onPress={() => {
+                  safeHaptics.selection();
+                  setDueFilter((d) => (d === 'overdue' ? 'all' : 'overdue'));
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: dueFilter === 'overdue' }}
+              >
+                <Text
+                  style={[
+                    styles.filterPillText,
+                    { color: dueFilter === 'overdue' ? '#FFFFFF' : theme.colors.textSecondary },
+                  ]}
+                >
+                  Overdue
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                testID="search-due-today"
+                style={[
+                  styles.filterPill,
+                  {
+                    backgroundColor:
+                      dueFilter === 'today'
+                        ? theme.colors.accent
+                        : theme.colors.surfaceSecondary,
+                  },
+                ]}
+                onPress={() => {
+                  safeHaptics.selection();
+                  setDueFilter((d) => (d === 'today' ? 'all' : 'today'));
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: dueFilter === 'today' }}
+              >
+                <Text
+                  style={[
+                    styles.filterPillText,
+                    { color: dueFilter === 'today' ? '#FFFFFF' : theme.colors.textSecondary },
+                  ]}
+                >
+                  Today
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                testID="search-due-no_due"
+                style={[
+                  styles.filterPill,
+                  {
+                    backgroundColor:
+                      dueFilter === 'no_due'
+                        ? theme.colors.accent
+                        : theme.colors.surfaceSecondary,
+                  },
+                ]}
+                onPress={() => {
+                  safeHaptics.selection();
+                  setDueFilter((d) => (d === 'no_due' ? 'all' : 'no_due'));
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: dueFilter === 'no_due' }}
+              >
+                <Text
+                  style={[
+                    styles.filterPillText,
+                    { color: dueFilter === 'no_due' ? '#FFFFFF' : theme.colors.textSecondary },
+                  ]}
+                >
+                  No Date
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                testID="search-priority-high"
+                style={[
+                  styles.filterPill,
+                  {
+                    backgroundColor:
+                      minPriority >= 3
+                        ? theme.colors.accent
+                        : theme.colors.surfaceSecondary,
+                  },
+                ]}
+                onPress={() => {
+                  safeHaptics.selection();
+                  setMinPriority((p) => (p >= 3 ? 0 : 3));
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: minPriority >= 3 }}
+              >
+                <Text
+                  style={[
+                    styles.filterPillText,
+                    { color: minPriority >= 3 ? '#FFFFFF' : theme.colors.textSecondary },
+                  ]}
+                >
+                  High+
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* Filter Selector Pills & Sort Button */}
         <View style={styles.filterBar}>
@@ -1127,6 +1425,69 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           />
         </View>
 
+        {/* Duplicated Task Quick-Open Toast Banner */}
+        {liveDuplicatedTask && !livePendingDeleteTask && (
+          <View
+            testID="duplicated-task-banner"
+            style={[
+              styles.undoBanner,
+              {
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.borderStrong,
+              },
+            ]}
+            accessibilityRole="alert"
+          >
+            <Text
+              style={[styles.undoBannerText, { color: theme.colors.text }]}
+              numberOfLines={1}
+            >
+              Duplicated "{liveDuplicatedTask.title}"
+            </Text>
+            <View style={styles.undoBannerActions}>
+              <TouchableOpacity
+                testID="open-duplicated-task-btn"
+                style={[styles.undoBtn, { backgroundColor: theme.colors.accent }]}
+                onPress={() => {
+                  const target = liveDuplicatedTask;
+                  if (duplicatedTimerRef.current) {
+                    clearTimeout(duplicatedTimerRef.current);
+                    duplicatedTimerRef.current = null;
+                  }
+                  setDuplicatedTaskRef(null);
+                  closeAllModals();
+                  setSelectedTaskRef({
+                    id: target.id,
+                    title: target.title,
+                    project_id: target.project_id,
+                    done: Boolean(target.done),
+                  });
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Open duplicated task"
+              >
+                <Text style={styles.undoBtnText}>Open</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.undoDismissBtn}
+                onPress={() => {
+                  if (duplicatedTimerRef.current) {
+                    clearTimeout(duplicatedTimerRef.current);
+                    duplicatedTimerRef.current = null;
+                  }
+                  setDuplicatedTaskRef(null);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss duplicated notification"
+              >
+                <Text style={[styles.undoDismissText, { color: theme.colors.textSecondary }]}>
+                  ✕
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Undo Task Delete Toast Banner */}
         {livePendingDeleteTask && (
           <View
@@ -1272,6 +1633,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         availableUsers={cachedUsers}
         availableProjects={safeProjects}
         defaultProjectId={defaultTargetProjectId}
+        weekStartDay={weekStartDay}
         onClose={() => {
           setSelectedTaskRef(null);
           setShowCreateTaskModal(false);
@@ -1282,7 +1644,40 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         onDelete={(taskId) => {
           deleteTask(taskId);
         }}
-        onCreateTask={(newTaskData) => {
+        onAddSubtask={(parentId, subTitle) => addSubtask?.(parentId, subTitle)}
+        onToggleSubtask={(subId) => toggleTask(subId)}
+        onDeleteSubtask={(parentId, subId) => {
+          unlinkSubtask?.(parentId, subId);
+          deleteTask(subId);
+        }}
+        onSelectSubtask={(sub) => {
+          const live = (Array.isArray(tasks) ? tasks : []).find((t) => t.id === sub.id) || sub;
+          setSelectedTaskRef({
+            id: live.id,
+            title: live.title,
+            project_id: live.project_id,
+            done: Boolean(live.done),
+          });
+        }}
+        onDuplicateTask={(taskId) => {
+          const copy = duplicateTask?.(taskId);
+          if (copy) {
+            if (duplicatedTimerRef.current) {
+              clearTimeout(duplicatedTimerRef.current);
+            }
+            setDuplicatedTaskRef({
+              id: copy.id,
+              title: copy.title,
+              project_id: copy.project_id,
+              done: Boolean(copy.done),
+            });
+            duplicatedTimerRef.current = setTimeout(() => {
+              duplicatedTimerRef.current = null;
+              setDuplicatedTaskRef(null);
+            }, 5000);
+          }
+        }}
+        onCreateTask={(newTaskData, initialSubtaskTitles) => {
           const resolvedProjectId =
             newTaskData.project_id && newTaskData.project_id > 0
               ? newTaskData.project_id
@@ -1323,7 +1718,14 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             project_id: resolvedProjectId,
           };
 
-          addTask(fullCreateInput);
+          const created = addTask(fullCreateInput);
+          if (created && Array.isArray(initialSubtaskTitles)) {
+            for (const st of initialSubtaskTitles) {
+              if (st.trim()) {
+                addSubtask?.(created.id, st.trim());
+              }
+            }
+          }
         }}
       />
 
@@ -2001,6 +2403,46 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     lineHeight: 20,
+  },
+  headerSearchBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginRight: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerSearchIcon: {
+    fontSize: 17,
+    fontWeight: '700',
+    lineHeight: 19,
+  },
+  searchPanel: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    gap: 8,
+  },
+  searchInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    height: 38,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    paddingVertical: 0,
+  },
+  searchFilterChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
   },
   actionSheetBackdrop: {
     flex: 1,

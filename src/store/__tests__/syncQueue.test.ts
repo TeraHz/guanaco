@@ -17,6 +17,8 @@ describe('SyncQueue', () => {
       reorderTask: jest.fn(),
       setTaskLabels: jest.fn(),
       setTaskAssignees: jest.fn(),
+      createTaskRelation: jest.fn(),
+      deleteTaskRelation: jest.fn(),
     } as unknown as jest.Mocked<VikunjaClient>;
 
     queue = new SyncQueue(mockClient);
@@ -720,6 +722,98 @@ describe('SyncQueue', () => {
 
       expect(mockClient.reorderTask).toHaveBeenNthCalledWith(1, 10, 1000, 5);
       expect(mockClient.reorderTask).toHaveBeenNthCalledWith(2, 10, 3000, 5);
+      expect(queue.getQueue()).toHaveLength(0);
+    });
+  });
+
+  describe('Subtask / Task Relation Mutations & Dual Temp-ID Remapping', () => {
+    it('remaps BOTH negative parent taskId AND negative child otherTaskId across chained offline subtask creation', async () => {
+      mockClient.createTask
+        .mockResolvedValueOnce({
+          id: 501,
+          title: 'Parent Trip',
+          done: false,
+          priority: 2,
+          project_id: 1,
+        })
+        .mockResolvedValueOnce({
+          id: 502,
+          title: 'Pack Passport',
+          done: false,
+          priority: 0,
+          project_id: 1,
+        });
+      mockClient.createTaskRelation.mockResolvedValueOnce({
+        task_id: 501,
+        other_task_id: 502,
+        relation_kind: 'subtask',
+      });
+
+      queue.enqueue({
+        id: 'create-parent',
+        type: 'CREATE_TASK',
+        payload: { tempId: -101, projectId: 1, taskData: { title: 'Parent Trip', project_id: 1 } },
+        timestamp: 100,
+      });
+      queue.enqueue({
+        id: 'create-subtask',
+        type: 'CREATE_TASK',
+        payload: { tempId: -102, projectId: 1, taskData: { title: 'Pack Passport', project_id: 1 } },
+        timestamp: 110,
+      });
+      queue.enqueue({
+        id: 'link-subtask',
+        type: 'CREATE_TASK_RELATION',
+        payload: { taskId: -101, otherTaskId: -102, relationKind: 'subtask' },
+        timestamp: 120,
+      });
+
+      await queue.processQueue();
+
+      expect(mockClient.createTaskRelation).toHaveBeenCalledWith(501, 502, 'subtask');
+      expect(queue.getQueue()).toHaveLength(0);
+      expect(queue.getStatus()).toBe('synced');
+    });
+
+    it('cancels pending CREATE_TASK_RELATION when an unsynced negative-tempId subtask is deleted offline', async () => {
+      queue.enqueue({
+        id: 'create-subtask',
+        type: 'CREATE_TASK',
+        payload: { tempId: -202, projectId: 1, taskData: { title: 'Temp Subtask', project_id: 1 } },
+        timestamp: 100,
+      });
+      queue.enqueue({
+        id: 'link-subtask',
+        type: 'CREATE_TASK_RELATION',
+        payload: { taskId: 42, otherTaskId: -202, relationKind: 'subtask' },
+        timestamp: 110,
+      });
+
+      queue.enqueue({
+        id: 'delete-subtask',
+        type: 'DELETE_TASK',
+        payload: { taskId: -202 },
+        timestamp: 120,
+      });
+
+      expect(queue.getQueue()).toHaveLength(0);
+      await queue.processQueue();
+      expect(mockClient.createTask).not.toHaveBeenCalled();
+      expect(mockClient.createTaskRelation).not.toHaveBeenCalled();
+    });
+
+    it('processes DELETE_TASK_RELATION via client.deleteTaskRelation', async () => {
+      mockClient.deleteTaskRelation.mockResolvedValueOnce({ message: 'unlinked' });
+
+      queue.enqueue({
+        id: 'unlink-1',
+        type: 'DELETE_TASK_RELATION',
+        payload: { taskId: 42, otherTaskId: 99, relationKind: 'subtask' },
+        timestamp: 200,
+      });
+
+      await queue.processQueue();
+      expect(mockClient.deleteTaskRelation).toHaveBeenCalledWith(42, 'subtask', 99);
       expect(queue.getQueue()).toHaveLength(0);
     });
   });

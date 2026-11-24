@@ -4,8 +4,11 @@ import { SortOption, sortTasks } from '../utils/sorting';
 import { isShoppingList } from '../utils/smartClassifier';
 import { classifyTaskWithAI, classifyTasksWithAIAsync } from '../utils/aiCore';
 import { MY_TASKS_PROJECT_ID, MY_TASKS_PROJECT, isTaskAssignedToUser } from '../utils/taskFilters';
+import { htmlToPlainText } from '../utils/htmlDescription';
+import { isOverdue, normalizeVikunjaDate } from '../utils/dates';
 
 export type FilterType = 'all' | 'active' | 'done';
+export type DueFilterType = 'all' | 'overdue' | 'today' | 'has_due' | 'no_due';
 
 export interface UseFilteredSortedTasksParams {
   projects: Project[];
@@ -16,12 +19,18 @@ export interface UseFilteredSortedTasksParams {
   filter: FilterType;
   selectedLabel: string | null;
   sortBy: SortOption;
+  savedFilterTaskIds?: Record<number, number[]>;
+  searchQuery?: string;
+  searchAllLists?: boolean;
+  minPriority?: number;
+  dueFilter?: DueFilterType;
 }
 
 export interface UseFilteredSortedTasksResult {
   activeProject: Project;
   isAllTasksView: boolean;
   isMyTasksView: boolean;
+  isSavedFilterView: boolean;
   isShopping: boolean;
   availableLabels: string[];
   projectTasks: Task[];
@@ -40,25 +49,48 @@ export function useFilteredSortedTasks({
   filter,
   selectedLabel,
   sortBy,
+  savedFilterTaskIds,
+  searchQuery = '',
+  searchAllLists = false,
+  minPriority = 0,
+  dueFilter = 'all',
 }: UseFilteredSortedTasksParams): UseFilteredSortedTasksResult {
-  const safeProjects = useMemo(
+  const safePositiveProjects = useMemo(
     () => (Array.isArray(projects) ? projects.filter((p) => p && p.id > 0) : []),
+    [projects]
+  );
+  const savedFilterProjects = useMemo(
+    () =>
+      Array.isArray(projects)
+        ? projects.filter(
+            (p) => p && (p.is_saved_filter || (p.id < 0 && p.id !== MY_TASKS_PROJECT_ID))
+          )
+        : [],
     [projects]
   );
   const safeTasks = useMemo(() => (Array.isArray(tasks) ? tasks.filter(Boolean) : []), [tasks]);
 
   const isAllTasksView = selectedProjectId === null;
   const isMyTasksView = selectedProjectId === MY_TASKS_PROJECT_ID;
+  const matchedSavedFilter = useMemo(
+    () =>
+      selectedProjectId !== null && selectedProjectId < 0 && !isMyTasksView
+        ? savedFilterProjects.find((p) => p.id === selectedProjectId) || null
+        : null,
+    [selectedProjectId, isMyTasksView, savedFilterProjects]
+  );
+  const isSavedFilterView = Boolean(matchedSavedFilter);
 
   const activeProject: Project = useMemo(() => {
     if (isMyTasksView) return MY_TASKS_PROJECT;
     if (isAllTasksView) return { id: 0, title: 'All Tasks', hex_color: '#007AFF' };
+    if (matchedSavedFilter) return matchedSavedFilter;
     return (
-      safeProjects.find((p) => p.id === selectedProjectId) ||
-      safeProjects.find((p) => !p.is_archived) ||
-      safeProjects[0] || { id: 0, title: 'All Tasks', hex_color: '#007AFF' }
+      safePositiveProjects.find((p) => p.id === selectedProjectId) ||
+      safePositiveProjects.find((p) => !p.is_archived) ||
+      safePositiveProjects[0] || { id: 0, title: 'All Tasks', hex_color: '#007AFF' }
     );
-  }, [isMyTasksView, isAllTasksView, safeProjects, selectedProjectId]);
+  }, [isMyTasksView, isAllTasksView, matchedSavedFilter, safePositiveProjects, selectedProjectId]);
 
   const isShopping = useMemo(() => isShoppingList(activeProject?.title), [activeProject?.title]);
 
@@ -82,31 +114,115 @@ export function useFilteredSortedTasks({
     return unique;
   }, [storeLabels, safeTasks]);
 
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+
   const projectTasks = useMemo(() => {
+    if (searchAllLists && (trimmedQuery.length > 0 || minPriority > 0 || dueFilter !== 'all')) {
+      return safeTasks;
+    }
     if (isMyTasksView) {
       return safeTasks.filter((t) => isTaskAssignedToUser(t, currentUser));
     }
     if (isAllTasksView) {
       return safeTasks;
     }
+    if (isSavedFilterView && matchedSavedFilter) {
+      const idList = savedFilterTaskIds?.[matchedSavedFilter.id] || [];
+      const idSet = new Set<number>(idList);
+      return safeTasks.filter((t) => idSet.has(t.id));
+    }
     return safeTasks.filter((t) => t.project_id === activeProject.id);
-  }, [isMyTasksView, isAllTasksView, safeTasks, currentUser, activeProject.id]);
+  }, [
+    searchAllLists,
+    trimmedQuery,
+    minPriority,
+    dueFilter,
+    isMyTasksView,
+    isAllTasksView,
+    isSavedFilterView,
+    matchedSavedFilter,
+    savedFilterTaskIds,
+    safeTasks,
+    currentUser,
+    activeProject.id,
+  ]);
 
   const doneTasks = useMemo(() => projectTasks.filter((t) => t.done), [projectTasks]);
 
   const filteredTasks = useMemo(() => {
+    const now = new Date();
+    const nowMs = now.getTime();
+    const startOfTodayMs = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      0,
+      0,
+      0,
+      0
+    ).getTime();
+    const endOfTodayMs = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      23,
+      59,
+      59,
+      999
+    ).getTime();
+
     return projectTasks.filter((task) => {
       if (filter === 'active' && task.done) return false;
       if (filter === 'done' && !task.done) return false;
+
       if (selectedLabel) {
         const hasLabel = task.labels?.some(
           (l) => (l?.title || '').toLowerCase() === selectedLabel.toLowerCase()
         );
         if (!hasLabel) return false;
       }
+
+      if (minPriority > 0 && (task.priority || 0) < minPriority) {
+        return false;
+      }
+
+      if (dueFilter !== 'all') {
+        const normDue = normalizeVikunjaDate(task.due_date);
+        if (dueFilter === 'no_due' && normDue !== null) return false;
+        if (dueFilter === 'has_due' && normDue === null) return false;
+        if (dueFilter === 'overdue') {
+          if (!normDue || task.done || !isOverdue(normDue, nowMs)) return false;
+        }
+        if (dueFilter === 'today') {
+          if (!normDue) return false;
+          const dueMs = new Date(normDue).getTime();
+          if (dueMs < startOfTodayMs || dueMs > endOfTodayMs) return false;
+        }
+      }
+
+      if (trimmedQuery.length > 0) {
+        const inTitle = (task.title || '').toLowerCase().includes(trimmedQuery);
+        const inDesc = task.description
+          ? htmlToPlainText(task.description).toLowerCase().includes(trimmedQuery)
+          : false;
+        const inLabels = Boolean(
+          task.labels?.some((l) => (l?.title || '').toLowerCase().includes(trimmedQuery))
+        );
+        const inAssignees = Boolean(
+          task.assignees?.some(
+            (u) =>
+              (u?.username || '').toLowerCase().includes(trimmedQuery) ||
+              (u?.name || '').toLowerCase().includes(trimmedQuery)
+          )
+        );
+        if (!inTitle && !inDesc && !inLabels && !inAssignees) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [projectTasks, filter, selectedLabel]);
+  }, [projectTasks, filter, selectedLabel, minPriority, dueFilter, trimmedQuery]);
 
   const [aiVersion, setAiVersion] = useState(0);
   const filteredTasksRef = useRef(filteredTasks);
@@ -122,9 +238,6 @@ export function useFilteredSortedTasks({
     const currentTasks = filteredTasksRef.current;
 
     if (sortBy === 'aiSmart' && currentTasks.length > 0) {
-      // Snapshot synchronous categories first so we ONLY update state if async classification
-      // (from AsyncStorage or live Prompt API) actually changes at least one category!
-      // Prevents spurious post-microtask re-renders and React `act(...)` warnings in tests.
       const syncSnapshot: Record<number, string> = {};
       for (const t of currentTasks) {
         syncSnapshot[t.id] = classifyTaskWithAI(t, activeProject?.title);
@@ -149,7 +262,6 @@ export function useFilteredSortedTasks({
   }, [sortBy, tasksSignature, activeProject?.title]);
 
   const sortedTasks = useMemo(() => {
-    // Reference aiVersion so async classification updates trigger re-sorting
     void aiVersion;
     return sortTasks(filteredTasks, sortBy, activeProject?.title);
   }, [filteredTasks, sortBy, activeProject?.title, aiVersion]);
@@ -163,6 +275,7 @@ export function useFilteredSortedTasks({
     activeProject,
     isAllTasksView,
     isMyTasksView,
+    isSavedFilterView,
     isShopping,
     availableLabels,
     projectTasks,

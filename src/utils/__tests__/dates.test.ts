@@ -5,6 +5,7 @@ import {
   isOverdue,
   isDueSoon,
   getDatePreset,
+  postponeDateByDays,
   formatIsoForVikunja,
 } from '../dates';
 
@@ -167,6 +168,51 @@ describe('dates utils', () => {
       const res3 = getDatePreset('today', almostMidnight)!;
       expect(res3.getDate()).toBe(7);
       expect(res3.getTime()).toBeGreaterThan(almostMidnight.getTime());
+    });
+
+    it('respects configurable weekStartDay (0 = Sunday, 1 = Monday) for next_week', () => {
+      // Wednesday Oct 7, 2026
+      const wed = new Date(2026, 9, 7, 10, 0, 0, 0);
+      const nextMonday = getDatePreset('next_week', wed, 1)!;
+      expect(nextMonday.getDay()).toBe(1);
+      expect(nextMonday.getDate()).toBe(12);
+
+      const nextSunday = getDatePreset('next_week', wed, 0)!;
+      expect(nextSunday.getDay()).toBe(0);
+      expect(nextSunday.getDate()).toBe(11);
+
+      // When called ON Sunday with weekStartDay = 0, advances a full 7 days to next Sunday
+      const sun = new Date(2026, 9, 11, 10, 0, 0, 0);
+      const followingSunday = getDatePreset('next_week', sun, 0)!;
+      expect(followingSunday.getDay()).toBe(0);
+      expect(followingSunday.getDate()).toBe(18);
+    });
+  });
+
+  describe('postponeDateByDays', () => {
+    it('shifts future due dates forward while preserving exact local time of day', () => {
+      const now = new Date(2026, 9, 7, 10, 0, 0, 0);
+      const futureDue = new Date(2026, 9, 9, 14, 45, 0, 0).toISOString();
+      const shifted = postponeDateByDays(futureDue, 3, now);
+      expect(shifted.getFullYear()).toBe(2026);
+      expect(shifted.getMonth()).toBe(9);
+      expect(shifted.getDate()).toBe(12);
+      expect(shifted.getHours()).toBe(14);
+      expect(shifted.getMinutes()).toBe(45);
+    });
+
+    it('advances from today when overdue or unset, preserving custom time if present or defaulting to 9:00 AM', () => {
+      const now = new Date(2026, 9, 7, 11, 15, 0, 0);
+      const overdueWithTime = new Date(2026, 9, 2, 16, 30, 0, 0).toISOString();
+      const fromOverdue = postponeDateByDays(overdueWithTime, 2, now);
+      expect(fromOverdue.getDate()).toBe(9);
+      expect(fromOverdue.getHours()).toBe(16);
+      expect(fromOverdue.getMinutes()).toBe(30);
+
+      const fromUnset = postponeDateByDays(null, 7, now);
+      expect(fromUnset.getDate()).toBe(14);
+      expect(fromUnset.getHours()).toBe(9);
+      expect(fromUnset.getMinutes()).toBe(0);
     });
   });
 

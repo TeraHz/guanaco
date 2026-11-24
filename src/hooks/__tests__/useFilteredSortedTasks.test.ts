@@ -173,4 +173,83 @@ describe('useFilteredSortedTasks Hook', () => {
       (globalThis as any).ai = originalAi;
     }
   });
+
+  it('supports search query across HTML descriptions, cross-list scope, priority filter, due filter, and Saved Filter task IDs', () => {
+    const richTasks: Task[] = [
+      {
+        id: 101,
+        title: 'Pay wireless bill',
+        description: '<p>Check <strong>AT&amp;T</strong> portal</p>',
+        done: false,
+        priority: 3,
+        project_id: 1,
+        due_date: '2020-01-01T12:00:00Z',
+      },
+      {
+        id: 102,
+        title: 'Draft roadmap',
+        description: 'Q4 milestones',
+        done: false,
+        priority: 4,
+        project_id: 2,
+        due_date: null,
+      },
+    ];
+
+    // Searching "AT&T" from project 2 with searchAllLists = true finds task 101 via decoded HTML description
+    const { result: searchRes } = renderHook(() =>
+      useFilteredSortedTasks({
+        projects: mockProjects,
+        tasks: richTasks,
+        labels: mockLabels,
+        selectedProjectId: 2,
+        currentUser: null,
+        filter: 'active',
+        selectedLabel: null,
+        sortBy: 'default',
+        searchQuery: 'at&t',
+        searchAllLists: true,
+      })
+    );
+    expect(searchRes.current.filteredTasks.map((t) => t.id)).toEqual([101]);
+
+    // Filtering by overdue and minPriority
+    const { result: overdueRes } = renderHook(() =>
+      useFilteredSortedTasks({
+        projects: mockProjects,
+        tasks: richTasks,
+        labels: mockLabels,
+        selectedProjectId: null,
+        currentUser: null,
+        filter: 'active',
+        selectedLabel: null,
+        sortBy: 'default',
+        dueFilter: 'overdue',
+        minPriority: 3,
+      })
+    );
+    expect(overdueRes.current.filteredTasks.map((t) => t.id)).toEqual([101]);
+
+    // Resolving a Vikunja Saved Filter project using savedFilterTaskIds
+    const projectsWithSavedFilter: Project[] = [
+      ...mockProjects,
+      { id: -2, server_project_id: -2, is_saved_filter: true, title: 'Critical Backlog' },
+    ];
+    const { result: savedFilterRes } = renderHook(() =>
+      useFilteredSortedTasks({
+        projects: projectsWithSavedFilter,
+        tasks: richTasks,
+        labels: mockLabels,
+        selectedProjectId: -2,
+        currentUser: null,
+        filter: 'active',
+        selectedLabel: null,
+        sortBy: 'default',
+        savedFilterTaskIds: { [-2]: [102] },
+      })
+    );
+    expect(savedFilterRes.current.activeProject.title).toBe('Critical Backlog');
+    expect(savedFilterRes.current.isSavedFilterView).toBe(true);
+    expect(savedFilterRes.current.filteredTasks.map((t) => t.id)).toEqual([102]);
+  });
 });

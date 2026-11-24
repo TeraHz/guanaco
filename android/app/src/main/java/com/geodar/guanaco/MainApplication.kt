@@ -60,6 +60,21 @@ private object RefreshCookieMergeInterceptor : Interceptor {
   }
 }
 
+private object GuanacoUserAgentInterceptor : Interceptor {
+  private val defaultUserAgent = "Guanaco/${BuildConfig.VERSION_NAME} (Android)"
+
+  override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
+    val request = chain.request()
+    val existingUa = request.header("User-Agent")
+    if (!existingUa.isNullOrBlank() && existingUa.startsWith("Guanaco/", ignoreCase = true)) {
+      return chain.proceed(request)
+    }
+    return chain.proceed(
+      request.newBuilder().header("User-Agent", defaultUserAgent).build()
+    )
+  }
+}
+
 class MainApplication : Application(), ReactApplication {
 
   override val reactHost: ReactHost by lazy {
@@ -77,6 +92,9 @@ class MainApplication : Application(), ReactApplication {
     // Ensure SecureStore-backed `vikunja_refresh_token` always wins over stale/async WebView CookieManager entries
     // in OkHttp's BridgeInterceptor while preserving any reverse-proxy cookies (Cloudflare, Authelia, etc.).
     NetworkingModule.setCustomClientBuilder { builder ->
+      if (!builder.interceptors().contains(GuanacoUserAgentInterceptor)) {
+        builder.addInterceptor(GuanacoUserAgentInterceptor)
+      }
       if (!builder.interceptors().contains(RefreshCookieCaptureInterceptor)) {
         builder.addInterceptor(RefreshCookieCaptureInterceptor)
       }

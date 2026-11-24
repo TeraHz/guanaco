@@ -438,4 +438,114 @@ describe('TaskDetailModal (CUJ 2)', () => {
       expect.arrayContaining([expect.objectContaining({ flex: 1 })])
     );
   });
+
+  it('normalizes HTML descriptions for readable editing while preserving untouched HTML on save', () => {
+    const htmlTask: Task = {
+      ...mockTask,
+      description: '<p>First line</p><ul><li><p>Item A</p></li></ul>',
+    };
+
+    const { getByTestId } = render(
+      <TaskDetailModal
+        visible={true}
+        task={htmlTask}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+      />
+    );
+
+    const descInput = getByTestId('task-detail-description-input');
+    expect(descInput.props.value).toBe('First line\n\n• Item A');
+
+    // Change priority ONLY without editing Notes -> original server HTML is preserved verbatim!
+    fireEvent.press(getByTestId('priority-option-4'));
+    fireEvent.press(getByTestId('task-detail-save-btn'));
+    expect(mockOnSave).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        priority: 4,
+        description: '<p>First line</p><ul><li><p>Item A</p></li></ul>',
+      })
+    );
+  });
+
+  it('serializes edited notes back into clean HTML when the original description was HTML', () => {
+    const htmlTask: Task = {
+      ...mockTask,
+      description: '<p>First line</p><ul><li><p>Item A</p></li></ul>',
+    };
+
+    const { getByTestId } = render(
+      <TaskDetailModal
+        visible={true}
+        task={htmlTask}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+      />
+    );
+
+    fireEvent.changeText(
+      getByTestId('task-detail-description-input'),
+      'Updated heading\n\n- [x] Done step'
+    );
+    fireEvent.press(getByTestId('task-detail-save-btn'));
+    expect(mockOnSave).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        description:
+          '<p>Updated heading</p><ul data-type="taskList"><li data-checked="true"><p>Done step</p></li></ul>',
+      })
+    );
+  });
+
+  it('renders subtasks, toggles/adds/deletes subtasks, and triggers Duplicate Task', () => {
+    const mockOnAddSubtask = jest.fn();
+    const mockOnToggleSubtask = jest.fn();
+    const mockOnDeleteSubtask = jest.fn();
+    const mockOnDuplicateTask = jest.fn();
+
+    const taskWithSubs: Task = {
+      ...mockTask,
+      related_tasks: {
+        subtask: [
+          { id: 201, title: 'Pack charger', done: true, priority: 0, project_id: 1 },
+          { id: 202, title: 'Lock doors', done: false, priority: 0, project_id: 1 },
+        ],
+      },
+    };
+
+    const { getByTestId, getByText } = render(
+      <TaskDetailModal
+        visible={true}
+        task={taskWithSubs}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+        onAddSubtask={mockOnAddSubtask}
+        onToggleSubtask={mockOnToggleSubtask}
+        onDeleteSubtask={mockOnDeleteSubtask}
+        onDuplicateTask={mockOnDuplicateTask}
+      />
+    );
+
+    expect(getByText('1/2')).toBeTruthy();
+    expect(getByText('Pack charger')).toBeTruthy();
+    expect(getByText('Lock doors')).toBeTruthy();
+
+    fireEvent.press(getByTestId('subtask-checkbox-202'));
+    expect(mockOnToggleSubtask).toHaveBeenCalledWith(202);
+
+    fireEvent.changeText(getByTestId('task-detail-subtask-input'), 'Water plants');
+    fireEvent.press(getByTestId('add-subtask-btn'));
+    expect(mockOnAddSubtask).toHaveBeenCalledWith(10, 'Water plants');
+
+    fireEvent.press(getByTestId('delete-subtask-201'));
+    expect(mockOnDeleteSubtask).toHaveBeenCalledWith(10, 201);
+
+    fireEvent.press(getByTestId('task-detail-duplicate-btn'));
+    expect(mockOnDuplicateTask).toHaveBeenCalledWith(10);
+    expect(mockOnClose).toHaveBeenCalled();
+  });
 });

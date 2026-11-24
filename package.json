@@ -1,6 +1,30 @@
 {
   "name": "guanaco",
-  "version": "1.3.2",
+  "version": "1.4.0",
+  "description": "Fast, private, offline-first mobile and tablet client for self-hosted Vikunja task servers.",
+  "homepage": "https://terahz.github.io/guanaco/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TeraHz/guanaco.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TeraHz/guanaco/issues"
+  },
+  "keywords": [
+    "vikunja",
+    "vikunja-client",
+    "vikunja-mobile",
+    "todo",
+    "task-manager",
+    "self-hosted",
+    "offline-first",
+    "privacy",
+    "android",
+    "ios",
+    "tablet",
+    "react-native",
+    "expo"
+  ],
   "main": "index.js",
   "scripts": {
     "start": "EXPO_NO_TELEMETRY=1 expo start",
@@ -11,6 +35,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "typecheck": "tsc --noEmit",
+    "screenshots": "node scripts/generate-screenshots.js",
     "build:bundle": "bash scripts/build-android-bundle.sh",
     "publish:play": "node scripts/publish-play-store.js",
     "bump": "node scripts/bump-version.js",

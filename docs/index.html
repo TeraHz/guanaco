@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guanaco — Mobile &amp; Tablet App for Vikunja (Android &amp; iOS)</title>
+  <meta name="description" content="Guanaco is a fast, private, open-source mobile and tablet app for Vikunja. Works offline, supports subtasks, saved filters, natural-language quick entry, local reminders, and OLED dark mode with zero tracking." />
+  <meta name="keywords" content="Vikunja mobile app, Vikunja Android app, Vikunja iOS app, self-hosted todo app, offline task manager, open source Vikunja client, Guanaco Vikunja, private todo list" />
+  <meta name="author" content="Guanaco Open Source Project" />
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+  <link rel="canonical" href="https://terahz.github.io/guanaco/" />
+
+  <!-- Open Graph / Social Sharing -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Guanaco" />
+  <meta property="og:title" content="Guanaco — Mobile &amp; Tablet App for Vikunja" />
+  <meta property="og:description" content="A fast, private mobile and tablet app for your Vikunja server. Works offline, supports subtasks, saved filters, quick natural-language entry, and local reminders." />
+  <meta property="og:url" content="https://terahz.github.io/guanaco/" />
+  <meta property="og:image" content="https://terahz.github.io/guanaco/assets/social-preview.png" />
+  <meta property="og:image:width" content="1280" />
+  <meta property="og:image:height" content="640" />
+  <meta property="og:image:alt" content="Guanaco — Mobile Client for Vikunja" />
+
+  <!-- Twitter / Fediverse Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Guanaco — Mobile &amp; Tablet App for Vikunja" />
+  <meta name="twitter:description" content="A fast, private, open-source mobile and tablet app for Vikunja. Works offline with subtasks, saved filters, local reminders, and zero tracking." />
+  <meta name="twitter:image" content="https://terahz.github.io/guanaco/assets/social-preview.png" />
+
+  <meta name="theme-color" content="#0D0D0E" />
+
+  <!-- Schema.org Structured Data: SoftwareApplication + FAQPage -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "Guanaco",
+        "alternateName": "Guanaco — Vikunja Mobile App",
+        "applicationCategory": "ProductivityApplication",
+        "operatingSystem": "Android, iOS",
+        "description": "Fast, private mobile and tablet task management app for self-hosted and cloud Vikunja servers.",
+        "url": "https://terahz.github.io/guanaco/",
+        "downloadUrl": "https://github.com/TeraHz/guanaco/releases",
+        "codeRepository": "https://github.com/TeraHz/guanaco",
+        "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+        "isAccessibleForFree": true,
+        "screenshot": [
+          "https://terahz.github.io/guanaco/assets/screenshots/01-tasks-dark.png",
+          "https://terahz.github.io/guanaco/assets/screenshots/02-tasks-light.png",
+          "https://terahz.github.io/guanaco/assets/screenshots/03-task-detail-subtasks.png",
+          "https://terahz.github.io/guanaco/assets/screenshots/04-global-search-oled.png"
+        ],
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "featureList": [
+          "Full offline support with automatic background sync",
+          "Subtasks, saved filters, labels, priorities, and shared lists",
+          "Natural-language quick task entry for dates, tags, lists, and repeating schedules",
+          "Support for private home-server HTTPS certificates on Android",
+          "On-device reminders with Mark Complete and Snooze actions",
+          "Zero analytics, zero ads, and optional fingerprint or Face ID lock"
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Can I use Guanaco when I don't have an internet connection?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Your lists and tasks stay available offline so you can add, check off, edit, and reorder items anywhere. Guanaco syncs your changes automatically as soon as your Vikunja server is reachable again."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does Guanaco work with home servers using custom certificates?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. On Android, Guanaco trusts root certificates you install in your device's system security settings, making it easy to connect to private home servers over HTTPS."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does Guanaco track usage or send tasks through third-party servers?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Guanaco connects strictly between your device and your Vikunja server. There are no analytics trackers, ads, or external push-notification services — all reminders run locally on your device."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I sign in if my Vikunja account uses single sign-on (SSO) or passkeys?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Open Vikunja in your web browser, create a Personal API Token under Settings -> API Tokens, and paste it into the API Token tab on Guanaco's sign-in screen."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+
+  <style>
+    :root {
+      --bg: #0b0c10;
+      --surface: #15171e;
+      --surface-2: #1e212b;
+      --border: #2a2e3b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #0a84ff;
+      --accent-soft: rgba(10, 132, 255, 0.14);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+    header.nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      background: rgba(11, 12, 16, 0.82);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+      gap: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      font-size: 1.15rem;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .brand-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 4px;
+      background: linear-gradient(135deg, #ebd2a9, #9333ea);
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 0.92rem;
+      font-weight: 600;
+    }
+    .nav-links a { color: var(--muted); }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 11px 20px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 0.95rem;
+      transition: transform 0.15s ease, opacity 0.15s ease;
+      text-decoration: none !important;
+    }
+    .btn:hover { transform: translateY(-1px); opacity: 0.94; }
+    .btn-primary { background: var(--accent); color: #ffffff; }
+    .btn-secondary {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .hero {
+      padding: 72px 0 56px;
+      text-align: center;
+      background: radial-gradient(circle at 50% 0%, rgba(147, 51, 234, 0.18), transparent 60%);
+    }
+    .badge-row {
+      display: inline-flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 22px;
+    }
+    .pill {
+      background: var(--accent-soft);
+      border: 1px solid rgba(10, 132, 255, 0.38);
+      color: #7cc4ff;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 5px 12px;
+      border-radius: 999px;
+    }
+    h1 {
+      font-size: clamp(2.2rem, 5vw, 3.4rem);
+      font-weight: 850;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      max-width: 800px;
+      margin: 0 auto 18px;
+    }
+    .lead {
+      font-size: clamp(1.05rem, 2vw, 1.22rem);
+      color: var(--muted);
+      max-width: 650px;
+      margin: 0 auto 30px;
+    }
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 52px;
+    }
+
+    .shots-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .shot-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 10px;
+      box-shadow: 0 20px 44px rgba(0, 0, 0, 0.45);
+    }
+    .shot-card img {
+      width: 100%;
+      height: auto;
+      border-radius: 14px;
+      display: block;
+    }
+    .shot-caption {
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 600;
+      margin-top: 10px;
+      text-align: center;
+    }
+
+    section { padding: 64px 0; border-top: 1px solid var(--border); }
+    .section-title {
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 10px;
+    }
+    .section-sub {
+      color: var(--muted);
+      max-width: 660px;
+      margin-bottom: 36px;
+      font-size: 1.02rem;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 18px;
+    }
+    .feature-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+    }
+    .feature-box h3 {
+      font-size: 1.08rem;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    .feature-box p {
+      font-size: 0.94rem;
+      color: var(--muted);
+    }
+
+    .syntax-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow-x: auto;
+    }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 14px 18px; border-bottom: 1px solid var(--border); font-size: 0.93rem; }
+    th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    tr:last-child td { border-bottom: none; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 0.86em;
+      color: #e2e8f0;
+    }
+
+    .tablet-frame {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 14px;
+      box-shadow: 0 24px 56px rgba(0, 0, 0, 0.5);
+    }
+    .tablet-frame img {
+      width: 100%;
+      height: auto;
+      border-radius: 14px;
+      display: block;
+    }
+
+    .faq-list { display: grid; gap: 12px; max-width: 820px; }
+    details {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 20px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 1rem;
+      list-style: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    details p {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 36px 0 48px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .footer-inner {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+      .shots-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 560px) {
+      .nav-links { display: none; }
+      .shots-grid { grid-template-columns: 1fr; max-width: 340px; margin: 0 auto; }
+    }
+  </style>
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <span>Guanaco</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#quick-add">Quick-Add</a>
+        <a href="#tablet">Tablet View</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://github.com/TeraHz/guanaco/blob/main/docs/USER_MANUAL.md">User Manual</a>
+        <a href="privacy.html">Privacy</a>
+      </nav>
+      <a class="btn btn-secondary" href="https://github.com/TeraHz/guanaco">GitHub</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div class="wrap">
+        <div class="badge-row">
+          <span class="pill">Vikunja Mobile App</span>
+          <span class="pill">No Tracking</span>
+          <span class="pill">Free &amp; Open Source</span>
+        </div>
+        <h1>Your Vikunja tasks, ready anywhere.</h1>
+        <p class="lead">
+          A fast, private app for Android, iPhone, iPad, and tablets that connects directly to your Vikunja server — and keeps working smoothly even when you're offline.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/TeraHz/guanaco/releases">Download Releases</a>
+          <a class="btn btn-secondary" href="https://github.com/TeraHz/guanaco/blob/main/docs/USER_MANUAL.md">User Manual</a>
+          <a class="btn btn-secondary" href="https://github.com/TeraHz/guanaco">View on GitHub</a>
+        </div>
+
+        <div class="shots-grid">
+          <figure class="shot-card">
+            <img src="assets/screenshots/01-tasks-dark.png" alt="Guanaco dark mode task list" loading="eager" width="780" height="1688" />
+            <figcaption class="shot-caption">Dark Theme &amp; Subtask Progress</figcaption>
+          </figure>
+          <figure class="shot-card">
+            <img src="assets/screenshots/02-tasks-light.png" alt="Guanaco light mode with quick-add bar" loading="eager" width="780" height="1688" />
+            <figcaption class="shot-caption">Light Theme &amp; Quick-Add</figcaption>
+          </figure>
+          <figure class="shot-card">
+            <img src="assets/screenshots/03-task-detail-subtasks.png" alt="Guanaco task details with checklists and subtasks" loading="lazy" width="780" height="1688" />
+            <figcaption class="shot-caption">Notes, Checklists &amp; Subtasks</figcaption>
+          </figure>
+          <figure class="shot-card">
+            <img src="assets/screenshots/04-global-search-oled.png" alt="Guanaco pure black OLED mode with cross-list search" loading="lazy" width="780" height="1688" />
+            <figcaption class="shot-caption">Pure Black OLED &amp; Search</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+
+    <section id="features">
+      <div class="wrap">
+        <h2 class="section-title">Everything you need for daily tasks</h2>
+        <p class="section-sub">
+          Designed to feel effortless on your phone while staying completely faithful to your Vikunja lists, filters, and notes.
+        </p>
+        <div class="features-grid">
+          <article class="feature-box">
+            <h3>Works Offline</h3>
+            <p>Add tasks, check off errands, edit notes, and reorder lists without a connection. Everything syncs automatically once you're back online.</p>
+          </article>
+          <article class="feature-box">
+            <h3>Subtasks &amp; Saved Filters</h3>
+            <p>Break big projects into subtasks with progress counts, duplicate task templates, and open your Vikunja Saved Filters from the sidebar.</p>
+          </article>
+          <article class="feature-box">
+            <h3>Clean Notes &amp; Search</h3>
+            <p>Read and edit formatted Vikunja notes and checklists cleanly on mobile, and search across all your lists by title, note, label, or assignee.</p>
+          </article>
+          <article class="feature-box">
+            <h3>Flexible Schedules &amp; Reminders</h3>
+            <p>Postpone tasks in one tap, set custom repeat intervals, and mark tasks done or snooze them directly from local notifications.</p>
+          </article>
+          <article class="feature-box">
+            <h3>OLED Theme &amp; Custom Sizing</h3>
+            <p>Pick Light, Dark, or pure black OLED mode, and scale task card size and text size separately for comfortable reading.</p>
+          </article>
+          <article class="feature-box">
+            <h3>Private by Design</h3>
+            <p>Connects straight to your server with support for two-factor login, API tokens, custom home-server certificates on Android, and biometric app lock.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="quick-add">
+      <div class="wrap">
+        <h2 class="section-title">Add tasks in one line</h2>
+        <p class="section-sub">
+          Type naturally in the bottom bar — dates, tags, lists, and priorities are recognized automatically as you type.
+        </p>
+        <div class="syntax-card">
+          <table>
+            <thead>
+              <tr>
+                <th>To Set</th>
+                <th>Type</th>
+                <th>Example</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Labels</strong></td>
+                <td><code>#tag</code> or <code>#"two words"</code></td>
+                <td><code>Pay electric bill #home #bills</code></td>
+              </tr>
+              <tr>
+                <td><strong>Target List</strong></td>
+                <td><code>+List</code> or <code>+"List Name"</code></td>
+                <td><code>Coffee beans +"Weekly Groceries"</code></td>
+              </tr>
+              <tr>
+                <td><strong>Priority</strong></td>
+                <td><code>!1</code>–<code>!5</code> or <code>!low</code> to <code>!critical</code></td>
+                <td><code>Renew passport !high</code></td>
+              </tr>
+              <tr>
+                <td><strong>Due Date &amp; Time</strong></td>
+                <td><code>today</code>, <code>tomorrow</code>, <code>next fri</code>, <code>in 3 days</code>, <code>at 5pm</code></td>
+                <td><code>Send invoice tomorrow at 9:30am</code></td>
+              </tr>
+              <tr>
+                <td><strong>Repeat</strong></td>
+                <td><code>every [N] hours/days/weeks/months/years</code></td>
+                <td><code>Water plants every 4 days</code></td>
+              </tr>
+              <tr>
+                <td><strong>Assignee</strong></td>
+                <td><code>@username</code></td>
+                <td><code>Review trip checklist @alex</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tablet">
+      <div class="wrap">
+        <h2 class="section-title">Made for tablets &amp; foldables too</h2>
+        <p class="section-sub">
+          On wider screens, Guanaco keeps your lists, sublists, and Saved Filters open right alongside your tasks.
+        </p>
+        <div class="tablet-frame">
+          <img src="assets/screenshots/06-tablet-split-view.png" alt="Guanaco split-screen layout on tablets" loading="lazy" width="2048" height="1400" />
+        </div>
+      </div>
+    </section>
+
+    <section id="faq">
+      <div class="wrap">
+        <h2 class="section-title">Common Questions</h2>
+        <div class="faq-list">
+          <details open>
+            <summary>Can I use Guanaco without an internet connection?</summary>
+            <p>Yes. Your lists and tasks stay available on your phone so you can add, check off, edit, and reorder items offline. Your changes sync automatically as soon as your server is reachable again.</p>
+          </details>
+          <details>
+            <summary>Does it work with home servers that use custom HTTPS certificates?</summary>
+            <p>Yes. On Android, install your root certificate in the system CA certificate settings and Guanaco will trust your private HTTPS connection automatically.</p>
+          </details>
+          <details>
+            <summary>Are my tasks or reminders sent through any external servers?</summary>
+            <p>Never. Guanaco talks only to your Vikunja server, includes no analytics or ads, and schedules all reminders locally on your device.</p>
+          </details>
+          <details>
+            <summary>What if my Vikunja account uses single sign-on (SSO) or passkeys?</summary>
+            <p>Create a Personal API Token in Vikunja Web under <em>Settings → API Tokens</em> and paste it into the <strong>API Token</strong> tab on Guanaco's sign-in screen.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-inner">
+      <div>
+        <strong>Guanaco</strong> — Free &amp; Open Source Software (<a href="https://github.com/TeraHz/guanaco/blob/main/LICENSE">GPL-3.0</a>).
+      </div>
+      <div>
+        <a href="https://github.com/TeraHz/guanaco">GitHub</a> ·
+        <a href="https://github.com/TeraHz/guanaco/blob/main/docs/USER_MANUAL.md">User Manual</a> ·
+        <a href="privacy.html">Privacy Policy</a> ·
+        <a href="https://vikunja.io/" rel="noopener">Vikunja</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

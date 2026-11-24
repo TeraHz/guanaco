@@ -1,131 +1,120 @@
-# Guanaco — Mobile Client for Vikunja
+# Guanaco — Mobile & Tablet App for Vikunja
 
 <p align="center">
-  <img src="assets/icon.png" width="128" height="128" alt="Guanaco Logo" style="border-radius: 28px;" />
+  <img src="assets/icon.png" width="120" height="120" alt="Guanaco app icon" style="border-radius: 26px;" />
 </p>
 
 <p align="center">
-  <strong>Fast, private, offline-first mobile &amp; tablet task management for your self-hosted Vikunja server.</strong>
+  <strong>A fast, private mobile and tablet app for <a href="https://vikunja.io/">Vikunja</a>.</strong>
 </p>
 
 <p align="center">
-  <a href="#-key-features">Features</a> •
-  <a href="#-privacy--security">Privacy</a> •
-  <a href="#-architecture--tech-stack">Architecture</a> •
-  <a href="#-development--testing">Development</a> •
-  <a href="PRIVACY_POLICY.md">Privacy Policy</a> •
-  <a href="LICENSE">License</a>
+  <a href="https://github.com/TeraHz/guanaco/actions/workflows/ci.yml"><img src="https://github.com/TeraHz/guanaco/actions/workflows/ci.yml/badge.svg" alt="Build Status" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="License: GPL-3.0" /></a>
+  <img src="https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Tablet-30D158" alt="Platform: Android, iOS, Tablet" />
+</p>
+
+<p align="center">
+  <a href="https://terahz.github.io/guanaco/">Website</a> •
+  <a href="#screenshots">Screenshots</a> •
+  <a href="#features">Features</a> •
+  <a href="#quick-add-shortcuts">Quick-Add Shortcuts</a> •
+  <a href="docs/USER_MANUAL.md"><strong>User Manual</strong></a> •
+  <a href="#privacy">Privacy</a>
 </p>
 
 ---
 
-## 🎯 Key Features
-
-1. **0ms Optimistic UI, Offline-First Sync & Flexible Auth**:
-   - Completing, creating, editing, reordering, and moving tasks happen instantaneously with 0ms UI latency.
-   - Persistent offline mutation queue (`SyncQueue`) safely replays edits, resolves optimistic temporary IDs across restarts, and preserves unsynced user work across network drops or token expirations.
-   - Sign in with **Username/Password + optional TOTP 2FA** (with automatic JWT renewal) or **Personal API Tokens (`tk_...`)** — with zero plaintext password storage.
-   - Multi-page server pagination and active-window polling keep large Vikunja accounts synchronized without draining battery.
-
-2. **Rapid Chained Task Entry (`QuickAddBar`)**:
-   - Persistent bottom capture bar for rapid consecutive task entry, with live autocomplete and staple item suggestions.
-   - Natural-language shortcut syntax (wrap entire input in `"quotes"` to bypass parsing):
-     - `#tag` or `*tag` (and `#"multi word"` / `*"multi word"`) for labels
-     - `!1`–`!5` or `!low`, `!medium`, `!high`, `!urgent`, `!critical` for priority
-     - `+Project` or `+"Project Name"` for target list/project
-     - `@user` for task assignment
-     - `@today`, `@tomorrow`, `@tonight`, `today`, `tomorrow`, `tonight`, `in N days`, weekdays (`mon`–`sun` / `next monday`), `at 5pm` / `at 17:00` for due dates & times
-     - `every [N] hour(s)/day(s)/week(s)/month(s)/year(s)` for recurring tasks
-
-3. **Tactile Gestures & Haptics (`SwipeableTaskItem`)**:
-   - **Swipe Left**: Instant completion / undo toggle (`✓ Done` / `Undo`) with tactile haptic feedback.
-   - **Swipe Right**: Reveals **Move** (relocate task to another list) and **Delete** (protected by a 5-second **Undo** toast banner), alongside inline `+#` quick label controls.
-   - **Reorder Mode**: Drag-and-drop (`☰`) or accessible `▲` / `▼` step reordering.
-
-4. **Multi-Project Navigation, Smart Views & Tablet Split-View**:
-   - Nested project hierarchy drawer with live open-task count badges, project sharing, and collapsible **Archived Lists** management.
-   - Consolidated **All Tasks** and **My Open Tasks** views, smart on-device category/aisle grouping, and adaptive Light/Dark themes.
-   - Dedicated sidebar split-view on tablets/foldables (`>= 768px`) and independent **Task Box Size** & **Task Text Size** scaling (`100%`–`200%`).
-
-5. **Full Vikunja Task Details & Local Reminders**:
-   - Descriptions/notes, percentage progress (`0%`–`100%`), start/due/end dates, flexible repeat modes (from due date, monthly, after completion), relative & absolute local reminders, labels, colors, and assignees.
+**Guanaco** brings your self-hosted or cloud **Vikunja** tasks to Android, iPhone, iPad, and tablets. It connects directly to your server, stays responsive even when you have no signal, and keeps your reminders and data strictly on your own devices.
 
 ---
 
-## 🔒 Privacy & Security
+## Screenshots
 
-Guanaco is built strictly for personal privacy and data sovereignty:
-- **Direct Connection Only:** All traffic travels exclusively between your device and your configured Vikunja instance (HTTPS by default; explicit confirmation required for local cleartext HTTP).
-- **Zero Telemetry & Zero Third-Party SDKs:** No Google Analytics, Firebase, Sentry, Crashlytics, or advertising identifiers.
-- **Zero Plaintext Password Persistence:** Passwords and TOTP 2FA codes are used once to authenticate and immediately discarded. Only session JWTs or Personal API Tokens (`tk_...`) are stored in hardware-backed `expo-secure-store` (Android Keystore / iOS Keychain).
-- **Cloud Auto-Backup Disabled (`android:allowBackup="false"`):** Local task caches are excluded from third-party cloud auto-backups.
-- **100% Local Notifications & Resume-Aware Biometric Lock:** Task reminders run locally via `expo-notifications` without push relays or `SCHEDULE_EXACT_ALARM`. Optional fingerprint / Face ID lock protects app launch and background resume offline.
+<p align="center">
+  <img src="docs/assets/screenshots/01-tasks-dark.png" width="23%" alt="Dark mode task list" />
+  <img src="docs/assets/screenshots/02-tasks-light.png" width="23%" alt="Light mode with quick-add shortcuts" />
+  <img src="docs/assets/screenshots/03-task-detail-subtasks.png" width="23%" alt="Task details with notes and subtasks" />
+  <img src="docs/assets/screenshots/04-global-search-oled.png" width="23%" alt="OLED theme with search across lists" />
+</p>
 
-See the full [Privacy Policy](PRIVACY_POLICY.md).
-
----
-
-## 🛠️ Architecture & Tech Stack
-
-- **Framework**: React Native `0.86` & Expo `57` (TypeScript, New Architecture + Hermes)
-- **State & Offline Sync**: Zustand + `@react-native-async-storage/async-storage`
-- **Hardware Token Storage & Biometrics**: `expo-secure-store` + `expo-local-authentication`
-- **Gestures & Animations**: `react-native-gesture-handler` + `react-native-reanimated` + `expo-haptics`
-- **Native Android**: Tracked `android/` Gradle project (`armeabi-v7a`, `arm64-v8a`), R8 full-mode shrinking + mapping upload, and native Kotlin `InAppUpdateModule` (`com.google.android.play:app-update-ktx`)
-- **Testing & CI**: Jest + `@testing-library/react-native`, verified across `UTC`, `America/Los_Angeles`, and `Asia/Tokyo` timezones in GitHub Actions
+<details>
+  <summary><strong>View Lists Drawer &amp; Tablet Split-Screen</strong></summary>
+  <br />
+  <p align="center">
+    <img src="docs/assets/screenshots/05-lists-drawer.png" width="28%" alt="Lists drawer with saved filters and sublists" />
+    &nbsp;&nbsp;
+    <img src="docs/assets/screenshots/06-tablet-split-view.png" width="66%" alt="Tablet split-screen layout" />
+  </p>
+</details>
 
 ---
 
-## 🧪 Development & Testing
+## Features
+
+- **Reliable Offline Use** — View your lists, check off items, edit details, and add new tasks on a plane or in a dead zone. Everything syncs automatically once you reconnect.
+- **Tasks, Subtasks & Rich Notes** — Break larger tasks into subtasks with live progress counts, duplicate recurring templates, and read or edit formatted notes and checklists created in Vikunja Web.
+- **Lists, Sublists & Saved Filters** — Organize nested lists, pin favorites, share lists with teammates, and open your Vikunja Saved Filters right from the sidebar.
+- **Fast Search & Effortless Gestures** — Search across every list by title, note, label, or assignee. Swipe left to complete a task, swipe right to move or delete it, or drag items into your own custom order.
+- **Flexible Schedules & Reminders** — Set due dates, postpone tasks by `+1d / +3d / +1w`, configure custom repeat intervals (every few hours, days, weeks, months, or years), and mark tasks complete or snooze them straight from a notification.
+- **Comfortable on Every Screen** — Choose Light, Dark, or pure black OLED mode, adjust card size and text size separately, and enjoy a side-by-side layout on tablets and foldables.
+- **Home-Server Friendly** — Sign in with your password (including two-factor codes) or an API token, lock the app with Fingerprint or Face ID, and connect to private home servers using custom certificates on Android.
+
+---
+
+## Quick-Add Shortcuts
+
+Type naturally in the bottom bar — shortcuts turn into tags, dates, and priorities automatically as you type (wrap a title in `"quotes"` if you want the exact text kept as-is):
+
+| To Set | Type | Example |
+| :--- | :--- | :--- |
+| **Labels** | `#tag` or `#"two words"` | `Pay utility bill #home #bills` |
+| **List** | `+List` or `+"List Name"` | `Oat milk +"Weekly Groceries"` |
+| **Priority** | `!1`–`!5` or `!low` to `!critical` | `Renew passport !high` |
+| **Due Date & Time** | `today`, `tomorrow`, `next fri`, `in 3 days`, `at 5pm` | `Call dentist tomorrow at 9:30am` |
+| **Repeat** | `every [N] hours/days/weeks/months/years` | `Water plants every 4 days` |
+| **Assignee** | `@username` | `Review trip itinerary @alex` |
+
+For setup tips, saved filters, reminders, and troubleshooting, read the **[User Manual](docs/USER_MANUAL.md)**.
+
+---
+
+## Privacy
+
+- **Direct connection only:** Your tasks travel straight between your device and your Vikunja server — never through third-party servers.
+- **No tracking or ads:** Guanaco includes no analytics, crash-reporting trackers, advertising SDKs, or external push-notification services.
+- **Protected credentials:** Your password is used once to sign in and is never saved on the device.
+
+Read the full [Privacy Policy](PRIVACY_POLICY.md).
+
+---
+
+## Building from Source
+
+<details>
+  <summary>Developer setup &amp; test commands</summary>
 
 ```bash
-# Install exact locked dependencies
+# Install dependencies
 npm ci
 
-# TypeScript static type check
+# Run type checks and test suite
 npm run typecheck
-
-# Run full Jest test suite
 npm test
 
-# Verify timezone safety across UTC, US Pacific, and Tokyo offsets
-TZ=UTC npm test
-TZ=America/Los_Angeles npm test
-TZ=Asia/Tokyo npm test
-
-# Run tests with coverage report
-npm run test:coverage
-
-# Start Expo dev server / Web preview
+# Start the development server
 npm start
-npm run web
+
+# Regenerate documentation screenshots
+npm run screenshots
 ```
+
+For signed Android Play Store bundles, supply `GUANACO_KEYSTORE_FILE`, `GUANACO_KEYSTORE_PASSWORD`, `GUANACO_KEY_ALIAS`, and `GUANACO_KEY_PASSWORD` in your environment and run `npm run build:bundle`.
+</details>
 
 ---
 
-## 📦 Building & Publishing (Android)
+## License
 
-Release builds never use hardcoded signing credentials. Provide your release keystore credentials via environment variables (or `~/.gradle/gradle.properties`):
-
-```bash
-export GUANACO_KEYSTORE_FILE="guanaco-release.keystore" # optional, defaults to android/app/guanaco-release.keystore
-export GUANACO_KEYSTORE_PASSWORD="<your-keystore-password>"
-export GUANACO_KEY_ALIAS="<your-key-alias>"
-export GUANACO_KEY_PASSWORD="<your-key-password>"
-
-# Bump semver + Android versionCode across package.json, app.json, version.ts, and build.gradle
-npm run bump -- patch
-
-# Build production Android App Bundle (.aab) with R8 optimization locally
-npm run build:bundle
-
-# Publish bundle + R8 mapping.txt to Google Play Console (requires play-service-account.json)
-npm run publish:play -- --track internal
-```
-
----
-
-## 📄 License
-
-Guanaco is free and open-source software licensed under the [GNU General Public License v3.0 (GPL-3.0-or-later)](LICENSE).  
-Vikunja is an open-source project created by Kolaente.
+Guanaco is free and open-source software licensed under the [GNU General Public License v3.0](LICENSE).  
+[Vikunja](https://vikunja.io/) is an open-source project created by Kolaente.

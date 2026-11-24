@@ -76,12 +76,46 @@ export interface Project {
   is_favorite?: boolean;
   position?: number;
   views?: ProjectView[];
+  /** True when this entry represents a server-side Vikunja Saved Filter */
+  is_saved_filter?: boolean;
+  /** Original server pseudo-project ID when remapped locally to avoid sentinel collisions */
+  server_project_id?: number;
   /** Highest permission the current user has on this project */
   max_permission?: Permission;
   owner?: User;
   created?: string;
   updated?: string;
 }
+
+export type TaskRelationKind =
+  | 'subtask'
+  | 'parenttask'
+  | 'related'
+  | 'duplicateof'
+  | 'duplicates'
+  | 'blocking'
+  | 'blocked'
+  | 'precedes'
+  | 'follows'
+  | 'copiedfrom'
+  | 'copiedto';
+
+export interface TaskRelation {
+  task_id: number;
+  other_task_id: number;
+  relation_kind: TaskRelationKind;
+  created?: string;
+}
+
+export interface TaskRelatedMap {
+  subtask?: Task[];
+  parenttask?: Task[];
+  [relationKind: string]: Task[] | undefined;
+}
+
+export type ThemeMode = 'system' | 'light' | 'dark' | 'oled';
+export type WeekStartDay = 0 | 1;
+export type AppBadgeMode = 'off' | 'overdue' | 'due_today';
 
 export interface Label {
   id: number;
@@ -111,6 +145,7 @@ export interface Task {
   hex_color?: string;
   labels?: Label[];
   assignees?: User[];
+  related_tasks?: TaskRelatedMap | null;
   created?: string;
   updated?: string;
 }

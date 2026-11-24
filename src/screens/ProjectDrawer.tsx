@@ -46,6 +46,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     tasks,
     currentUser,
     selectedProjectId,
+    savedFilterTaskIds = {},
     setSelectedProjectId,
     toggleProjectFavorite,
     archiveProject,
@@ -150,19 +151,27 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     };
   }, [shouldComputeDrawer, tasks, currentUser]);
 
-  const { flattenedActiveTree, archivedProjects } = useMemo(() => {
+  const { flattenedActiveTree, archivedProjects, savedFilters } = useMemo(() => {
     if (!shouldComputeDrawer) {
-      return { flattenedActiveTree: [], archivedProjects: [] as Project[] };
+      return {
+        flattenedActiveTree: [],
+        archivedProjects: [] as Project[],
+        savedFilters: [] as Project[],
+      };
     }
     const active = safeProjects.filter((p) => p.id > 0 && !p.is_archived);
     const archived = safeProjects
       .filter((p) => p.id > 0 && Boolean(p.is_archived))
+      .sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
+    const filters = safeProjects
+      .filter((p) => Boolean(p.is_saved_filter || (p.id < 0 && p.id !== MY_TASKS_PROJECT_ID)))
       .sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
 
     const treeNodes = buildProjectTree(active);
     return {
       flattenedActiveTree: flattenProjectTree(treeNodes),
       archivedProjects: archived,
+      savedFilters: filters,
     };
   }, [shouldComputeDrawer, safeProjects]);
 
@@ -312,6 +321,62 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
             {myActiveCount}
           </Text>
         </TouchableOpacity>
+
+        {/* Server Saved Filters */}
+        {savedFilters.length > 0 && (
+          <>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionHeaderTitle, { color: theme.colors.textSecondary }]}>
+                SAVED FILTERS
+              </Text>
+            </View>
+            {savedFilters.map((sf) => {
+              const isSelected = sf.id === selectedProjectId;
+              const matchedIds = savedFilterTaskIds?.[sf.id] || [];
+              const matchedSet = new Set(matchedIds);
+              const openFilterCount = matchedIds.length
+                ? (Array.isArray(tasks) ? tasks : []).filter(
+                    (t) => matchedSet.has(t.id) && !t.done
+                  ).length
+                : 0;
+              const dotColor =
+                normalizeHexColor(sf.hex_color ?? undefined, true) || theme.colors.accent;
+              return (
+                <TouchableOpacity
+                  key={sf.id}
+                  testID={`drawer-saved-filter-${sf.id}`}
+                  style={[
+                    styles.projectItem,
+                    isSelected && {
+                      backgroundColor: theme.colors.surfaceSecondary,
+                    },
+                  ]}
+                  onPress={() => handleSelect(sf.id)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
+                >
+                  <View style={[styles.colorDot, { backgroundColor: dotColor }]} />
+                  <Text
+                    style={[
+                      styles.projectTitle,
+                      { color: theme.colors.text },
+                      isSelected && styles.projectTitleSelected,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {sf.title}
+                  </Text>
+                  {openFilterCount > 0 && (
+                    <Text style={[styles.badgeCount, { color: theme.colors.textSecondary }]}>
+                      {openFilterCount}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </>
+        )}
 
         {/* Individual Lists with Tree Hierarchy */}
         <View style={styles.sectionHeaderRow}>

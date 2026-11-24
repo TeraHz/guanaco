@@ -33,7 +33,14 @@ import {
   authenticateWithBiometrics,
   isPersonalApiToken,
 } from './utils/biometrics';
-import { initNotifications } from './services/localNotifications';
+import * as Notifications from 'expo-notifications';
+import {
+  initNotifications,
+  NOTIF_ACTION_MARK_DONE,
+  NOTIF_ACTION_SNOOZE_15M,
+  scheduleSnoozedReminder,
+  shouldCompleteTaskFromNotification,
+} from './services/localNotifications';
 import { useUpdateStore } from './store/updateStore';
 import { AppUpdatePromptModal } from './components/AppUpdatePromptModal';
 
@@ -82,6 +89,59 @@ export default function App() {
 
   useEffect(() => {
     initNotifications().catch(() => {});
+  }, []);
+
+  // Handle interactive local reminder actions (Mark Complete, Snooze 15m) & tap-to-open safely
+  useEffect(() => {
+    if (
+      Platform.OS === 'web' ||
+      typeof Notifications.addNotificationResponseReceivedListener !== 'function'
+    ) {
+      return;
+    }
+
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const actionId = response?.actionIdentifier;
+      const notifId = response?.notification?.request?.identifier;
+      const data = (response?.notification?.request?.content?.data || {}) as {
+        taskId?: number;
+        taskDueDate?: string | null;
+      };
+      const taskId = typeof data.taskId === 'number' ? data.taskId : null;
+      if (taskId === null) return;
+
+      if (actionId === NOTIF_ACTION_MARK_DONE) {
+        if (notifId && typeof Notifications.dismissNotificationAsync === 'function') {
+          Notifications.dismissNotificationAsync(notifId).catch(() => {});
+        }
+        if (isLockedRef.current || !useTaskStore.getState().client) return;
+        const store = useTaskStore.getState();
+        const target = (store.tasks || []).find((t) => t.id === taskId);
+        if (shouldCompleteTaskFromNotification(target, data)) {
+          store.toggleTask(taskId);
+        }
+        return;
+      }
+
+      if (actionId === NOTIF_ACTION_SNOOZE_15M) {
+        if (notifId && typeof Notifications.dismissNotificationAsync === 'function') {
+          Notifications.dismissNotificationAsync(notifId).catch(() => {});
+        }
+        if (isLockedRef.current || !useTaskStore.getState().client) return;
+        const target = (useTaskStore.getState().tasks || []).find((t) => t.id === taskId);
+        if (target && !target.done) {
+          scheduleSnoozedReminder(target, 15).catch(() => {});
+        }
+        return;
+      }
+
+      // Default notification tap: stage taskId so ProjectTasksScreen opens it once unlocked
+      useTaskStore.getState().setPendingOpenTaskId(taskId);
+    });
+
+    return () => {
+      sub?.remove?.();
+    };
   }, []);
 
   const promptBiometricUnlock = useCallback(async (): Promise<boolean> => {

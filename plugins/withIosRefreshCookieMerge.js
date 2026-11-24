@@ -91,11 +91,20 @@ static NSString *GuanacoNormalizeCookieHeader(NSString *rawCookie)
       }
       NSString *rawCookie = [request valueForHTTPHeaderField:@"Cookie"];
       NSString *normalized = GuanacoNormalizeCookieHeader(rawCookie);
-      if (normalized == nil || [normalized isEqualToString:rawCookie]) {
+      NSString *existingUa = [request valueForHTTPHeaderField:@"User-Agent"];
+      BOOL needsUa = (existingUa == nil || existingUa.length == 0 || ![existingUa hasPrefix:@"Guanaco/"]);
+      BOOL needsCookie = (normalized != nil && ![normalized isEqualToString:rawCookie]);
+      if (!needsCookie && !needsUa) {
         return nil;
       }
       NSMutableURLRequest *mutableRequest = [request mutableCopy];
-      [mutableRequest setValue:normalized forHTTPHeaderField:@"Cookie"];
+      if (needsCookie) {
+        [mutableRequest setValue:normalized forHTTPHeaderField:@"Cookie"];
+      }
+      if (needsUa) {
+        NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.3.2";
+        [mutableRequest setValue:[NSString stringWithFormat:@"Guanaco/%@ (iOS)", ver] forHTTPHeaderField:@"User-Agent"];
+      }
       return [mutableRequest copy];
     });
   });

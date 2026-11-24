@@ -342,4 +342,22 @@ describe('SettingsModal', () => {
       expect(queryByTestId('settings-aicore-section')).toBeNull();
     });
   });
+
+  it('allows configuring Appearance (System/Light/Dark/OLED), Week Start (Mon/Sun), and App Icon Badge', async () => {
+    const { getByTestId } = await renderSettings();
+
+    fireEvent.press(getByTestId('settings-theme-oled'));
+    expect(useTaskStore.getState().themeMode).toBe('oled');
+
+    fireEvent.press(getByTestId('settings-week-start-0'));
+    expect(useTaskStore.getState().weekStartDay).toBe(0);
+
+    fireEvent.press(getByTestId('settings-badge-due_today'));
+    expect(useTaskStore.getState().appBadgeMode).toBe('due_today');
+
+    // Reset back to defaults
+    fireEvent.press(getByTestId('settings-theme-system'));
+    fireEvent.press(getByTestId('settings-week-start-1'));
+    fireEvent.press(getByTestId('settings-badge-off'));
+  });
 });

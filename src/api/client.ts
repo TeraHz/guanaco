@@ -10,12 +10,15 @@ import {
   ProjectUserShare,
   ProjectView,
   Task,
+  TaskRelation,
+  TaskRelationKind,
   Team,
   UpdateProjectInput,
   UpdateTaskInput,
   User,
 } from '../types/vikunja';
 import { isPersonalApiToken } from '../utils/biometrics';
+import { APP_NAME, APP_VERSION } from '../constants/version';
 
 export interface VikunjaClientConfig {
   baseUrl: string;
@@ -567,8 +570,18 @@ export class VikunjaClient {
     const initialUrl = `${this.baseApiUrl}${endpoint}`;
     const hasBody = options.body !== undefined && options.body !== null;
 
+    // Identify Guanaco cleanly in Vikunja's active sessions tab on native OSes while omitting
+    // custom User-Agent on web browsers so strict CORS preflights never reject requests.
+    const nativePlatformLabel =
+      Platform.OS === 'ios' ? 'iOS' : Platform.OS === 'android' ? 'Android' : Platform.OS;
+    const defaultUserAgent =
+      Platform.OS && Platform.OS !== 'web'
+        ? `${APP_NAME}/${APP_VERSION} (${nativePlatformLabel})`
+        : undefined;
+
     const headers: Record<string, string> = {
       Accept: 'application/json',
+      ...(defaultUserAgent ? { 'User-Agent': defaultUserAgent } : {}),
       ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
       ...((options.headers as Record<string, string>) || {}),
     };
@@ -1300,6 +1313,7 @@ export class VikunjaClient {
 
   public async createTask(projectId: number, data: CreateTaskInput): Promise<Task> {
     const payload: any = { ...data };
+    delete payload.related_tasks;
     if (payload.color !== undefined && payload.hex_color === undefined) {
       payload.hex_color = payload.color;
     }
@@ -1323,6 +1337,7 @@ export class VikunjaClient {
 
   public async updateTask(taskId: number, data: UpdateTaskInput): Promise<Task> {
     const payload: any = { ...data };
+    delete payload.related_tasks;
     if (typeof payload.id === 'number' && payload.id < 0) {
       delete payload.id;
     }
@@ -1430,6 +1445,76 @@ export class VikunjaClient {
   public async deleteTask(taskId: number): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/tasks/${taskId}`, {
       method: 'DELETE',
+    });
+  }
+
+  // --- Task Relations (Subtasks) & Saved Filter Tasks ---
+  public async createTaskRelation(
+    taskId: number,
+    otherTaskId: number,
+    relationKind: TaskRelationKind = 'subtask'
+  ): Promise<TaskRelation> {
+    return this.request<TaskRelation>(`/tasks/${taskId}/relations`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        task_id: taskId,
+        other_task_id: otherTaskId,
+        relation_kind: relationKind,
+      }),
+    });
+  }
+
+  public async deleteTaskRelation(
+    taskId: number,
+    relationKind: TaskRelationKind,
+    otherTaskId: number
+  ): Promise<{ message: string }> {
+    return this.request<{ message: string }>(
+      `/tasks/${taskId}/relations/${encodeURIComponent(relationKind)}/${otherTaskId}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  public async getSavedFilterTasks(
+    filterProject: Project,
+    params?: { page?: number; per_page?: number; signal?: AbortSignal }
+  ): Promise<Task[]> {
+    const serverId = filterProject.server_project_id ?? filterProject.id;
+    let views = filterProject.views;
+    if ((!views || views.length === 0) && typeof this.getProjectViews === 'function') {
+      try {
+        views = await this.getProjectViews(serverId);
+      } catch {
+        views = undefined;
+      }
+    }
+
+    const listViewId =
+      views?.find((v) => v.view_kind === 'list')?.id || views?.[0]?.id;
+
+    if (listViewId && listViewId > 0) {
+      try {
+        return await this.fetchPaginatedList<Task>(
+          `/projects/${serverId}/views/${listViewId}/tasks`,
+          {
+            page: params?.page,
+            per_page: params?.per_page,
+            signal: params?.signal,
+          }
+        );
+      } catch (err: any) {
+        if (!(err instanceof VikunjaApiError && (err.status === 404 || err.status === 405))) {
+          throw err;
+        }
+      }
+    }
+
+    return this.fetchPaginatedList<Task>(`/projects/${serverId}/tasks`, {
+      page: params?.page,
+      per_page: params?.per_page,
+      signal: params?.signal,
     });
   }
 

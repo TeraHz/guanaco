@@ -5,8 +5,11 @@ import {
   scheduleTaskReminders,
   cancelTaskReminders,
   syncAllTaskReminders,
+  shouldCompleteTaskFromNotification,
+  syncAppBadgeCount,
+  TASK_REMINDER_CATEGORY,
 } from '../localNotifications';
-import { Task, ReminderRelativeTo } from '../../types/vikunja';
+import { Task, ReminderRelativeTo, RepeatMode } from '../../types/vikunja';
 
 describe('Local Notifications Service (Zero-Telemetry On-Device Reminders)', () => {
   beforeEach(() => {
@@ -79,7 +82,12 @@ describe('Local Notifications Service (Zero-Telemetry On-Device Reminders)', () 
       expect.objectContaining({
         content: expect.objectContaining({
           title: 'Submit Tax Forms',
-          data: { taskId: 42, reminderIndex: 0 },
+          categoryIdentifier: TASK_REMINDER_CATEGORY,
+          data: expect.objectContaining({
+            taskId: 42,
+            reminderIndex: 0,
+            taskDueDate: futureDate.toISOString(),
+          }),
         }),
         trigger: expect.objectContaining({
           date: expect.any(Date),
@@ -240,5 +248,74 @@ describe('Local Notifications Service (Zero-Telemetry On-Device Reminders)', () 
     // Only ONE notification remains scheduled (the latest one), never duplicates!
     expect(activeScheduled).toHaveLength(1);
     expect(activeScheduled[0].content.title).toBe('Updated Reminder');
+  });
+
+  it('dismisses already-presented tray notifications for taskId when cancelTaskReminders runs', async () => {
+    (Notifications.getPresentedNotificationsAsync as jest.Mock).mockResolvedValueOnce([
+      { request: { identifier: 'tray-42', content: { data: { taskId: 42 } } } },
+      { request: { identifier: 'tray-99', content: { data: { taskId: 99 } } } },
+    ]);
+
+    await cancelTaskReminders(42);
+    expect(Notifications.dismissNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('tray-42');
+  });
+
+  it('enforces idempotency on MARK_DONE notification actions for already-completed and advanced recurring tasks', () => {
+    const baseDue = '2026-11-20T16:00:00.000Z';
+    const nextDue = '2026-11-21T16:00:00.000Z';
+
+    const activeRecurring: Task = {
+      id: 10,
+      title: 'Take Vitamins',
+      done: false,
+      priority: 0,
+      project_id: 1,
+      due_date: baseDue,
+      repeat_after: 86400,
+      repeat_mode: RepeatMode.FromDueDate,
+    };
+
+    // Matching occurrence -> allowed
+    expect(shouldCompleteTaskFromNotification(activeRecurring, { taskId: 10, taskDueDate: baseDue })).toBe(true);
+
+    // Already advanced to tomorrow's occurrence -> blocked (idempotent!)
+    expect(
+      shouldCompleteTaskFromNotification(
+        { ...activeRecurring, due_date: nextDue },
+        { taskId: 10, taskDueDate: baseDue }
+      )
+    ).toBe(false);
+
+    // Already marked done -> blocked
+    expect(
+      shouldCompleteTaskFromNotification(
+        { ...activeRecurring, done: true },
+        { taskId: 10, taskDueDate: baseDue }
+      )
+    ).toBe(false);
+  });
+
+  it('computes and sets app icon badge counts for off, overdue, and due_today modes', async () => {
+    const now = new Date(2026, 10, 20, 10, 0, 0, 0);
+    const yesterdayIso = new Date(2026, 10, 19, 12, 0, 0, 0).toISOString();
+    const laterTodayIso = new Date(2026, 10, 20, 18, 0, 0, 0).toISOString();
+    const twoDaysAgoIso = new Date(2026, 10, 18, 12, 0, 0, 0).toISOString();
+    const nextWeekIso = new Date(2026, 10, 27, 12, 0, 0, 0).toISOString();
+    const tasks: Task[] = [
+      { id: 1, title: 'Overdue', done: false, priority: 0, project_id: 1, due_date: yesterdayIso },
+      { id: 2, title: 'Due Later Today', done: false, priority: 0, project_id: 1, due_date: laterTodayIso },
+      { id: 3, title: 'Done Overdue', done: true, priority: 0, project_id: 1, due_date: twoDaysAgoIso },
+      { id: 4, title: 'Next Week', done: false, priority: 0, project_id: 1, due_date: nextWeekIso },
+    ];
+
+    await syncAppBadgeCount(tasks, 'off', now);
+    expect(Notifications.setBadgeCountAsync).toHaveBeenLastCalledWith(0);
+
+    await syncAppBadgeCount(tasks, 'overdue', now);
+    expect(Notifications.setBadgeCountAsync).toHaveBeenLastCalledWith(1);
+
+    await syncAppBadgeCount(tasks, 'due_today', now);
+    expect(Notifications.setBadgeCountAsync).toHaveBeenLastCalledWith(2);
   });
 });

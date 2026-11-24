@@ -3,19 +3,23 @@ import * as Haptics from 'expo-haptics';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  AppBadgeMode,
   CreateProjectInput,
   CreateTaskInput,
   Label,
   Project,
   Task,
+  ThemeMode,
   UpdateProjectInput,
   UpdateTaskInput,
   User,
+  WeekStartDay,
 } from '../types/vikunja';
 import { VikunjaApiError, VikunjaClient } from '../api/client';
 import { SyncQueue, SyncStatus, SYNC_QUEUE_STORAGE_KEY } from './syncQueue';
 import { safeHaptics } from '../utils/haptics';
 import { MY_TASKS_PROJECT_ID } from '../utils/taskFilters';
+import { setActiveThemeMode } from '../utils/theme';
 import {
   getStoredAuth,
   setStoredAuth,
@@ -29,6 +33,7 @@ import {
   scheduleTaskReminders,
   cancelTaskReminders,
   syncAllTaskReminders,
+  syncAppBadgeCount,
 } from '../services/localNotifications';
 import { clearAICoreCache } from '../utils/aiCore';
 
@@ -44,6 +49,109 @@ const CACHE_KEY_LARGE_TASK_ITEMS = '@vikunja_large_task_items';
 const CACHE_KEY_TASK_ITEM_SCALE = '@vikunja_task_item_scale';
 const CACHE_KEY_TASK_ITEM_TEXT_SCALE = '@vikunja_task_item_text_scale';
 const CACHE_KEY_LAST_PROJECT = '@vikunja_last_project_id';
+const CACHE_KEY_THEME_MODE = '@vikunja_theme_mode';
+const CACHE_KEY_WEEK_START_DAY = '@vikunja_week_start_day';
+const CACHE_KEY_APP_BADGE_MODE = '@vikunja_app_badge_mode';
+const CACHE_KEY_SAVED_FILTER_TASKS = '@vikunja_saved_filter_tasks';
+
+/** Remapped local ID when a Vikunja server Saved Filter has pseudo-ID -1 (so MY_TASKS_PROJECT_ID = -1 stays distinct). */
+export const SAVED_FILTER_MINUS_ONE_ID = -1000001;
+
+function normalizeServerProjectEntry(proj: Project): Project {
+  if (!proj || typeof proj.id !== 'number') return proj;
+  if (proj.id < 0) {
+    if (proj.is_saved_filter && proj.server_project_id !== undefined) {
+      return proj;
+    }
+    const serverId = proj.server_project_id ?? proj.id;
+    const localId = serverId === MY_TASKS_PROJECT_ID ? SAVED_FILTER_MINUS_ONE_ID : serverId;
+    return {
+      ...proj,
+      id: localId,
+      server_project_id: serverId,
+      is_saved_filter: true,
+    };
+  }
+  return proj;
+}
+
+/**
+ * Keeps embedded `related_tasks.subtask` and `related_tasks.parenttask` entries synchronized
+ * with live top-level tasks (status, title, remapped tempId -> positive server ID, and deletions).
+ */
+function synchronizeRelatedTaskSnapshots(
+  tasks: Task[],
+  remappedPair?: { oldId: number; newId: number },
+  deletedTaskId?: number
+): Task[] {
+  const byId = new Map<number, Task>();
+  for (const t of tasks) {
+    byId.set(t.id, t);
+  }
+
+  let anyChanged = false;
+  const result = tasks.map((task) => {
+    if (!task.related_tasks) return task;
+    let taskRelChanged = false;
+    const nextRel = { ...task.related_tasks };
+
+    for (const key of ['subtask', 'parenttask'] as const) {
+      const list = nextRel[key];
+      if (!Array.isArray(list)) continue;
+      const updatedList: Task[] = [];
+      let listChanged = false;
+
+      for (const item of list) {
+        if (!item) continue;
+        const resolvedId =
+          remappedPair && item.id === remappedPair.oldId ? remappedPair.newId : item.id;
+        if (deletedTaskId !== undefined && resolvedId === deletedTaskId) {
+          listChanged = true;
+          continue;
+        }
+        const live = byId.get(resolvedId);
+        if (live) {
+          if (
+            item.id !== live.id ||
+            item.title !== live.title ||
+            item.done !== live.done ||
+            item.priority !== live.priority
+          ) {
+            listChanged = true;
+            updatedList.push({
+              ...item,
+              id: live.id,
+              title: live.title,
+              done: live.done,
+              done_at: live.done_at,
+              priority: live.priority,
+            });
+          } else {
+            updatedList.push(item);
+          }
+        } else if (resolvedId !== item.id) {
+          listChanged = true;
+          updatedList.push({ ...item, id: resolvedId });
+        } else {
+          updatedList.push(item);
+        }
+      }
+
+      if (listChanged) {
+        nextRel[key] = updatedList;
+        taskRelChanged = true;
+      }
+    }
+
+    if (taskRelChanged) {
+      anyChanged = true;
+      return { ...task, related_tasks: nextRel };
+    }
+    return task;
+  });
+
+  return anyChanged ? result : tasks;
+}
 
 let sessionEpoch = 0;
 let sessionAbortController: AbortController | null = null;
@@ -229,6 +337,14 @@ function reconcileRemoteTaskWithPendingQueue(
     merged.assignees = localTask.assignees || [];
   }
 
+  // Preserve optimistic subtask/parenttask relations while relation mutations are still queued
+  if (
+    localTask?.related_tasks &&
+    (hasPending('CREATE_TASK_RELATION') || hasPending('DELETE_TASK_RELATION'))
+  ) {
+    merged.related_tasks = localTask.related_tasks;
+  }
+
   return merged;
 }
 
@@ -254,6 +370,11 @@ export interface TaskState {
   largeTaskItems: boolean;
   taskItemScale: number; // Percentage: 100, 125, 150, 175, 200 (default: 100)
   taskItemTextScale: number; // Percentage: 100, 125, 150, 175, 200 (default: 100)
+  themeMode: ThemeMode;
+  weekStartDay: WeekStartDay;
+  appBadgeMode: AppBadgeMode;
+  savedFilterTaskIds: Record<number, number[]>;
+  pendingOpenTaskId: number | null;
 
   // Actions
   initialize: (baseUrl: string, token?: string, refreshToken?: string | null) => Promise<void>;
@@ -262,6 +383,10 @@ export interface TaskState {
   setLargeTaskItems: (enabled: boolean) => Promise<void>;
   setTaskItemScale: (scale: number) => Promise<void>;
   setTaskItemTextScale: (scale: number) => Promise<void>;
+  setThemeMode: (mode: ThemeMode) => Promise<void>;
+  setWeekStartDay: (day: WeekStartDay) => Promise<void>;
+  setAppBadgeMode: (mode: AppBadgeMode) => Promise<void>;
+  setPendingOpenTaskId: (taskId: number | null) => void;
   retrySync: () => Promise<void>;
   setSelectedProjectId: (id: number | null) => void;
   fetchProjects: () => Promise<void>;
@@ -270,6 +395,7 @@ export interface TaskState {
   fetchUsers: (query?: string) => Promise<User[]>;
   setCachedUsers: (users: User[]) => void;
   fetchTasks: (projectId: number) => Promise<void>;
+  fetchSavedFilterTasks: (filterProjectId: number) => Promise<void>;
   fetchAllTasks: () => Promise<void>;
   syncAll: () => Promise<void>;
   resetAndSyncFromServer: () => Promise<void>;
@@ -282,6 +408,9 @@ export interface TaskState {
   updateGlobalLabel: (labelId: number, title: string, hex_color?: string) => Promise<void>;
   deleteGlobalLabel: (labelId: number) => Promise<void>;
   addTask: (input: CreateTaskInput) => Task;
+  addSubtask: (parentTaskId: number, title: string) => Task | null;
+  unlinkSubtask: (parentTaskId: number, subtaskId: number) => void;
+  duplicateTask: (taskId: number) => Task | null;
   updateTaskDetails: (taskId: number, updates: UpdateTaskInput) => void;
   moveTask: (taskId: number, targetProjectId: number) => void;
   reorderTasks: (projectId: number, orderedTaskIds: number[], immediateSync?: boolean) => void;
@@ -380,15 +509,22 @@ export const useTaskStore = create<TaskState>((set, get) => {
               assignees: resolvedAssignees,
             };
 
-      // Replace tempId in-place so list ordering never jumps
-      const finalTasks: Task[] = [];
+      // Replace tempId in-place so list ordering never jumps, and update related_tasks references
+      const rawFinalTasks: Task[] = [];
       for (const t of state.tasks || []) {
         if (t.id === tempId) {
-          finalTasks.push(mergedTask);
+          rawFinalTasks.push({
+            ...mergedTask,
+            related_tasks: existingTemp?.related_tasks ?? mergedTask.related_tasks,
+          });
         } else if (t.id !== remoteTask.id) {
-          finalTasks.push(t);
+          rawFinalTasks.push(t);
         }
       }
+      const finalTasks = synchronizeRelatedTaskSnapshots(rawFinalTasks, {
+        oldId: tempId,
+        newId: remoteTask.id,
+      });
 
       // Also merge any newly resolved positive-ID labels into store.labels
       let nextLabels = state.labels || [];
@@ -431,6 +567,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
     largeTaskItems: false,
     taskItemScale: 100,
     taskItemTextScale: 100,
+    themeMode: 'system',
+    weekStartDay: 1,
+    appBadgeMode: 'off',
+    savedFilterTaskIds: {},
+    pendingOpenTaskId: null,
 
     initialize: async (baseUrl: string, token?: string, refreshToken?: string | null) => {
       // Flush any pending debounced task/project cache writes from an active session
@@ -636,6 +777,10 @@ export const useTaskStore = create<TaskState>((set, get) => {
           taskItemScaleRaw,
           taskItemTextScaleRaw,
           lastProjectRaw,
+          themeModeRaw,
+          weekStartRaw,
+          appBadgeModeRaw,
+          savedFilterTasksRaw,
         ] = await Promise.all([
           AsyncStorage.getItem(CACHE_KEY_PROJECTS),
           AsyncStorage.getItem(CACHE_KEY_TASKS),
@@ -648,6 +793,10 @@ export const useTaskStore = create<TaskState>((set, get) => {
           AsyncStorage.getItem(CACHE_KEY_TASK_ITEM_SCALE),
           AsyncStorage.getItem(CACHE_KEY_TASK_ITEM_TEXT_SCALE),
           AsyncStorage.getItem(CACHE_KEY_LAST_PROJECT),
+          AsyncStorage.getItem(CACHE_KEY_THEME_MODE),
+          AsyncStorage.getItem(CACHE_KEY_WEEK_START_DAY),
+          AsyncStorage.getItem(CACHE_KEY_APP_BADGE_MODE),
+          AsyncStorage.getItem(CACHE_KEY_SAVED_FILTER_TASKS),
         ]);
 
         if (epoch !== sessionEpoch) return;
@@ -729,6 +878,37 @@ export const useTaskStore = create<TaskState>((set, get) => {
           }
         }
 
+        if (
+          themeModeRaw === 'system' ||
+          themeModeRaw === 'light' ||
+          themeModeRaw === 'dark' ||
+          themeModeRaw === 'oled'
+        ) {
+          updates.themeMode = themeModeRaw;
+          setActiveThemeMode(themeModeRaw);
+        }
+
+        if (weekStartRaw === '0' || weekStartRaw === '1') {
+          updates.weekStartDay = Number(weekStartRaw) as WeekStartDay;
+        }
+
+        if (
+          appBadgeModeRaw === 'off' ||
+          appBadgeModeRaw === 'overdue' ||
+          appBadgeModeRaw === 'due_today'
+        ) {
+          updates.appBadgeMode = appBadgeModeRaw;
+        }
+
+        if (savedFilterTasksRaw) {
+          try {
+            const parsedFilterMap = JSON.parse(savedFilterTasksRaw);
+            if (parsedFilterMap && typeof parsedFilterMap === 'object') {
+              updates.savedFilterTaskIds = parsedFilterMap;
+            }
+          } catch (_) {}
+        }
+
         set(updates);
       } catch (_) {
         // Ignore cache load errors gracefully
@@ -799,6 +979,40 @@ export const useTaskStore = create<TaskState>((set, get) => {
       } catch (_) {}
     },
 
+    setThemeMode: async (mode: ThemeMode) => {
+      const safeMode: ThemeMode =
+        mode === 'light' || mode === 'dark' || mode === 'oled' || mode === 'system'
+          ? mode
+          : 'system';
+      setActiveThemeMode(safeMode);
+      set({ themeMode: safeMode });
+      try {
+        await AsyncStorage.setItem(CACHE_KEY_THEME_MODE, safeMode);
+      } catch (_) {}
+    },
+
+    setWeekStartDay: async (day: WeekStartDay) => {
+      const safeDay: WeekStartDay = day === 0 ? 0 : 1;
+      set({ weekStartDay: safeDay });
+      try {
+        await AsyncStorage.setItem(CACHE_KEY_WEEK_START_DAY, safeDay.toString());
+      } catch (_) {}
+    },
+
+    setAppBadgeMode: async (mode: AppBadgeMode) => {
+      const safeMode: AppBadgeMode =
+        mode === 'overdue' || mode === 'due_today' || mode === 'off' ? mode : 'off';
+      set({ appBadgeMode: safeMode });
+      syncAppBadgeCount(get().tasks || [], safeMode).catch(() => {});
+      try {
+        await AsyncStorage.setItem(CACHE_KEY_APP_BADGE_MODE, safeMode);
+      } catch (_) {}
+    },
+
+    setPendingOpenTaskId: (taskId: number | null) => {
+      set({ pendingOpenTaskId: taskId });
+    },
+
     retrySync: async () => {
       await get().syncAll();
     },
@@ -808,6 +1022,9 @@ export const useTaskStore = create<TaskState>((set, get) => {
       if (id !== null && id > 0) {
         AsyncStorage.setItem(CACHE_KEY_LAST_PROJECT, id.toString()).catch(() => {});
         get().fetchTasks(id);
+      } else if (id !== null && id < 0 && id !== MY_TASKS_PROJECT_ID) {
+        AsyncStorage.setItem(CACHE_KEY_LAST_PROJECT, id.toString()).catch(() => {});
+        get().fetchSavedFilterTasks(id);
       } else {
         if (id === null) {
           AsyncStorage.removeItem(CACHE_KEY_LAST_PROJECT).catch(() => {});
@@ -871,7 +1088,9 @@ export const useTaskStore = create<TaskState>((set, get) => {
         const rawProjects = await client.getProjects();
         if (epoch !== sessionEpoch) return;
 
-        const projects = Array.isArray(rawProjects) ? rawProjects : [];
+        const projects = Array.isArray(rawProjects)
+          ? rawProjects.map(normalizeServerProjectEntry)
+          : [];
         set({ projects, isLoading: false });
 
         AsyncStorage.setItem(CACHE_KEY_PROJECTS, JSON.stringify(projects)).catch(() => {});
@@ -1076,10 +1295,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
           );
         });
 
-        const merged = [...enrichedTasks, ...otherTasks];
+        const merged = synchronizeRelatedTaskSnapshots([...enrichedTasks, ...otherTasks]);
 
         set({ tasks: merged, isLoading: false });
         AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(merged)).catch(() => {});
+        syncAppBadgeCount(merged, get().appBadgeMode).catch(() => {});
       } catch (err: any) {
         if (epoch !== sessionEpoch) return;
         if (err?.name === 'AbortError') {
@@ -1087,6 +1307,60 @@ export const useTaskStore = create<TaskState>((set, get) => {
           return;
         }
         set({ error: err.message || 'Failed to fetch tasks', isLoading: false });
+      }
+    },
+
+    fetchSavedFilterTasks: async (filterProjectId: number) => {
+      const epoch = sessionEpoch;
+      const { client, projects } = get();
+      if (!client || typeof client.getSavedFilterTasks !== 'function') return;
+
+      const filterProj = (projects || []).find((p) => p.id === filterProjectId);
+      if (!filterProj) return;
+
+      set({ isLoading: true, error: null });
+      try {
+        const rawTasks = await client.getSavedFilterTasks(filterProj);
+        if (epoch !== sessionEpoch) return;
+
+        const remoteTasks = Array.isArray(rawTasks) ? rawTasks : [];
+        const colorMap = buildServerLabelsColorMap(get().labels || []);
+        const currentTasks = get().tasks || [];
+        const taskMap = new Map<number, Task>(currentTasks.map((t) => [t.id, t]));
+        const syncQueue = get().syncQueue;
+        const matchedIds: number[] = [];
+
+        for (const rt of remoteTasks) {
+          const local = taskMap.get(rt.id);
+          const reconciled = reconcileRemoteTaskWithPendingQueue(rt, local, syncQueue, colorMap);
+          if (reconciled) {
+            taskMap.set(reconciled.id, reconciled);
+            matchedIds.push(reconciled.id);
+          }
+        }
+
+        const mergedTasks = synchronizeRelatedTaskSnapshots(Array.from(taskMap.values()));
+        const nextFilterMap = {
+          ...(get().savedFilterTaskIds || {}),
+          [filterProjectId]: matchedIds,
+        };
+
+        set({
+          tasks: mergedTasks,
+          savedFilterTaskIds: nextFilterMap,
+          isLoading: false,
+        });
+        AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(mergedTasks)).catch(() => {});
+        AsyncStorage.setItem(CACHE_KEY_SAVED_FILTER_TASKS, JSON.stringify(nextFilterMap)).catch(
+          () => {}
+        );
+      } catch (err: any) {
+        if (epoch !== sessionEpoch) return;
+        if (err?.name === 'AbortError') {
+          set({ isLoading: false });
+          return;
+        }
+        set({ error: err.message || 'Failed to fetch saved filter tasks', isLoading: false });
       }
     },
 
@@ -1151,10 +1425,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
           })
           .forEach((t) => taskMap.set(t.id, t));
 
-        const merged = Array.from(taskMap.values());
+        const merged = synchronizeRelatedTaskSnapshots(Array.from(taskMap.values()));
 
         set({ tasks: merged, isLoading: false });
         AsyncStorage.setItem(CACHE_KEY_TASKS, JSON.stringify(merged)).catch(() => {});
+        syncAppBadgeCount(merged, get().appBadgeMode).catch(() => {});
       } catch (err: any) {
         if (epoch !== sessionEpoch) return;
         if (err?.name === 'AbortError') {
@@ -1243,8 +1518,9 @@ export const useTaskStore = create<TaskState>((set, get) => {
           set({ syncStatus: 'synced' });
         }
 
-        // Synchronize on-device local notifications with current task set
+        // Synchronize on-device local notifications and app badge with current task set
         await syncAllTaskReminders(get().tasks || []);
+        await syncAppBadgeCount(get().tasks || [], get().appBadgeMode);
       } catch (_) {
         if (epoch === sessionEpoch) {
           set({ syncStatus: get().authRequired ? 'auth_required' : 'offline' });
@@ -1275,11 +1551,12 @@ export const useTaskStore = create<TaskState>((set, get) => {
           CACHE_KEY_USERS,
           CACHE_KEY_CURRENT_USER,
           CACHE_KEY_LEGACY_CURRENT_USER,
+          CACHE_KEY_SAVED_FILTER_TASKS,
           SYNC_QUEUE_STORAGE_KEY,
         ]);
 
         if (epoch !== sessionEpoch) return;
-        set({ tasks: [], pendingSyncCount: 0 });
+        set({ tasks: [], savedFilterTaskIds: {}, pendingSyncCount: 0 });
 
         await get().fetchLabels();
         if (epoch !== sessionEpoch) return;
@@ -1296,7 +1573,14 @@ export const useTaskStore = create<TaskState>((set, get) => {
           throw new Error(get().error!);
         }
 
+        const activeSel = get().selectedProjectId;
+        if (activeSel !== null && activeSel < 0 && activeSel !== MY_TASKS_PROJECT_ID) {
+          await get().fetchSavedFilterTasks(activeSel);
+          if (epoch !== sessionEpoch) return;
+        }
+
         await syncAllTaskReminders(get().tasks || []);
+        await syncAppBadgeCount(get().tasks || [], get().appBadgeMode);
         if (epoch !== sessionEpoch) return;
 
         set({ syncStatus: 'synced', isLoading: false });
@@ -1346,6 +1630,8 @@ export const useTaskStore = create<TaskState>((set, get) => {
         cachedUsers: [],
         currentUser: null,
         selectedProjectId: null,
+        savedFilterTaskIds: {},
+        pendingOpenTaskId: null,
         isLoading: false,
         error: null,
         syncStatus: 'synced',
@@ -1369,20 +1655,34 @@ export const useTaskStore = create<TaskState>((set, get) => {
           CACHE_KEY_CURRENT_USER,
           CACHE_KEY_LEGACY_CURRENT_USER,
           CACHE_KEY_LAST_PROJECT,
+          CACHE_KEY_SAVED_FILTER_TASKS,
           SYNC_QUEUE_STORAGE_KEY,
           STORAGE_KEY_USERNAME,
           STORAGE_KEY_SAVED_USERNAME,
           LEGACY_STORAGE_KEY_PASSWORD,
         ]).catch(() => {}),
         Notifications.cancelAllScheduledNotificationsAsync().catch(() => {}),
+        syncAppBadgeCount([], 'off').catch(() => {}),
         clearAICoreCache().catch(() => {}),
       ]);
     },
 
     toggleTask: (taskId: number) => {
-      const { tasks, syncQueue } = get();
+      const { tasks, syncQueue, appBadgeMode } = get();
       const safeTasks = Array.isArray(tasks) ? tasks : [];
-      const task = safeTasks.find((t) => t.id === taskId);
+      let task = safeTasks.find((t) => t.id === taskId);
+      let wasEmbeddedOnly = false;
+
+      if (!task) {
+        for (const parent of safeTasks) {
+          const foundSub = parent.related_tasks?.subtask?.find((s) => s.id === taskId);
+          if (foundSub) {
+            task = foundSub;
+            wasEmbeddedOnly = true;
+            break;
+          }
+        }
+      }
       if (!task) return;
 
       const now = new Date().toISOString();
@@ -1392,7 +1692,10 @@ export const useTaskStore = create<TaskState>((set, get) => {
         done_at: !task.done ? now : null,
         updated: now,
       };
-      const updatedTasks = safeTasks.map((t) => (t.id === taskId ? updatedTask : t));
+      const baseTasks = wasEmbeddedOnly
+        ? [...safeTasks, updatedTask]
+        : safeTasks.map((t) => (t.id === taskId ? updatedTask : t));
+      const updatedTasks = synchronizeRelatedTaskSnapshots(baseTasks);
 
       set({ tasks: updatedTasks });
       persistTasksDebounced(updatedTasks);
@@ -1404,6 +1707,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       } else if (updatedTask.reminders && updatedTask.reminders.length > 0) {
         scheduleTaskReminders(updatedTask).catch(() => {});
       }
+      syncAppBadgeCount(updatedTasks, appBadgeMode).catch(() => {});
 
       if (syncQueue) {
         syncQueue.enqueue({
@@ -1635,6 +1939,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       if (!optimisticTask.done && optimisticTask.reminders && optimisticTask.reminders.length > 0) {
         scheduleTaskReminders(optimisticTask).catch(() => {});
       }
+      syncAppBadgeCount(updatedTasks, get().appBadgeMode).catch(() => {});
 
       if (syncQueue) {
         const hasPersistentCreatedHandler = Boolean((syncQueue as SyncQueue).onTaskCreated);
@@ -1662,13 +1967,158 @@ export const useTaskStore = create<TaskState>((set, get) => {
       return optimisticTask;
     },
 
-    updateTaskDetails: (taskId: number, updates: UpdateTaskInput) => {
+    addSubtask: (parentTaskId: number, title: string): Task | null => {
+      const cleanTitle = (title || '').trim();
+      if (!cleanTitle) return null;
+
+      const parent = (get().tasks || []).find((t) => t.id === parentTaskId);
+      if (!parent) return null;
+
+      const childTask = get().addTask({
+        title: cleanTitle,
+        project_id: parent.project_id,
+      });
+
+      const parentSummary: Task = {
+        id: parent.id,
+        title: parent.title,
+        done: parent.done,
+        priority: parent.priority,
+        project_id: parent.project_id,
+      };
+
+      set((state) => {
+        const nextTasks = (state.tasks || []).map((t) => {
+          if (t.id === parentTaskId) {
+            const existingSubs = t.related_tasks?.subtask || [];
+            return {
+              ...t,
+              related_tasks: {
+                ...(t.related_tasks || {}),
+                subtask: [...existingSubs, childTask],
+              },
+            };
+          }
+          if (t.id === childTask.id) {
+            return {
+              ...t,
+              related_tasks: {
+                ...(t.related_tasks || {}),
+                parenttask: [parentSummary],
+              },
+            };
+          }
+          return t;
+        });
+        persistTasksDebounced(nextTasks);
+        return { tasks: nextTasks };
+      });
+
+      const { syncQueue } = get();
+      if (syncQueue) {
+        syncQueue.enqueue({
+          id: `rel-subtask-${parentTaskId}-${childTask.id}-${Date.now()}`,
+          type: 'CREATE_TASK_RELATION',
+          payload: {
+            taskId: parentTaskId,
+            otherTaskId: childTask.id,
+            relationKind: 'subtask',
+          },
+          timestamp: Date.now(),
+        });
+        syncQueue.processQueue();
+      }
+
+      const latestChild = (get().tasks || []).find((t) => t.id === childTask.id) || childTask;
+      return latestChild;
+    },
+
+    unlinkSubtask: (parentTaskId: number, subtaskId: number) => {
       const { tasks, syncQueue } = get();
+      const safeTasks = Array.isArray(tasks) ? tasks : [];
+
+      const updatedTasks = safeTasks.map((t) => {
+        if (t.id === parentTaskId && t.related_tasks?.subtask) {
+          return {
+            ...t,
+            related_tasks: {
+              ...t.related_tasks,
+              subtask: t.related_tasks.subtask.filter((s) => s.id !== subtaskId),
+            },
+          };
+        }
+        if (t.id === subtaskId && t.related_tasks?.parenttask) {
+          return {
+            ...t,
+            related_tasks: {
+              ...t.related_tasks,
+              parenttask: t.related_tasks.parenttask.filter((p) => p.id !== parentTaskId),
+            },
+          };
+        }
+        return t;
+      });
+
+      set({ tasks: updatedTasks });
+      persistTasksDebounced(updatedTasks);
+
+      if (syncQueue) {
+        syncQueue.enqueue({
+          id: `unlink-subtask-${parentTaskId}-${subtaskId}-${Date.now()}`,
+          type: 'DELETE_TASK_RELATION',
+          payload: {
+            taskId: parentTaskId,
+            otherTaskId: subtaskId,
+            relationKind: 'subtask',
+          },
+          timestamp: Date.now(),
+        });
+        syncQueue.processQueue();
+      }
+    },
+
+    duplicateTask: (taskId: number): Task | null => {
+      const source = (get().tasks || []).find((t) => t.id === taskId);
+      if (!source) return null;
+
+      const copyTitle = `${source.title} (Copy)`;
+      const duplicated = get().addTask({
+        title: copyTitle,
+        description: source.description,
+        done: false,
+        done_at: null,
+        priority: source.priority,
+        percent_done: 0,
+        color: source.color,
+        hex_color: source.hex_color ?? source.color,
+        due_date: source.due_date ?? null,
+        start_date: source.start_date ?? null,
+        end_date: source.end_date ?? null,
+        repeat_after: source.repeat_after,
+        repeat_mode: source.repeat_mode,
+        reminders: source.reminders ? source.reminders.map((r) => ({ ...r })) : undefined,
+        labels: source.labels ? source.labels.map((l) => ({ ...l })) : undefined,
+        assignees: source.assignees ? source.assignees.map((u) => ({ ...u })) : undefined,
+        project_id: source.project_id,
+      });
+
+      const sourceSubtasks = source.related_tasks?.subtask || [];
+      for (const sub of sourceSubtasks) {
+        if (sub?.title) {
+          get().addSubtask(duplicated.id, sub.title);
+        }
+      }
+
+      return (get().tasks || []).find((t) => t.id === duplicated.id) || duplicated;
+    },
+
+    updateTaskDetails: (taskId: number, updates: UpdateTaskInput) => {
+      const { tasks, syncQueue, appBadgeMode } = get();
       const safeTasks = Array.isArray(tasks) ? tasks : [];
       const task = safeTasks.find((t) => t.id === taskId);
       const now = new Date().toISOString();
-      const updatedTasks = safeTasks.map((t) =>
-        t.id === taskId ? { ...t, ...updates, updated: now } : t
+      const updatedTasks = synchronizeRelatedTaskSnapshots(
+        safeTasks.map((t) => (t.id === taskId ? { ...t, ...updates, updated: now } : t))
       );
 
       set({ tasks: updatedTasks });
@@ -1678,6 +2128,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       if (updatedTaskObj) {
         scheduleTaskReminders(updatedTaskObj).catch(() => {});
       }
+      syncAppBadgeCount(updatedTasks, appBadgeMode).catch(() => {});
 
       if (syncQueue) {
         if (updates.assignees !== undefined && task) {
@@ -1890,14 +2341,19 @@ export const useTaskStore = create<TaskState>((set, get) => {
     },
 
     deleteTask: (taskId: number) => {
-      const { tasks, syncQueue } = get();
+      const { tasks, syncQueue, appBadgeMode } = get();
       const safeTasks = Array.isArray(tasks) ? tasks : [];
-      const updatedTasks = safeTasks.filter((t) => t.id !== taskId);
+      const updatedTasks = synchronizeRelatedTaskSnapshots(
+        safeTasks.filter((t) => t.id !== taskId),
+        undefined,
+        taskId
+      );
 
       set({ tasks: updatedTasks });
       persistTasksDebounced(updatedTasks);
 
       cancelTaskReminders(taskId).catch(() => {});
+      syncAppBadgeCount(updatedTasks, appBadgeMode).catch(() => {});
 
       if (syncQueue) {
         syncQueue.enqueue({

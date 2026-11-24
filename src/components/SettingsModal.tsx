@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useTaskStore } from '../store/taskStore';
+import { AppBadgeMode, ThemeMode, WeekStartDay } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import {
@@ -55,6 +56,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTaskItemScale,
     taskItemTextScale = 100,
     setTaskItemTextScale,
+    themeMode = 'system',
+    setThemeMode,
+    weekStartDay = 1,
+    setWeekStartDay,
+    appBadgeMode = 'off',
+    setAppBadgeMode,
     resetAndSyncFromServer,
     syncStatus,
     pendingSyncCount,
@@ -717,6 +724,183 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   thumbColor="#FFFFFF"
                 />
               </View>
+
+              {/* Appearance Selector */}
+              <View
+                style={[
+                  styles.settingBlock,
+                  {
+                    borderTopColor: theme.colors.cardBorder,
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}
+              >
+                <Text style={[styles.settingTitle, { color: theme.colors.text }]}>Appearance</Text>
+                <View style={styles.presetChipsRow}>
+                  {(
+                    [
+                      { key: 'system', label: 'System' },
+                      { key: 'light', label: 'Light' },
+                      { key: 'dark', label: 'Dark' },
+                      { key: 'oled', label: 'OLED' },
+                    ] as { key: ThemeMode; label: string }[]
+                  ).map((opt) => {
+                    const isSelected = themeMode === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        testID={`settings-theme-${opt.key}`}
+                        style={[
+                          styles.presetChip,
+                          isSelected
+                            ? {
+                                backgroundColor: theme.colors.accent,
+                                borderColor: theme.colors.accent,
+                              }
+                            : secondaryBtnSurface,
+                        ]}
+                        onPress={() => {
+                          setThemeMode?.(opt.key);
+                          safeHaptics.selection();
+                        }}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                      >
+                        <Text
+                          style={[
+                            styles.presetChipText,
+                            {
+                              color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
+                              fontWeight: isSelected ? '700' : '500',
+                            },
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Start Week On Selector */}
+              <View
+                style={[
+                  styles.settingBlock,
+                  {
+                    borderTopColor: theme.colors.cardBorder,
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}
+              >
+                <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                  Start Week On
+                </Text>
+                <View style={styles.presetChipsRow}>
+                  {(
+                    [
+                      { day: 1, label: 'Monday' },
+                      { day: 0, label: 'Sunday' },
+                    ] as { day: WeekStartDay; label: string }[]
+                  ).map((opt) => {
+                    const isSelected = weekStartDay === opt.day;
+                    return (
+                      <TouchableOpacity
+                        key={opt.day}
+                        testID={`settings-week-start-${opt.day}`}
+                        style={[
+                          styles.presetChip,
+                          isSelected
+                            ? {
+                                backgroundColor: theme.colors.accent,
+                                borderColor: theme.colors.accent,
+                              }
+                            : secondaryBtnSurface,
+                        ]}
+                        onPress={() => {
+                          setWeekStartDay?.(opt.day);
+                          safeHaptics.selection();
+                        }}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                      >
+                        <Text
+                          style={[
+                            styles.presetChipText,
+                            {
+                              color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
+                              fontWeight: isSelected ? '700' : '500',
+                            },
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* App Icon Badge Selector */}
+              {Platform.OS !== 'web' && (
+                <View
+                  style={[
+                    styles.settingBlock,
+                    {
+                      borderTopColor: theme.colors.cardBorder,
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                    App Icon Badge
+                  </Text>
+                  <View style={styles.presetChipsRow}>
+                    {(
+                      [
+                        { key: 'off', label: 'Off' },
+                        { key: 'overdue', label: 'Overdue' },
+                        { key: 'due_today', label: 'Due Today' },
+                      ] as { key: AppBadgeMode; label: string }[]
+                    ).map((opt) => {
+                      const isSelected = appBadgeMode === opt.key;
+                      return (
+                        <TouchableOpacity
+                          key={opt.key}
+                          testID={`settings-badge-${opt.key}`}
+                          style={[
+                            styles.presetChip,
+                            isSelected
+                              ? {
+                                  backgroundColor: theme.colors.accent,
+                                  borderColor: theme.colors.accent,
+                                }
+                              : secondaryBtnSurface,
+                          ]}
+                          onPress={() => {
+                            setAppBadgeMode?.(opt.key);
+                            safeHaptics.selection();
+                          }}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: isSelected }}
+                        >
+                          <Text
+                            style={[
+                              styles.presetChipText,
+                              {
+                                color: isSelected ? '#FFFFFF' : theme.colors.textSecondary,
+                                fontWeight: isSelected ? '700' : '500',
+                              },
+                            ]}
+                          >
+                            {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
 
               {biometricAvailable && (
                 <View

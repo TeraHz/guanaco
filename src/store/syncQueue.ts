@@ -12,7 +12,9 @@ export type MutationType =
   | 'REORDER_TASK'
   | 'DELETE_TASK'
   | 'SET_TASK_LABELS'
-  | 'SET_TASK_ASSIGNEES';
+  | 'SET_TASK_ASSIGNEES'
+  | 'CREATE_TASK_RELATION'
+  | 'DELETE_TASK_RELATION';
 
 export interface Mutation {
   id: string;
@@ -45,6 +47,7 @@ function isPermanent4xxError(status: unknown): boolean {
 function sanitizeTaskSnapshot<T extends Record<string, any> | undefined>(snapshot: T): T {
   if (!snapshot || typeof snapshot !== 'object') return snapshot;
   const clean: Record<string, any> = { ...snapshot };
+  delete clean.related_tasks;
   if (typeof clean.id === 'number' && clean.id < 0) {
     delete clean.id;
   }
@@ -62,6 +65,7 @@ function matchesTaskId(item: Mutation, taskId: number): boolean {
   if (!p) return false;
   return (
     p.taskId === taskId ||
+    p.otherTaskId === taskId ||
     p.id === taskId ||
     p.tempId === taskId ||
     p.data?.id === taskId ||
@@ -82,6 +86,7 @@ export class SyncQueue {
   public onTaskCreated?: (tempId: number, remoteTask: Task) => void;
   public onTaskLabelsSynced?: (taskId: number, labels: Label[]) => void;
   public onTaskAssigneesSynced?: (taskId: number, assignees: User[]) => void;
+  public onTaskRelationSynced?: (taskId: number, otherTaskId: number, relationKind: string) => void;
 
   constructor(private client: VikunjaClient) {}
 
@@ -280,6 +285,9 @@ export class SyncQueue {
         if (q.payload.taskId === oldId) {
           q.payload.taskId = newId;
         }
+        if (q.payload.otherTaskId === oldId) {
+          q.payload.otherTaskId = newId;
+        }
         if (q.payload.id === oldId) {
           q.payload.id = newId;
         }
@@ -466,6 +474,53 @@ export class SyncQueue {
                 result = { message: 'Removed unsynced local task' };
               } else {
                 result = await this.client.deleteTask(taskId);
+              }
+              break;
+            }
+            case 'CREATE_TASK_RELATION': {
+              const { taskId, otherTaskId, relationKind = 'subtask' } = item.payload;
+              if (
+                typeof taskId === 'number' &&
+                taskId > 0 &&
+                typeof otherTaskId === 'number' &&
+                otherTaskId > 0
+              ) {
+                try {
+                  result = await this.client.createTaskRelation(taskId, otherTaskId, relationKind);
+                } catch (relErr: any) {
+                  if (relErr?.status === 409) {
+                    result = {
+                      task_id: taskId,
+                      other_task_id: otherTaskId,
+                      relation_kind: relationKind,
+                    };
+                  } else {
+                    throw relErr;
+                  }
+                }
+                if (this.generation === startGen) {
+                  this.onTaskRelationSynced?.(taskId, otherTaskId, relationKind);
+                }
+              }
+              break;
+            }
+            case 'DELETE_TASK_RELATION': {
+              const { taskId, otherTaskId, relationKind = 'subtask' } = item.payload;
+              if (
+                typeof taskId === 'number' &&
+                taskId > 0 &&
+                typeof otherTaskId === 'number' &&
+                otherTaskId > 0
+              ) {
+                try {
+                  result = await this.client.deleteTaskRelation(taskId, relationKind, otherTaskId);
+                } catch (relErr: any) {
+                  if (relErr?.status === 404) {
+                    result = { message: 'Relation already removed' };
+                  } else {
+                    throw relErr;
+                  }
+                }
               }
               break;
             }

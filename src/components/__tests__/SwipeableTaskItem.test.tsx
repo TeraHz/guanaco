@@ -582,4 +582,48 @@ describe('SwipeableTaskItem', () => {
     expect(getByTestId(`task-progress-${mockTask.id}`)).toBeTruthy();
     expect(getByText('60%')).toBeTruthy();
   });
+
+  it('renders subtask completion badge (1/2) and parent context indicator when related_tasks exist', () => {
+    const parentTask: Task = {
+      ...mockTask,
+      id: 50,
+      related_tasks: {
+        subtask: [
+          { id: 51, title: 'Step 1', done: true, priority: 0, project_id: 1 },
+          { id: 52, title: 'Step 2', done: false, priority: 0, project_id: 1 },
+        ],
+      },
+    };
+    const { getByTestId, getByText, rerender } = render(
+      <SwipeableTaskItem
+        task={parentTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+    expect(getByTestId('task-subtask-badge-50')).toBeTruthy();
+    expect(getByText('☑ 1/2')).toBeTruthy();
+
+    const childTask: Task = {
+      ...mockTask,
+      id: 52,
+      title: 'Step 2',
+      related_tasks: {
+        parenttask: [{ id: 50, title: 'Launch Prep', done: false, priority: 1, project_id: 1 }],
+      },
+    };
+    rerender(
+      <SwipeableTaskItem
+        task={childTask}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+    expect(getByTestId('task-parent-badge-52')).toBeTruthy();
+    expect(getByText('↳ Launch Prep')).toBeTruthy();
+  });
 });

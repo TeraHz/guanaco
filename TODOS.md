@@ -7,6 +7,28 @@
 
 ---
 
+## 🚀 Phase 11: Self-Hosted PKI, Subtasks, Saved Filters, Global Search & Rich Scheduling
+
+### 1. Self-Hosted Infrastructure & Session Identification
+- [x] **Android User-Installed Root CA Trust & Client `User-Agent` (`network_security_config.xml`, `AndroidManifest.xml`, `MainApplication.kt`, `withIosRefreshCookieMerge.js`, `client.ts`)**:
+  - Added Android `<trust-anchors>` support for user-installed private CAs alongside system CAs so self-hosted Vikunja servers using internal PKI connect seamlessly over TLS.
+  - Added `Guanaco/<version> (<OS>)` `User-Agent` identification across Android OkHttp, iOS `NSURLRequest`, and native API requests while omitting custom `User-Agent` on Web to preserve strict CORS compatibility.
+
+### 2. Vikunja Subtasks, HTML Descriptions, Duplication & Saved Filters
+- [x] **Offline-First Subtasks & Task Duplication (`client.ts`, `syncQueue.ts`, `taskStore.ts`, `TaskDetailModal.tsx`, `SwipeableTaskItem.tsx`, `ProjectTasksScreen.tsx`)**:
+  - Added `/tasks/{id}/relations` (`subtask`) support with dual temporary-ID (`taskId` + `otherTaskId`) offline queue remapping, orphan relation cancellation on unsynced task deletion, card progress badges (`☑ done/total`) and parent indicators, and task duplication (including subtasks) with a quick-open toast banner.
+- [x] **Bidirectional HTML Note Normalization (`htmlDescription.ts`, `TaskDetailModal.tsx`)**:
+  - Decodes Vikunja TipTap HTML paragraphs, lists, links, entities, and checklists into readable mobile text while preserving untouched server HTML verbatim when saving unrelated field edits.
+- [x] **Server Saved Filters & Cross-List Search (`client.ts`, `taskStore.ts`, `useFilteredSortedTasks.ts`, `ProjectDrawer.tsx`, `ProjectTasksScreen.tsx`)**:
+  - Added Vikunja Saved Filter discovery (`is_saved_filter` with sentinel collision isolation against `My Open Tasks`) and view-backed task loading, plus collapsible instant search across titles, HTML-decoded notes, labels, and assignees with `All Lists`, due-window, and priority filters.
+
+### 3. Custom Recurrence, OLED Theme, Week Start & Interactive Reminders
+- [x] **Custom Repeat Stepper, Postpone Chips, Appearance Modes & Reminder Actions (`TaskScheduleSection.tsx`, `SettingsModal.tsx`, `theme.ts`, `dates.ts`, `localNotifications.ts`, `App.tsx`)**:
+  - Added custom `Every N hours/days/weeks/months/years` recurrence UI, `+1d / +3d / +1w` postpone shortcuts, configurable `Monday / Sunday` week start, and `System / Light / Dark / Pure Black (OLED)` theme selection.
+  - Added `Mark Complete` (with occurrence-bound recurring-task idempotency and tray dismissal) and `Snooze 15m` local notification actions, tap-to-open task routing behind the biometric gate, and optional `Overdue` / `Due Today` app icon badges.
+
+---
+
 ## 🔐 Phase 10.2: Vikunja 2.0 Rotating Refresh Tokens & Proactive Session Renewal (v1.3.2)
 
 ### 1. Rotating Refresh-Token Protocol & Proactive JWT Renewal

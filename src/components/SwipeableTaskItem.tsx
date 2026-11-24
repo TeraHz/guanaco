@@ -406,7 +406,9 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         dynamicStyles?.card,
         {
           backgroundColor: task.done
-            ? theme.isDark
+            ? theme.isOled
+              ? '#050507'
+              : theme.isDark
               ? '#161618'
               : '#FFFFFF'
             : theme.colors.cardBackground,
@@ -483,8 +485,14 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         const isRepeating = Boolean(
           (task.repeat_after && task.repeat_after > 0) || task.repeat_mode === 1
         );
+        const subtasks = task.related_tasks?.subtask || [];
+        const subtaskTotal = subtasks.length;
+        const subtaskDone = subtasks.filter((s) => Boolean(s?.done)).length;
+        const parentTask = task.related_tasks?.parenttask?.[0] || null;
         const hasMetadata = Boolean(
           pctDisplay > 0 ||
+            subtaskTotal > 0 ||
+            parentTask ||
             formattedDueDate ||
             isRepeating ||
             (task.reminders && task.reminders.length > 0) ||
@@ -495,6 +503,64 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
 
         const metadataBadges = (
           <>
+            {/* Parent Task Indicator */}
+            {parentTask && parentTask.title ? (
+              <View
+                testID={`task-parent-badge-${task.id}`}
+                style={[
+                  styles.dateBadge,
+                  isLarge && styles.dateBadgeLarge,
+                  dynamicStyles?.dateBadge,
+                  { backgroundColor: theme.colors.surfaceSecondary },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.dueDateText,
+                    isLarge && styles.dueDateTextLarge,
+                    dynamicStyles?.dueDateText,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {`↳ ${parentTask.title}`}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Subtask Progress Badge */}
+            {subtaskTotal > 0 && (
+              <View
+                testID={`task-subtask-badge-${task.id}`}
+                style={[
+                  styles.progressBadge,
+                  isLarge && styles.progressBadgeLarge,
+                  dynamicStyles?.progressBadge,
+                  {
+                    backgroundColor:
+                      subtaskDone >= subtaskTotal
+                        ? hexToRgba(theme.colors.success, 0.14)
+                        : theme.colors.surfaceSecondary,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.progressText,
+                    isLarge && styles.progressTextLarge,
+                    dynamicStyles?.progressText,
+                    {
+                      color:
+                        subtaskDone >= subtaskTotal
+                          ? theme.colors.success
+                          : theme.colors.textSecondary,
+                    },
+                  ]}
+                >
+                  {`☑ ${subtaskDone}/${subtaskTotal}`}
+                </Text>
+              </View>
+            )}
             {/* Progress % */}
             {pctDisplay > 0 && (
               <View

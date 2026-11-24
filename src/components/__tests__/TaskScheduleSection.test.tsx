@@ -352,4 +352,43 @@ describe('TaskScheduleSection', () => {
     expect(queryByTestId('clear-due-date-btn')).toBeNull();
     expect(queryByTestId('clear-start-date-btn')).toBeNull();
   });
+
+  it('supports custom recurrence intervals (stepper + unit chips), postpone shortcuts, and Sunday weekStartDay', () => {
+    const futureIso = new Date(Date.now() + 2 * 86400 * 1000).toISOString();
+    const { getByTestId } = render(
+      <TaskScheduleSection
+        dueDate={futureIso}
+        startDate={null}
+        endDate={null}
+        repeatAfter={259200} // 3 days
+        repeatMode={RepeatMode.FromDueDate}
+        reminders={[]}
+        weekStartDay={0}
+        onChangeDueDate={mockOnChangeDueDate}
+        onChangeStartDate={mockOnChangeStartDate}
+        onChangeEndDate={mockOnChangeEndDate}
+        onChangeRepeat={mockOnChangeRepeat}
+        onChangeReminders={mockOnChangeReminders}
+      />
+    );
+
+    // Existing custom interval (3 days) automatically opens custom editor and increments to 4 days (345600s)
+    expect(getByTestId('custom-repeat-editor')).toBeTruthy();
+    fireEvent.press(getByTestId('custom-repeat-increment'));
+    expect(mockOnChangeRepeat).toHaveBeenCalledWith(345600, RepeatMode.FromDueDate);
+
+    // Switch unit to weeks (4 weeks = 2419200s)
+    fireEvent.press(getByTestId('custom-repeat-unit-weeks'));
+    expect(mockOnChangeRepeat).toHaveBeenLastCalledWith(2419200, RepeatMode.FromDueDate);
+
+    // Postpone +3d shifts due date forward
+    fireEvent.press(getByTestId('postpone-3d'));
+    expect(mockOnChangeDueDate).toHaveBeenCalledWith(expect.any(String));
+
+    // Next week with weekStartDay = 0 picks Sunday (getDay() === 0)
+    mockOnChangeDueDate.mockClear();
+    fireEvent.press(getByTestId('preset-next-week'));
+    const pickedNextWeekIso = mockOnChangeDueDate.mock.calls[0][0];
+    expect(new Date(pickedNextWeekIso).getDay()).toBe(0);
+  });
 });

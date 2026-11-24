@@ -715,4 +715,49 @@ describe('ProjectTasksScreen', () => {
     });
     expect(mockDelete).toHaveBeenCalledWith(1);
   });
+
+  it('supports toggling global Search across lists and opening a duplicated task from the toast banner', () => {
+    useTaskStore.setState({
+      projects: [
+        { id: 1, title: 'Inbox', hex_color: '#3498db' },
+        { id: 2, title: 'Ops', hex_color: '#e74c3c' },
+      ],
+      tasks: [
+        { id: 10, title: 'Buy coffee beans', done: false, priority: 1, project_id: 1 },
+        {
+          id: 20,
+          title: 'Rotate TLS cert',
+          description: '<p>Caddy internal CA</p>',
+          done: false,
+          priority: 4,
+          project_id: 2,
+        },
+      ],
+      selectedProjectId: 1,
+    });
+
+    const { getByTestId, getByText, queryByText } = render(
+      <ProjectTasksScreen onOpenDrawer={jest.fn()} />
+    );
+
+    // Open search bar and toggle All Lists scope to find task in Ops by HTML-decoded note
+    fireEvent.press(getByTestId('header-search-btn'));
+    fireEvent.changeText(getByTestId('task-search-input'), 'Caddy');
+    expect(queryByText('Rotate TLS cert')).toBeNull(); // still scoped to Inbox
+
+    fireEvent.press(getByTestId('search-scope-all-lists'));
+    expect(getByText('Rotate TLS cert')).toBeTruthy();
+
+    // Close search
+    fireEvent.press(getByTestId('header-search-btn'));
+    expect(getByText('Buy coffee beans')).toBeTruthy();
+
+    // Open task 10 and duplicate it -> shows toast with Open button that opens the copy
+    fireEvent.press(getByTestId('task-item-10'));
+    fireEvent.press(getByTestId('task-detail-duplicate-btn'));
+
+    expect(getByTestId('duplicated-task-banner')).toBeTruthy();
+    fireEvent.press(getByTestId('open-duplicated-task-btn'));
+    expect(getByTestId('task-detail-title-input').props.value).toBe('Buy coffee beans (Copy)');
+  });
 });

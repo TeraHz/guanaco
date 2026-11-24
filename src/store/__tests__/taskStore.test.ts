@@ -3,12 +3,14 @@ import * as Haptics from 'expo-haptics';
 import * as Notifications from 'expo-notifications';
 import { useTaskStore } from '../taskStore';
 import { RepeatMode, ReminderRelativeTo } from '../../types/vikunja';
+import { setActiveThemeMode } from '../../utils/theme';
 import * as localNotifications from '../../services/localNotifications';
 
 describe('useTaskStore', () => {
   beforeEach(async () => {
     await useTaskStore.getState().clearSession();
     await AsyncStorage.clear();
+    setActiveThemeMode('system');
     useTaskStore.setState({
       projects: [
         { id: 1, title: 'Inbox', hex_color: '#3498db' },
@@ -22,6 +24,8 @@ describe('useTaskStore', () => {
       cachedUsers: [],
       currentUser: null,
       selectedProjectId: 1,
+      savedFilterTaskIds: {},
+      pendingOpenTaskId: null,
       isLoading: false,
       error: null,
       client: null,
@@ -34,6 +38,9 @@ describe('useTaskStore', () => {
       largeTaskItems: false,
       taskItemScale: 100,
       taskItemTextScale: 100,
+      themeMode: 'system',
+      weekStartDay: 1,
+      appBadgeMode: 'off',
     });
     jest.clearAllMocks();
   });
@@ -1675,6 +1682,147 @@ describe('useTaskStore', () => {
         await expect(
           useTaskStore.getState().createProject({ title: 'Offline' })
         ).rejects.toThrow('Network connection required to manage lists');
+      });
+    });
+
+    describe('Subtasks, Task Duplication, Saved Filters, and Display/Week Preferences', () => {
+      it('addSubtask() creates optimistic child task, links parent.related_tasks.subtask, and enqueues CREATE_TASK + CREATE_TASK_RELATION', () => {
+        const mockEnqueue = jest.fn();
+        useTaskStore.setState({
+          tasks: [
+            {
+              id: 42,
+              title: 'Prepare Release',
+              done: false,
+              priority: 3,
+              project_id: 2,
+            },
+          ],
+          syncQueue: {
+            enqueue: mockEnqueue,
+            processQueue: jest.fn(),
+            hasPendingForTask: () => true,
+          } as any,
+        });
+
+        const child = useTaskStore.getState().addSubtask(42, 'Run regression suite');
+        expect(child).not.toBeNull();
+        expect(child!.id).toBeLessThan(0);
+        expect(child!.project_id).toBe(2);
+        expect(child!.related_tasks?.parenttask?.[0]?.id).toBe(42);
+
+        const parent = useTaskStore.getState().tasks.find((t) => t.id === 42)!;
+        expect(parent.related_tasks?.subtask).toHaveLength(1);
+        expect(parent.related_tasks?.subtask?.[0]?.title).toBe('Run regression suite');
+
+        expect(mockEnqueue).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'CREATE_TASK' })
+        );
+        expect(mockEnqueue).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'CREATE_TASK_RELATION',
+            payload: {
+              taskId: 42,
+              otherTaskId: child!.id,
+              relationKind: 'subtask',
+            },
+          })
+        );
+      });
+
+      it('duplicateTask() creates an open copy preserving metadata and duplicating subtasks', () => {
+        const mockEnqueue = jest.fn();
+        useTaskStore.setState({
+          tasks: [
+            {
+              id: 10,
+              title: 'Sprint Checklist',
+              description: '<p>Verify builds</p>',
+              done: true,
+              percent_done: 1,
+              priority: 4,
+              hex_color: '#0A84FF',
+              project_id: 1,
+              labels: [{ id: 3, title: 'Ops', hex_color: '#30D158' }],
+              related_tasks: {
+                subtask: [
+                  { id: 11, title: 'Tag release', done: true, priority: 0, project_id: 1 },
+                  { id: 12, title: 'Upload bundle', done: false, priority: 0, project_id: 1 },
+                ],
+              },
+            },
+            { id: 11, title: 'Tag release', done: true, priority: 0, project_id: 1 },
+            { id: 12, title: 'Upload bundle', done: false, priority: 0, project_id: 1 },
+          ],
+          syncQueue: { enqueue: mockEnqueue, processQueue: jest.fn() } as any,
+        });
+
+        const duplicated = useTaskStore.getState().duplicateTask(10);
+        expect(duplicated).not.toBeNull();
+        expect(duplicated!.id).toBeLessThan(0);
+        expect(duplicated!.title).toBe('Sprint Checklist (Copy)');
+        expect(duplicated!.done).toBe(false);
+        expect(duplicated!.percent_done).toBe(0);
+        expect(duplicated!.priority).toBe(4);
+        expect(duplicated!.description).toBe('<p>Verify builds</p>');
+        expect(duplicated!.related_tasks?.subtask).toHaveLength(2);
+        expect(duplicated!.related_tasks?.subtask?.every((s) => !s.done)).toBe(true);
+      });
+
+      it('normalizes negative-ID server Saved Filters without colliding with MY_TASKS_PROJECT_ID (-1) and fetches filter tasks', async () => {
+        const mockClient = {
+          getProjects: jest.fn().mockResolvedValue([
+            { id: 1, title: 'Inbox' },
+            {
+              id: -1,
+              title: 'Urgent Filter',
+              views: [{ id: 15, title: 'List', project_id: -1, view_kind: 'list' }],
+            },
+            {
+              id: -2,
+              title: 'Shopping Filter',
+              views: [{ id: 16, title: 'List', project_id: -2, view_kind: 'list' }],
+            },
+          ]),
+          getSavedFilterTasks: jest.fn().mockResolvedValue([
+            { id: 301, title: 'Critical Server Patch', done: false, priority: 5, project_id: 1 },
+          ]),
+        };
+
+        useTaskStore.setState({ client: mockClient as any, projects: [], tasks: [] });
+        await useTaskStore.getState().fetchProjects();
+
+        const projects = useTaskStore.getState().projects;
+        const urgentFilter = projects.find((p) => p.title === 'Urgent Filter')!;
+        expect(urgentFilter.is_saved_filter).toBe(true);
+        expect(urgentFilter.id).not.toBe(-1); // Never collides with MY_TASKS_PROJECT_ID (-1)!
+        expect(urgentFilter.server_project_id).toBe(-1);
+
+        useTaskStore.getState().setSelectedProjectId(urgentFilter.id);
+        await new Promise((r) => setTimeout(r, 15));
+
+        expect(mockClient.getSavedFilterTasks).toHaveBeenCalledWith(
+          expect.objectContaining({ server_project_id: -1 })
+        );
+        expect(useTaskStore.getState().savedFilterTaskIds[urgentFilter.id]).toEqual([301]);
+        expect(useTaskStore.getState().tasks.some((t) => t.id === 301)).toBe(true);
+      });
+
+      it('persists themeMode, weekStartDay, and appBadgeMode in AsyncStorage', async () => {
+        await useTaskStore.getState().setThemeMode('oled');
+        await useTaskStore.getState().setWeekStartDay(0);
+        await useTaskStore.getState().setAppBadgeMode('due_today');
+
+        expect(useTaskStore.getState().themeMode).toBe('oled');
+        expect(useTaskStore.getState().weekStartDay).toBe(0);
+        expect(useTaskStore.getState().appBadgeMode).toBe('due_today');
+
+        useTaskStore.setState({ themeMode: 'system', weekStartDay: 1, appBadgeMode: 'off' });
+        await useTaskStore.getState().loadCachedData();
+
+        expect(useTaskStore.getState().themeMode).toBe('oled');
+        expect(useTaskStore.getState().weekStartDay).toBe(0);
+        expect(useTaskStore.getState().appBadgeMode).toBe('due_today');
       });
     });
   });

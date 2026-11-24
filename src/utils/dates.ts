@@ -125,9 +125,14 @@ export type DatePresetKey = 'today' | 'tomorrow' | 'this_weekend' | 'next_week';
 
 /**
  * Calculates pre-defined date targets for quick date picking.
- * Guarantees 'today' never returns a timestamp in the past even late at night.
+ * Guarantees 'today' never returns a timestamp in the past even late at night,
+ * and respects user's configured `weekStartDay` (`0` = Sunday, `1` = Monday) for `next_week`.
  */
-export function getDatePreset(preset: DatePresetKey, now: Date = new Date()): Date | null {
+export function getDatePreset(
+  preset: DatePresetKey,
+  now: Date = new Date(),
+  weekStartDay: 0 | 1 = 1
+): Date | null {
   switch (preset) {
     case 'today': {
       const d = new Date(now.getTime());
@@ -167,11 +172,13 @@ export function getDatePreset(preset: DatePresetKey, now: Date = new Date()): Da
     }
     case 'next_week': {
       const day = now.getDay();
-      const daysUntilMonday = day === 0 ? 1 : 8 - day;
+      const targetStart = weekStartDay === 0 ? 0 : 1;
+      const rawDelta = (targetStart - day + 7) % 7;
+      const daysUntilStart = rawDelta === 0 ? 7 : rawDelta;
       const d = new Date(
         now.getFullYear(),
         now.getMonth(),
-        now.getDate() + daysUntilMonday,
+        now.getDate() + daysUntilStart,
         9,
         0,
         0,
@@ -182,4 +189,37 @@ export function getDatePreset(preset: DatePresetKey, now: Date = new Date()): Da
     default:
       return null;
   }
+}
+
+/**
+ * Postpones a task's due date by `days` calendar days:
+ * - If `currentDueIso` is in the future, shifts that date forward while keeping its exact local time.
+ * - If `currentDueIso` is overdue or unset, advances `days` from `now` while preserving any non-midnight time set on `currentDueIso` (or defaulting to 9:00 AM).
+ */
+export function postponeDateByDays(
+  currentDueIso: string | null | undefined,
+  days: number,
+  now: Date = new Date()
+): Date {
+  const norm = normalizeVikunjaDate(currentDueIso);
+  const existing = norm ? new Date(norm) : null;
+
+  if (existing && !isNaN(existing.getTime()) && existing.getTime() > now.getTime()) {
+    const shifted = new Date(existing.getTime());
+    shifted.setDate(shifted.getDate() + days);
+    return shifted;
+  }
+
+  let hours = 9;
+  let minutes = 0;
+  if (
+    existing &&
+    !isNaN(existing.getTime()) &&
+    (existing.getHours() !== 0 || existing.getMinutes() !== 0)
+  ) {
+    hours = existing.getHours();
+    minutes = existing.getMinutes();
+  }
+
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, hours, minutes, 0, 0);
 }

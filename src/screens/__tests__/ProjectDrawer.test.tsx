@@ -236,4 +236,30 @@ describe('ProjectDrawer', () => {
     });
     expect(mockDelete).toHaveBeenCalledWith(1);
   });
+
+  it('renders server Saved Filters section and selects a saved filter on press', () => {
+    const mockSelect = jest.fn();
+    useTaskStore.setState({
+      projects: [
+        { id: 1, title: 'Inbox', hex_color: '#3498db' },
+        { id: -2, server_project_id: -2, is_saved_filter: true, title: 'High Priority Filter' },
+      ],
+      savedFilterTaskIds: { [-2]: [10, 11] },
+      tasks: [
+        { id: 10, title: 'T1', done: false, priority: 4, project_id: 1 },
+        { id: 11, title: 'T2', done: true, priority: 4, project_id: 1 },
+      ],
+      setSelectedProjectId: mockSelect,
+    });
+
+    const { getByTestId, getByText } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    expect(getByText('SAVED FILTERS')).toBeTruthy();
+    expect(getByText('High Priority Filter')).toBeTruthy();
+    fireEvent.press(getByTestId('drawer-saved-filter--2'));
+    expect(mockSelect).toHaveBeenCalledWith(-2);
+    expect(mockOnClose).toHaveBeenCalled();
+  });
 });

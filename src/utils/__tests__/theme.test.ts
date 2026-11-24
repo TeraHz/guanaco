@@ -46,4 +46,24 @@ describe('theme utility', () => {
     expect(tokens.isDark).toBe(true);
     expect(tokens.colors.background).toBe('#0D0D0E');
   });
+
+  it('supports explicit light, dark, oled (#000000), and system themeMode overrides', () => {
+    const oledTokens = getThemeTokens('light', 'oled');
+    expect(oledTokens.isDark).toBe(true);
+    expect(oledTokens.colors.background).toBe('#000000');
+    expect(oledTokens.colors.cardBackground).toBe('#0A0A0C');
+    expect(oledTokens.colors.text).toBe('#FFFFFF');
+    expect(oledTokens.colors.accent).toBe('#0A84FF');
+
+    const forcedLight = getThemeTokens('dark', 'light');
+    expect(forcedLight.isDark).toBe(false);
+    expect(forcedLight.colors.background).toBe('#F2F2F7');
+
+    const forcedDark = getThemeTokens('light', 'dark');
+    expect(forcedDark.isDark).toBe(true);
+    expect(forcedDark.colors.background).toBe('#0D0D0E');
+
+    const systemLight = getThemeTokens('light', 'system');
+    expect(systemLight.isDark).toBe(false);
+  });
 });

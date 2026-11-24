@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,16 +8,22 @@ import {
   Platform,
 } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { RepeatMode, ReminderRelativeTo, TaskReminder } from '../types/vikunja';
+import { RepeatMode, ReminderRelativeTo, TaskReminder, WeekStartDay } from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import {
   normalizeVikunjaDate,
   formatDateDisplay,
   getDatePreset,
+  postponeDateByDays,
   formatIsoForVikunja,
 } from '../utils/dates';
-import { formatRepeatDescription } from '../utils/repeat';
+import {
+  formatRepeatDescription,
+  intervalToSeconds,
+  secondsToInterval,
+  TimeUnit,
+} from '../utils/repeat';
 import { formatReminderDescription } from '../utils/reminders';
 
 export interface TaskScheduleSectionProps {
@@ -27,6 +33,7 @@ export interface TaskScheduleSectionProps {
   repeatAfter?: number;
   repeatMode?: RepeatMode;
   reminders?: TaskReminder[];
+  weekStartDay?: WeekStartDay;
   onChangeDueDate: (date: string | null) => void;
   onChangeStartDate: (date: string | null) => void;
   onChangeEndDate: (date: string | null) => void;
@@ -67,6 +74,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
   repeatAfter = 0,
   repeatMode = RepeatMode.FromDueDate,
   reminders = [],
+  weekStartDay = 1,
   onChangeDueDate,
   onChangeStartDate,
   onChangeEndDate,
@@ -96,6 +104,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
   const [dateValidationError, setDateValidationError] = useState<string | null>(null);
 
   const [showReminderMenu, setShowReminderMenu] = useState(false);
+  const [customRepeatExpanded, setCustomRepeatExpanded] = useState(false);
 
   const getFieldIso = (field: ScheduleField): string | null => {
     if (field === 'dueDate') return safeDueDate;
@@ -178,10 +187,16 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
 
   const handleApplyPreset = (preset: 'today' | 'tomorrow' | 'this_weekend' | 'next_week') => {
     safeHaptics.selection();
-    const d = getDatePreset(preset);
+    const d = getDatePreset(preset, new Date(), weekStartDay);
     if (d) {
       onChangeDueDate(formatIsoForVikunja(d));
     }
+  };
+
+  const handlePostponeByDays = (days: number) => {
+    safeHaptics.selection();
+    const shifted = postponeDateByDays(safeDueDate, days, new Date());
+    onChangeDueDate(formatIsoForVikunja(shifted));
   };
 
   const handleClearDueDate = () => {
@@ -327,10 +342,57 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
     onChangeReminders(updated);
   };
 
-  const isMonthlySelected = repeatMode === RepeatMode.Monthly || repeatAfter === 2592000;
-  const isNeverSelected = repeatAfter === 0 && repeatMode !== RepeatMode.Monthly;
-  const isDailySelected = repeatAfter === 86400 && repeatMode !== RepeatMode.Monthly;
-  const isWeeklySelected = repeatAfter === 604800 && repeatMode !== RepeatMode.Monthly;
+  const isMonthlySelected =
+    !customRepeatExpanded &&
+    (repeatMode === RepeatMode.Monthly || repeatAfter === 2592000) &&
+    (repeatAfter <= 0 || repeatAfter === 2592000);
+  const isNeverSelected = !customRepeatExpanded && repeatAfter === 0 && repeatMode !== RepeatMode.Monthly;
+  const isDailySelected =
+    !customRepeatExpanded && repeatAfter === 86400 && repeatMode !== RepeatMode.Monthly;
+  const isWeeklySelected =
+    !customRepeatExpanded && repeatAfter === 604800 && repeatMode !== RepeatMode.Monthly;
+  const isNonStandardInterval =
+    (repeatAfter > 0 && !isDailySelected && !isWeeklySelected && !isMonthlySelected) ||
+    (repeatMode === RepeatMode.Monthly && repeatAfter > 2592000);
+  const isCustomSelected = customRepeatExpanded || isNonStandardInterval;
+
+  const parsedCustomInterval = secondsToInterval(
+    repeatAfter > 0 ? repeatAfter : 172800,
+    repeatMode
+  ) || { amount: 2, unit: 'days' as TimeUnit };
+  const customUnits: { key: TimeUnit; label: string }[] = [
+    { key: 'hours', label: 'Hours' },
+    { key: 'days', label: 'Days' },
+    { key: 'weeks', label: 'Weeks' },
+    { key: 'months', label: 'Months' },
+    { key: 'years', label: 'Years' },
+  ];
+  const derivedUnit: TimeUnit = customUnits.some((u) => u.key === parsedCustomInterval.unit)
+    ? parsedCustomInterval.unit
+    : 'days';
+  const derivedAmount = Math.max(1, parsedCustomInterval.amount);
+
+  const [activeCustomUnit, setActiveCustomUnit] = useState<TimeUnit>(derivedUnit);
+  const [activeCustomAmount, setActiveCustomAmount] = useState<number>(derivedAmount);
+
+  useEffect(() => {
+    setActiveCustomUnit(derivedUnit);
+    setActiveCustomAmount(derivedAmount);
+  }, [repeatAfter, repeatMode, derivedUnit, derivedAmount]);
+
+  const applyCustomRepeat = (nextAmount: number, nextUnit: TimeUnit) => {
+    const clampedAmount = Math.max(1, Math.min(365, Math.round(nextAmount)));
+    setActiveCustomAmount(clampedAmount);
+    setActiveCustomUnit(nextUnit);
+    const secs = intervalToSeconds(clampedAmount, nextUnit);
+    const nextMode =
+      nextUnit === 'months'
+        ? RepeatMode.Monthly
+        : repeatMode === RepeatMode.Monthly
+        ? RepeatMode.FromDueDate
+        : repeatMode;
+    onChangeRepeat(secs, nextMode);
+  };
 
   const currentPickerValue = activePicker
     ? pendingIosDate || getBaseDateForField(activePicker.field)
@@ -441,6 +503,28 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
         >
           <Text style={[styles.presetText, { color: theme.colors.text }]}>Next Week</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Postpone / Defer Shortcuts */}
+      <View style={[styles.presetsRow, { marginTop: 8 }]}>
+        {[
+          { days: 1, label: '+1d', testID: 'postpone-1d' },
+          { days: 3, label: '+3d', testID: 'postpone-3d' },
+          { days: 7, label: '+1w', testID: 'postpone-1w' },
+        ].map((item) => (
+          <TouchableOpacity
+            key={item.testID}
+            testID={item.testID}
+            style={[styles.presetChip, secondarySurface]}
+            onPress={() => handlePostponeByDays(item.days)}
+            accessibilityRole="button"
+            accessibilityLabel={`Postpone by ${item.days} day${item.days > 1 ? 's' : ''}`}
+          >
+            <Text style={[styles.presetText, { color: theme.colors.textSecondary }]}>
+              {item.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* START & END DATES SECTION */}
@@ -704,6 +788,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           style={[styles.presetChip, isNeverSelected ? activeAccentStyle : secondarySurface]}
           onPress={() => {
             safeHaptics.selection();
+            setCustomRepeatExpanded(false);
             onChangeRepeat(0, RepeatMode.FromDueDate);
           }}
           accessibilityRole="button"
@@ -724,6 +809,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           style={[styles.presetChip, isDailySelected ? activeAccentStyle : secondarySurface]}
           onPress={() => {
             safeHaptics.selection();
+            setCustomRepeatExpanded(false);
             const nextMode =
               repeatMode === RepeatMode.Monthly ? RepeatMode.FromDueDate : repeatMode;
             onChangeRepeat(86400, nextMode);
@@ -746,6 +832,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           style={[styles.presetChip, isWeeklySelected ? activeAccentStyle : secondarySurface]}
           onPress={() => {
             safeHaptics.selection();
+            setCustomRepeatExpanded(false);
             const nextMode =
               repeatMode === RepeatMode.Monthly ? RepeatMode.FromDueDate : repeatMode;
             onChangeRepeat(604800, nextMode);
@@ -768,6 +855,7 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
           style={[styles.presetChip, isMonthlySelected ? activeAccentStyle : secondarySurface]}
           onPress={() => {
             safeHaptics.selection();
+            setCustomRepeatExpanded(false);
             onChangeRepeat(2592000, RepeatMode.Monthly);
           }}
           accessibilityRole="button"
@@ -782,7 +870,116 @@ export const TaskScheduleSection: React.FC<TaskScheduleSectionProps> = ({
             Monthly
           </Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          testID="repeat-preset-custom"
+          style={[styles.presetChip, isCustomSelected ? activeAccentStyle : secondarySurface]}
+          onPress={() => {
+            safeHaptics.selection();
+            setCustomRepeatExpanded(true);
+            if (!repeatAfter || repeatAfter <= 0) {
+              applyCustomRepeat(2, 'days');
+            }
+          }}
+          accessibilityRole="button"
+          accessibilityState={{ selected: isCustomSelected }}
+        >
+          <Text
+            style={[
+              styles.presetText,
+              { color: isCustomSelected ? '#FFFFFF' : theme.colors.textSecondary },
+            ]}
+          >
+            Custom
+          </Text>
+        </TouchableOpacity>
       </View>
+
+      {isCustomSelected && (
+        <View
+          testID="custom-repeat-editor"
+          style={[
+            styles.pickerCard,
+            { backgroundColor: theme.colors.cardSecondary, borderColor: theme.colors.borderStrong },
+          ]}
+        >
+          <View style={styles.customRepeatTopRow}>
+            <Text style={[styles.pickerCardTitle, { color: theme.colors.text }]}>Every</Text>
+            <View style={styles.customStepperRow}>
+              <TouchableOpacity
+                testID="custom-repeat-decrement"
+                style={[styles.customStepperBtn, secondarySurface]}
+                disabled={activeCustomAmount <= 1}
+                onPress={() => {
+                  safeHaptics.selection();
+                  applyCustomRepeat(activeCustomAmount - 1, activeCustomUnit);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Decrease repeat interval"
+              >
+                <Text
+                  style={[
+                    styles.customStepperText,
+                    {
+                      color:
+                        activeCustomAmount <= 1
+                          ? theme.colors.textTertiary
+                          : theme.colors.accent,
+                    },
+                  ]}
+                >
+                  −
+                </Text>
+              </TouchableOpacity>
+              <Text
+                testID="custom-repeat-amount"
+                style={[styles.customAmountText, { color: theme.colors.text }]}
+              >
+                {activeCustomAmount}
+              </Text>
+              <TouchableOpacity
+                testID="custom-repeat-increment"
+                style={[styles.customStepperBtn, secondarySurface]}
+                onPress={() => {
+                  safeHaptics.selection();
+                  applyCustomRepeat(activeCustomAmount + 1, activeCustomUnit);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Increase repeat interval"
+              >
+                <Text style={[styles.customStepperText, { color: theme.colors.accent }]}>+</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <View style={[styles.presetsRow, { marginTop: 10 }]}>
+            {customUnits.map((u) => {
+              const selected = activeCustomUnit === u.key;
+              return (
+                <TouchableOpacity
+                  key={u.key}
+                  testID={`custom-repeat-unit-${u.key}`}
+                  style={[styles.presetChip, selected ? activeAccentStyle : secondarySurface]}
+                  onPress={() => {
+                    safeHaptics.selection();
+                    applyCustomRepeat(activeCustomAmount, u.key);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                >
+                  <Text
+                    style={[
+                      styles.presetText,
+                      { color: selected ? '#FFFFFF' : theme.colors.textSecondary },
+                    ]}
+                  >
+                    {u.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
 
       {/* Repeat Mode Selector */}
       <View style={styles.repeatModeRow}>
@@ -1204,5 +1401,33 @@ const styles = StyleSheet.create({
   removeReminderBtnText: {
     fontSize: 14,
     fontWeight: '700',
+  },
+  customRepeatTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  customStepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  customStepperBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customStepperText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  customAmountText: {
+    fontSize: 15,
+    fontWeight: '700',
+    minWidth: 24,
+    textAlign: 'center',
   },
 });

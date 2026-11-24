@@ -18,7 +18,8 @@ import { useAppTheme } from '../utils/theme';
 import { getLabelBadgeStyles, normalizeHexColor } from '../utils/colors';
 import { normalizeVikunjaDate } from '../utils/dates';
 import { getUserSuggestions } from '../utils/userSuggestions';
-import { Label, Project, Task, User, RepeatMode, TaskReminder } from '../types/vikunja';
+import { htmlToPlainText, serializeDescriptionForServer } from '../utils/htmlDescription';
+import { Label, Project, Task, User, RepeatMode, TaskReminder, WeekStartDay } from '../types/vikunja';
 import { TaskScheduleSection } from './TaskScheduleSection';
 
 interface TaskDetailModalProps {
@@ -29,11 +30,17 @@ interface TaskDetailModalProps {
   availableUsers?: User[];
   availableProjects?: Project[];
   defaultProjectId?: number;
+  weekStartDay?: WeekStartDay;
   onClose: () => void;
   onSave: (taskId: number, updates: Partial<Task>) => void;
   onDelete: (taskId: number) => void;
-  onCreateTask?: (taskData: Partial<Task>) => void;
+  onCreateTask?: (taskData: Partial<Task>, initialSubtaskTitles?: string[]) => void;
   onMoveTask?: (taskId: number, newProjectId: number) => void;
+  onAddSubtask?: (parentTaskId: number, title: string) => Task | null | void;
+  onToggleSubtask?: (subtaskId: number) => void;
+  onDeleteSubtask?: (parentTaskId: number, subtaskId: number) => void;
+  onSelectSubtask?: (subtask: Task) => void;
+  onDuplicateTask?: (taskId: number) => void;
 }
 
 const PROGRESS_PRESETS = [0, 25, 50, 75, 100];
@@ -76,10 +83,16 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   availableUsers = [],
   availableProjects = [],
   defaultProjectId,
+  weekStartDay = 1,
   onClose,
   onSave,
   onDelete,
   onCreateTask,
+  onAddSubtask,
+  onToggleSubtask,
+  onDeleteSubtask,
+  onSelectSubtask,
+  onDuplicateTask,
 }) => {
   const theme = useAppTheme();
 
@@ -115,6 +128,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
   const [newAssigneeText, setNewAssigneeText] = useState('');
   const [newLabelText, setNewLabelText] = useState('');
+  const [newSubtaskText, setNewSubtaskText] = useState('');
+  const [draftSubtasks, setDraftSubtasks] = useState<string[]>([]);
+  const [isDescriptionDirty, setIsDescriptionDirty] = useState(false);
+  const rawOriginalDescriptionRef = useRef<string | undefined>(undefined);
+  const initialTaskTitleRef = useRef<string>('');
   const titleInputRef = useRef<TextInput>(null);
   const initializedRef = useRef<number | 'create' | null>(null);
 
@@ -139,7 +157,8 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       if (
         typeof initializedRef.current === 'number' &&
         initializedRef.current < 0 &&
-        task.id > 0
+        task.id > 0 &&
+        task.title === initialTaskTitleRef.current
       ) {
         initializedRef.current = task.id;
         return;
@@ -147,8 +166,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
       if (initializedRef.current !== task.id) {
         initializedRef.current = task.id;
+        initialTaskTitleRef.current = task.title || '';
+        rawOriginalDescriptionRef.current = task.description;
         setTitle(task.title || '');
-        setDescription(task.description || '');
+        setDescription(htmlToPlainText(task.description || ''));
+        setIsDescriptionDirty(false);
         setDone(Boolean(task.done));
         setPriority(task.priority || 0);
         setPercentDone(percentDoneToUiScale(task.percent_done));
@@ -167,14 +189,18 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         setProjectId(task.project_id);
         setNewAssigneeText('');
         setNewLabelText('');
+        setNewSubtaskText('');
+        setDraftSubtasks([]);
         setShowProjectPicker(false);
         setValidationError(null);
         setShowWebDeleteConfirm(false);
       }
     } else if (initializedRef.current !== 'create') {
       initializedRef.current = 'create';
+      rawOriginalDescriptionRef.current = undefined;
       setTitle('');
       setDescription('');
+      setIsDescriptionDirty(false);
       setDone(false);
       setPriority(0);
       setPercentDone(0);
@@ -194,6 +220,8 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       setProjectId(fallbackPid);
       setNewAssigneeText('');
       setNewLabelText('');
+      setNewSubtaskText('');
+      setDraftSubtasks([]);
       setShowProjectPicker(false);
       setValidationError(null);
       setShowWebDeleteConfirm(false);
@@ -297,7 +325,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     const trimmedDescription = description.trim();
     const normalizedChosenColor = normalizeHexColor(color, true) || '';
 
+    const pendingSubtaskTrimmed = newSubtaskText.trim();
+
     if (!task) {
+      const initialSubtasks = pendingSubtaskTrimmed
+        ? [...draftSubtasks, pendingSubtaskTrimmed]
+        : [...draftSubtasks];
       const createPayload: Partial<Task> = {
         title: title.trim(),
         description: trimmedDescription || undefined,
@@ -317,14 +350,29 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         labels: finalLabels,
         assignees: finalAssignees,
       };
-      onCreateTask?.(createPayload);
+      if (initialSubtasks.length > 0) {
+        onCreateTask?.(createPayload, initialSubtasks);
+      } else {
+        onCreateTask?.(createPayload);
+      }
       onClose();
       return;
     }
 
+    if (pendingSubtaskTrimmed && onAddSubtask) {
+      onAddSubtask(task.id, pendingSubtaskTrimmed);
+      setNewSubtaskText('');
+    }
+
+    const serializedDescription = serializeDescriptionForServer(
+      description,
+      rawOriginalDescriptionRef.current,
+      isDescriptionDirty
+    );
+
     const updatePayload: Partial<Task> = {
       title: title.trim(),
-      description: trimmedDescription,
+      description: serializedDescription,
       done,
       ...(done !== Boolean(task.done)
         ? { done_at: done ? new Date().toISOString() : null }
@@ -345,6 +393,25 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     };
 
     onSave(task.id, updatePayload);
+    onClose();
+  };
+
+  const handleAddSubtaskSubmit = () => {
+    const cleaned = newSubtaskText.trim();
+    if (!cleaned) return;
+    safeHaptics.selection();
+    if (task) {
+      onAddSubtask?.(task.id, cleaned);
+    } else {
+      setDraftSubtasks((prev) => [...prev, cleaned]);
+    }
+    setNewSubtaskText('');
+  };
+
+  const handleDuplicate = () => {
+    if (!task || !onDuplicateTask) return;
+    safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
+    onDuplicateTask(task.id);
     onClose();
   };
 
@@ -738,7 +805,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     },
                   ]}
                   value={description}
-                  onChangeText={setDescription}
+                  onChangeText={(txt) => {
+                    setDescription(txt);
+                    setIsDescriptionDirty(true);
+                  }}
                   placeholder="Add notes..."
                   placeholderTextColor={theme.colors.placeholder}
                   multiline
@@ -746,6 +816,176 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   textAlignVertical="top"
                 />
               </View>
+
+              {/* Subtasks */}
+              {(() => {
+                const liveSubtasks = task ? task.related_tasks?.subtask || [] : [];
+                const doneSubCount = liveSubtasks.filter((s) => s?.done).length;
+                const totalSubCount = task ? liveSubtasks.length : draftSubtasks.length;
+                return (
+                  <View
+                    style={[
+                      styles.sectionCard,
+                      {
+                        backgroundColor: theme.colors.cardBackground,
+                        borderColor: theme.colors.cardBorder,
+                      },
+                    ]}
+                  >
+                    <View style={styles.sectionHeaderRow}>
+                      <Text
+                        style={[
+                          styles.sectionLabel,
+                          { color: theme.colors.textSecondary, marginBottom: 0 },
+                        ]}
+                      >
+                        SUBTASKS
+                      </Text>
+                      {totalSubCount > 0 && (
+                        <Text
+                          testID="task-detail-subtask-count"
+                          style={[styles.progressDisplay, { color: theme.colors.textSecondary }]}
+                        >
+                          {task ? `${doneSubCount}/${totalSubCount}` : `${totalSubCount}`}
+                        </Text>
+                      )}
+                    </View>
+
+                    {task
+                      ? liveSubtasks.map((sub) => (
+                          <View
+                            key={sub.id}
+                            style={[
+                              styles.subtaskRow,
+                              { borderBottomColor: theme.colors.cardBorder },
+                            ]}
+                          >
+                            <TouchableOpacity
+                              testID={`subtask-checkbox-${sub.id}`}
+                              style={[
+                                styles.subtaskCheckbox,
+                                {
+                                  borderColor: sub.done
+                                    ? theme.colors.success
+                                    : theme.colors.checkboxBorder,
+                                  backgroundColor: sub.done
+                                    ? theme.colors.success
+                                    : 'transparent',
+                                },
+                              ]}
+                              onPress={() => {
+                                safeHaptics.selection();
+                                onToggleSubtask?.(sub.id);
+                              }}
+                              accessibilityRole="checkbox"
+                              accessibilityState={{ checked: Boolean(sub.done) }}
+                            >
+                              {sub.done && <Text style={styles.subtaskCheckmark}>✓</Text>}
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              testID={`subtask-title-btn-${sub.id}`}
+                              style={styles.subtaskTitleBtn}
+                              disabled={!onSelectSubtask}
+                              onPress={() => onSelectSubtask?.(sub)}
+                            >
+                              <Text
+                                style={[
+                                  styles.subtaskTitleText,
+                                  {
+                                    color: sub.done
+                                      ? theme.colors.textSecondary
+                                      : theme.colors.text,
+                                  },
+                                  sub.done && styles.titleInputDone,
+                                ]}
+                              >
+                                {sub.title}
+                              </Text>
+                            </TouchableOpacity>
+                            {onDeleteSubtask && (
+                              <TouchableOpacity
+                                testID={`delete-subtask-${sub.id}`}
+                                onPress={() => {
+                                  safeHaptics.selection();
+                                  onDeleteSubtask(task.id, sub.id);
+                                }}
+                                style={styles.removeBadgeBtn}
+                                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Delete subtask ${sub.title}`}
+                              >
+                                <Text
+                                  style={[
+                                    styles.removeBadgeIcon,
+                                    { color: theme.colors.textSecondary },
+                                  ]}
+                                >
+                                  ✕
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        ))
+                      : draftSubtasks.map((subTitle, idx) => (
+                          <View
+                            key={`${subTitle}-${idx}`}
+                            style={[
+                              styles.subtaskRow,
+                              { borderBottomColor: theme.colors.cardBorder },
+                            ]}
+                          >
+                            <Text style={[styles.subtaskTitleText, { color: theme.colors.text, flex: 1 }]}>
+                              {subTitle}
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() =>
+                                setDraftSubtasks((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              style={styles.removeBadgeBtn}
+                            >
+                              <Text
+                                style={[
+                                  styles.removeBadgeIcon,
+                                  { color: theme.colors.textSecondary },
+                                ]}
+                              >
+                                ✕
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+
+                    <View style={styles.addInputRow}>
+                      <TextInput
+                        testID="task-detail-subtask-input"
+                        style={[
+                          styles.addInput,
+                          {
+                            color: theme.colors.text,
+                            backgroundColor: theme.colors.inputBg,
+                            borderColor: theme.colors.borderStrong,
+                          },
+                        ]}
+                        placeholder="Add subtask..."
+                        placeholderTextColor={theme.colors.placeholder}
+                        value={newSubtaskText}
+                        onChangeText={setNewSubtaskText}
+                        onSubmitEditing={handleAddSubtaskSubmit}
+                        blurOnSubmit={false}
+                        returnKeyType="done"
+                      />
+                      <TouchableOpacity
+                        testID="add-subtask-btn"
+                        style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
+                        onPress={handleAddSubtaskSubmit}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.addBtnText}>Add</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })()}
 
               {/* Priority Selector */}
               <View
@@ -1141,6 +1381,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   repeatAfter={repeatAfter}
                   repeatMode={repeatMode}
                   reminders={reminders}
+                  weekStartDay={weekStartDay}
                   onChangeDueDate={setDueDate}
                   onChangeStartDate={setStartDate}
                   onChangeEndDate={setEndDate}
@@ -1151,6 +1392,21 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   onChangeReminders={setReminders}
                 />
               </View>
+
+              {/* Duplicate Task Button (Only for existing tasks) */}
+              {task && onDuplicateTask && (
+                <TouchableOpacity
+                  testID="task-detail-duplicate-btn"
+                  style={[styles.duplicateBtn, secondarySurface]}
+                  onPress={handleDuplicate}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.duplicateBtnText, { color: theme.colors.text }]}>
+                    Duplicate Task
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               {/* Delete Button (Only for existing tasks) */}
               {task && (
@@ -1455,6 +1711,44 @@ const styles = StyleSheet.create({
   deleteBtnText: {
     fontWeight: '700',
     fontSize: 15,
+  },
+  duplicateBtn: {
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: 4,
+    borderWidth: 1,
+  },
+  duplicateBtnText: {
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  subtaskRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+  },
+  subtaskCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.75,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subtaskCheckmark: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  subtaskTitleBtn: {
+    flex: 1,
+  },
+  subtaskTitleText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
   projectPickerBtn: {
     flexDirection: 'row',
