@@ -1,5 +1,5 @@
-export const APP_VERSION = '1.6.0';
-export const APP_BUILD_NUMBER = 10600;
+export const APP_VERSION = '1.6.1';
+export const APP_BUILD_NUMBER = 10601;
 export const APP_NAME = 'Guanaco';
 /**
  * Decodes an encoded Mmmpp Android versionCode (major * 10000 + minor * 100 + patch, >= 10000)

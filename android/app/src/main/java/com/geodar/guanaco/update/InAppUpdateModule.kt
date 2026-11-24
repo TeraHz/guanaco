@@ -4,11 +4,15 @@ import android.app.Activity
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.hardware.biometrics.BiometricManager
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
 import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -46,6 +50,18 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
     private var pendingDocPromise: Promise? = null
     private var pendingDocRequestCode: Int = 0
     private var pendingExportJson: String? = null
+    @Volatile
+    private var lastActivityResumedAtMs: Long = SystemClock.elapsedRealtime()
+
+    private val lifecycleEventListener = object : LifecycleEventListener {
+        override fun onHostResume() {
+            lastActivityResumedAtMs = SystemClock.elapsedRealtime()
+        }
+
+        override fun onHostPause() {}
+
+        override fun onHostDestroy() {}
+    }
 
     private fun takePendingPromise(): Promise? = synchronized(promiseLock) {
         val current = pendingPromise
@@ -233,7 +249,9 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
     }
 
     init {
+        lastActivityResumedAtMs = SystemClock.elapsedRealtime()
         reactContext.addActivityEventListener(activityEventListener)
+        reactContext.addLifecycleEventListener(lifecycleEventListener)
         try {
             appUpdateManager.registerListener(installStateUpdatedListener)
         } catch (_: Exception) {}
@@ -242,6 +260,9 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
     override fun invalidate() {
         try {
             reactContext.removeActivityEventListener(activityEventListener)
+        } catch (_: Exception) {}
+        try {
+            reactContext.removeLifecycleEventListener(lifecycleEventListener)
         } catch (_: Exception) {}
         try {
             appUpdateManager.unregisterListener(installStateUpdatedListener)
@@ -487,13 +508,67 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                     promise.resolve(false)
                     return@runOnUiQueueThread
                 }
-                if (act is FragmentActivity && act.supportFragmentManager.isStateSaved) {
-                    promise.resolve(false)
-                    return@runOnUiQueueThread
+                if (act is FragmentActivity) {
+                    if (
+                        !act.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) ||
+                        act.supportFragmentManager.isStateSaved
+                    ) {
+                        promise.resolve(false)
+                        return@runOnUiQueueThread
+                    }
                 }
                 promise.resolve(true)
             } catch (_: Exception) {
                 promise.resolve(true)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun getBiometricSensorState(promise: Promise) {
+        reactContext.runOnUiQueueThread {
+            try {
+                val elapsedSinceResume =
+                    (SystemClock.elapsedRealtime() - lastActivityResumedAtMs).coerceAtLeast(0L)
+                val act = reactContext.currentActivity
+                val decor = act?.window?.decorView
+                val decorReady = decor != null &&
+                        decor.isAttachedToWindow &&
+                        decor.width > 0 &&
+                        decor.height > 0 &&
+                        act.hasWindowFocus()
+
+                var status = "unknown"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val bm = reactContext.getSystemService(BiometricManager::class.java)
+                    if (bm != null) {
+                        status = when (
+                            bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+                        ) {
+                            BiometricManager.BIOMETRIC_SUCCESS -> "ready"
+                            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "hw_unavailable"
+                            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "none_enrolled"
+                            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "no_hardware"
+                            BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED ->
+                                "security_update_required"
+                            else -> "unknown"
+                        }
+                    }
+                }
+
+                val map = Arguments.createMap().apply {
+                    putString("status", status)
+                    putDouble("msSinceResume", elapsedSinceResume.toDouble())
+                    putBoolean("decorReady", decorReady)
+                }
+                promise.resolve(map)
+            } catch (_: Exception) {
+                val fallback = Arguments.createMap().apply {
+                    putString("status", "unknown")
+                    putDouble("msSinceResume", 1000.0)
+                    putBoolean("decorReady", true)
+                }
+                promise.resolve(fallback)
             }
         }
     }

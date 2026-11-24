@@ -192,6 +192,41 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
     expect(loginCalls).toHaveLength(0);
   });
 
+  it('allows explicit manual PIN / Password fallback from Biometric Lock Screen when user taps Enter PIN / Password', async () => {
+    await AsyncStorage.setItem(
+      '@vikunja_cached_projects',
+      JSON.stringify([{ id: 1, title: 'PIN Fallback List', hex_color: '#3498db' }])
+    );
+    await AsyncStorage.setItem(
+      '@vikunja_cached_tasks',
+      JSON.stringify([
+        { id: 88, title: 'Unlocked With Device PIN', done: false, priority: 1, project_id: 1 },
+      ])
+    );
+    await setStoredAuth('stored-valid-token', 'https://try.vikunja.io', 'alice');
+    await setBiometricEnabled(true);
+    global.fetch = jest.fn().mockRejectedValue(new Error('Network completely offline'));
+
+    // Cold-start biometric prompt dismissed
+    (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({
+      success: false,
+      error: 'user_cancel',
+    });
+
+    const { findByTestId, findByText } = render(<App />);
+    expect(await findByTestId('biometric-lock-screen')).toBeTruthy();
+
+    // User explicitly taps "Enter PIN / Password" secondary button
+    (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+    fireEvent.press(await findByTestId('lock-pin-fallback-btn'));
+
+    expect(await findByText('Unlocked With Device PIN')).toBeTruthy();
+    const lastCallOpts = (LocalAuthentication.authenticateAsync as jest.Mock).mock.calls.slice(
+      -1
+    )[0][0];
+    expect(lastCallOpts).toEqual(expect.objectContaining({ disableDeviceFallback: false }));
+  });
+
   it('re-locks app when returning from background after BIOMETRIC_LOCK_GRACE_MS (15s)', async () => {
     let appStateHandler: ((state: AppStateStatus) => void) | null = null;
     const origImpl = (AppState.addEventListener as jest.Mock)?.getMockImplementation?.();

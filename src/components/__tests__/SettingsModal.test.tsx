@@ -7,7 +7,7 @@ import * as biometricsModule from '../../utils/biometrics';
 import { SettingsModal } from '../SettingsModal';
 import { useTaskStore } from '../../store/taskStore';
 import { useUpdateStore } from '../../store/updateStore';
-import { APP_VERSION } from '../../constants/version';
+import { APP_BUILD_NUMBER, APP_VERSION, versionFromCode } from '../../constants/version';
 import { __setMockAICoreSupportedForTesting } from '../../utils/aiCore';
 import { setActiveLanguagePreference } from '../../i18n';
 
@@ -106,11 +106,13 @@ describe('SettingsModal', () => {
     expect(checkBtnStyle.backgroundColor).toBe(syncBtnStyle.backgroundColor);
 
     // Primary CTA ("Update to vX.Y.Z") uses semantic version (never "Build NN") and solid accent blue
+    const nextVersionCode = APP_BUILD_NUMBER + 100;
+    const nextVersionLabel = versionFromCode(nextVersionCode)!;
     act(() => {
       useUpdateStore.setState({
         updateInfo: {
           isAvailable: true,
-          availableVersionCode: 10600,
+          availableVersionCode: nextVersionCode,
           isFlexibleAllowed: true,
           isImmediateAllowed: true,
         } as any,
@@ -124,8 +126,8 @@ describe('SettingsModal', () => {
         onOpenLabelManagement={mockOnOpenLabels}
       />
     );
-    expect(getAllByText('v1.6.0')).toHaveLength(1);
-    expect(getAllByText('Update to v1.6.0')).toHaveLength(1);
+    expect(getAllByText(`v${nextVersionLabel}`)).toHaveLength(1);
+    expect(getAllByText(`Update to v${nextVersionLabel}`)).toHaveLength(1);
     const installBtnStyle = StyleSheet.flatten(
       getByTestId('settings-install-update-btn').props.style
     );

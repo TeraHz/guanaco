@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import {
   checkBiometricAvailable,
   authenticateWithBiometrics,
+  authenticateWithDeviceCredentials,
   isAndroidActivityReadyForBiometrics,
   isBiometricEnabled,
   setBiometricEnabled,
@@ -101,6 +102,72 @@ describe('Biometrics & Auth Persistence', () => {
 
       (Platform as any).OS = 'ios';
       expect(await isAndroidActivityReadyForBiometrics()).toBe(true);
+    });
+
+    it('prevents Android post-update PIN prompt hijack by disabling automatic device-credential fallback and retrying transient sensor busy states', async () => {
+      (Platform as any).OS = 'android';
+      const sensorSpy = NativeModules.InAppUpdate.getBiometricSensorState as jest.Mock;
+
+      // 1. Transient `hw_unavailable` during APK update launch (when Expo's `isEnrolledAsync` transiently returns false)
+      // still reports biometric available so lock screen is never bypassed
+      (LocalAuthentication.isEnrolledAsync as jest.Mock).mockResolvedValueOnce(false);
+      sensorSpy.mockResolvedValueOnce({
+        status: 'hw_unavailable',
+        msSinceResume: 40,
+        decorReady: false,
+      });
+      expect(await checkBiometricAvailable()).toBe(true);
+
+      // 2. Post-update cold start: window just resumed (40ms < 280ms) and sensor is briefly `hw_unavailable`,
+      // then Attempt #1 returns `not_available` (ERROR_HW_UNAVAILABLE), then Attempt #2 succeeds with BIOMETRICS!
+      sensorSpy
+        .mockResolvedValueOnce({ status: 'hw_unavailable', msSinceResume: 80, decorReady: false })
+        .mockResolvedValueOnce({ status: 'ready', msSinceResume: 320, decorReady: true })
+        .mockResolvedValue({ status: 'ready', msSinceResume: 500, decorReady: true });
+
+      (LocalAuthentication.authenticateAsync as jest.Mock)
+        .mockResolvedValueOnce({ success: false, error: 'not_available' })
+        .mockResolvedValueOnce({ success: true });
+
+      expect(await authenticateWithBiometrics('Unlock Guanaco')).toBe(true);
+      expect(LocalAuthentication.authenticateAsync).toHaveBeenCalledTimes(2);
+      // Every biometric attempt on Android MUST pass disableDeviceFallback: true so Expo/Android never opens a PIN-only prompt!
+      for (const [opts] of (LocalAuthentication.authenticateAsync as jest.Mock).mock.calls) {
+        expect(opts).toEqual(
+          expect.objectContaining({
+            promptMessage: 'Unlock Guanaco',
+            disableDeviceFallback: true,
+            requireConfirmation: false,
+          })
+        );
+      }
+
+      // 3. Only genuine OS biometric `lockout` falls back to device credentials (PIN/Pattern/Password)
+      jest.clearAllMocks();
+      sensorSpy.mockResolvedValue({ status: 'ready', msSinceResume: 5000, decorReady: true });
+      (LocalAuthentication.authenticateAsync as jest.Mock)
+        .mockResolvedValueOnce({ success: false, error: 'lockout' })
+        .mockResolvedValueOnce({ success: true });
+
+      expect(await authenticateWithBiometrics('Unlock Guanaco')).toBe(true);
+      expect(LocalAuthentication.authenticateAsync).toHaveBeenCalledTimes(2);
+      expect((LocalAuthentication.authenticateAsync as jest.Mock).mock.calls[0][0]).toEqual(
+        expect.objectContaining({ disableDeviceFallback: true })
+      );
+      expect((LocalAuthentication.authenticateAsync as jest.Mock).mock.calls[1][0]).toEqual(
+        expect.objectContaining({ disableDeviceFallback: false })
+      );
+
+      // 4. Explicit manual PIN fallback (`authenticateWithDeviceCredentials`) requests device credentials directly
+      jest.clearAllMocks();
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+      expect(await authenticateWithDeviceCredentials('Unlock Guanaco')).toBe(true);
+      expect(LocalAuthentication.authenticateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          promptMessage: 'Unlock Guanaco',
+          disableDeviceFallback: false,
+        })
+      );
     });
   });
 

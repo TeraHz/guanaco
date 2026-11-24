@@ -64,13 +64,63 @@ async function purgeLegacyPasswords(secureAvailable: boolean): Promise<void> {
   }
 }
 
+export interface AndroidBiometricSensorState {
+  status:
+    | 'ready'
+    | 'hw_unavailable'
+    | 'none_enrolled'
+    | 'no_hardware'
+    | 'security_update_required'
+    | 'unknown';
+  msSinceResume: number;
+  decorReady: boolean;
+}
+
+/**
+ * Minimum post-resume window-transition settle time on Android (ms) so Play Store / Play Core
+ * update installer closing animations finish before BiometricPrompt attaches its fragment.
+ */
+const ANDROID_POST_RESUME_SETTLE_MS = 280;
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function getAndroidBiometricSensorState(): Promise<AndroidBiometricSensorState | null> {
+  if (Platform.OS !== 'android') return null;
+  try {
+    const fn = NativeModules?.InAppUpdate?.getBiometricSensorState;
+    if (typeof fn !== 'function') return null;
+    const raw = await fn();
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+      status: raw.status || 'unknown',
+      msSinceResume: typeof raw.msSinceResume === 'number' ? raw.msSinceResume : 1000,
+      decorReady: raw.decorReady !== false,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 export async function checkBiometricAvailable(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
   try {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
     if (!hasHardware) return false;
     const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-    return isEnrolled;
+    if (isEnrolled) return true;
+
+    if (Platform.OS === 'android') {
+      // On Android, `LocalAuthentication.isEnrolledAsync()` checks `canAuthenticate == BIOMETRIC_SUCCESS`,
+      // which transiently returns `false` when the sensor HAL reports `BIOMETRIC_ERROR_HW_UNAVAILABLE`
+      // right after an APK update or screen wake even though biometrics ARE enrolled.
+      const sensorState = await getAndroidBiometricSensorState();
+      if (sensorState?.status === 'hw_unavailable' || sensorState?.status === 'ready') {
+        return true;
+      }
+    }
+    return false;
   } catch (_) {
     return false;
   }
@@ -103,7 +153,7 @@ export async function cancelBiometricPrompt(): Promise<void> {
 }
 
 /**
- * Checks on Android whether the OS lockscreen (Keyguard) is unlocked, the Activity has window focus,
+ * Checks on Android whether the OS lockscreen (Keyguard) is unlocked, the Activity is RESUMED and focused,
  * and FragmentManager state is not saved — preventing BiometricPrompt from silently hanging on screen wake.
  */
 export async function isAndroidActivityReadyForBiometrics(): Promise<boolean> {
@@ -119,31 +169,147 @@ export async function isAndroidActivityReadyForBiometrics(): Promise<boolean> {
   }
 }
 
+/**
+ * Waits briefly on Android when cold-starting or resuming right after an app update so the incoming
+ * Activity window transition and biometric sensor HAL (`BIOMETRIC_ERROR_HW_UNAVAILABLE`) settle
+ * before `BiometricPrompt.authenticate()` is invoked.
+ */
+async function waitForAndroidBiometricReadiness(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  for (let i = 0; i < 6; i++) {
+    const state = await getAndroidBiometricSensorState();
+    if (!state) return;
+    if (
+      state.status === 'none_enrolled' ||
+      state.status === 'no_hardware' ||
+      state.status === 'security_update_required'
+    ) {
+      return;
+    }
+
+    if (state.msSinceResume < ANDROID_POST_RESUME_SETTLE_MS) {
+      const remaining = Math.min(
+        ANDROID_POST_RESUME_SETTLE_MS,
+        Math.max(40, Math.ceil(ANDROID_POST_RESUME_SETTLE_MS - state.msSinceResume))
+      );
+      await delayMs(remaining);
+      continue;
+    }
+
+    if (state.status === 'hw_unavailable' || !state.decorReady) {
+      await delayMs(110);
+      continue;
+    }
+
+    return;
+  }
+}
+
+/**
+ * Explicitly prompts for device credentials (PIN / Pattern / Passcode) when requested by the user
+ * or when OS biometric lockout (`ERROR_LOCKOUT` / `ERROR_LOCKOUT_PERMANENT`) requires primary auth.
+ */
+export async function authenticateWithDeviceCredentials(reason?: string): Promise<boolean> {
+  if (Platform.OS === 'web') return false;
+  const credentialConfig: LocalAuthentication.LocalAuthenticationOptions = {
+    promptMessage: reason || t('lock.unlockGuanaco'),
+    fallbackLabel: t('lock.enterPinOrPassword'),
+    cancelLabel: t('common.cancel'),
+    disableDeviceFallback: false,
+    requireConfirmation: false,
+  };
+  try {
+    let result = await LocalAuthentication.authenticateAsync(credentialConfig);
+    if (!result.success && (result as any).error === 'app_cancel') {
+      await cancelBiometricPrompt();
+      await delayMs(80);
+      result = await LocalAuthentication.authenticateAsync(credentialConfig);
+    }
+    return Boolean(result?.success);
+  } catch (_) {
+    return false;
+  }
+}
+
 export async function authenticateWithBiometrics(
   reason?: string,
   options?: AuthenticateBiometricsOptions
 ): Promise<boolean> {
   if (Platform.OS === 'web') return false;
-  const promptConfig: LocalAuthentication.LocalAuthenticationOptions = {
-    promptMessage: reason || t('lock.unlockGuanaco'),
-    fallbackLabel: t('lock.enterPinOrPassword'),
-    cancelLabel: t('common.cancel'),
-    disableDeviceFallback: false,
-  };
 
   try {
     if (options?.forceReset) {
       await cancelBiometricPrompt();
-      await new Promise((r) => setTimeout(r, 60));
+      await delayMs(60);
     }
 
-    let result = await LocalAuthentication.authenticateAsync(promptConfig);
+    if (Platform.OS === 'android') {
+      await waitForAndroidBiometricReadiness();
 
-    // Self-heal if Expo's native `isAuthenticating` flag was left stuck (`error: "app_cancel"`)
+      // Strictly request BIOMETRIC authenticators (`disableDeviceFallback: true`) on Android!
+      // Passing `disableDeviceFallback: false` sets `DEVICE_CREDENTIAL` on `BiometricPrompt` AND enables
+      // `expo-local-authentication`'s `promptDeviceCredentialsFallback()`, which hijacks the prompt into
+      // a PIN-only screen whenever the biometric HAL is momentarily busy right after an app update.
+      const androidBiometricConfig: LocalAuthentication.LocalAuthenticationOptions = {
+        promptMessage: reason || t('lock.unlockGuanaco'),
+        cancelLabel: t('common.cancel'),
+        disableDeviceFallback: true,
+        requireConfirmation: false,
+      };
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const result = await LocalAuthentication.authenticateAsync(androidBiometricConfig);
+        if (result?.success) {
+          return true;
+        }
+
+        const errCode = (result as any)?.error as string | undefined;
+
+        // If Android placed biometrics in lockout (5 failed scans or 72h / post-reboot StrongAuth),
+        // biometrics cannot succeed until device PIN/Pattern/Password is entered.
+        if (errCode === 'lockout') {
+          await cancelBiometricPrompt();
+          await delayMs(80);
+          return await authenticateWithDeviceCredentials(reason);
+        }
+
+        const isTransientSensorError =
+          errCode === 'app_cancel' ||
+          errCode === 'not_available' ||
+          errCode === 'unable_to_process' ||
+          errCode === 'system_cancel';
+
+        // `BiometricPrompt.ERROR_CANCELED` (5 = sensor unavailable) is mapped by Expo to `'user_cancel'`;
+        // distinguish it from genuine user dismissal by checking whether the sensor is currently `hw_unavailable`.
+        const sensorAfter =
+          errCode === 'user_cancel' ? await getAndroidBiometricSensorState() : null;
+        const wasSensorUnavailableCancel = sensorAfter?.status === 'hw_unavailable';
+
+        if ((isTransientSensorError || wasSensorUnavailableCancel) && attempt < 2) {
+          await cancelBiometricPrompt();
+          await delayMs(attempt === 0 ? 180 : 280);
+          await waitForAndroidBiometricReadiness();
+          continue;
+        }
+
+        return false;
+      }
+      return false;
+    }
+
+    // iOS (`LAPolicyDeviceOwnerAuthentication` tries Face ID / Touch ID first before passcode fallback)
+    const iosPromptConfig: LocalAuthentication.LocalAuthenticationOptions = {
+      promptMessage: reason || t('lock.unlockGuanaco'),
+      fallbackLabel: t('lock.enterPinOrPassword'),
+      cancelLabel: t('common.cancel'),
+      disableDeviceFallback: false,
+    };
+
+    let result = await LocalAuthentication.authenticateAsync(iosPromptConfig);
     if (!result.success && (result as any).error === 'app_cancel') {
       await cancelBiometricPrompt();
-      await new Promise((r) => setTimeout(r, 80));
-      result = await LocalAuthentication.authenticateAsync(promptConfig);
+      await delayMs(80);
+      result = await LocalAuthentication.authenticateAsync(iosPromptConfig);
     }
 
     return Boolean(result?.success);

@@ -245,6 +245,12 @@ NativeModules.InAppUpdate = {
   completeUpdate: jest.fn().mockResolvedValue(true),
   openPlayStore: jest.fn().mockResolvedValue(true),
   isActivityReadyForBiometrics: jest.fn().mockResolvedValue(true),
+  resetOrphanedBiometricFragment: jest.fn().mockResolvedValue(true),
+  getBiometricSensorState: jest.fn().mockResolvedValue({
+    status: 'ready',
+    msSinceResume: 5000,
+    decorReady: true,
+  }),
 };
 
 

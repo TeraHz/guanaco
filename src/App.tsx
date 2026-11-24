@@ -40,6 +40,7 @@ import {
   getCachedBiometricEnabled,
   setBiometricEnabled,
   authenticateWithBiometrics,
+  authenticateWithDeviceCredentials,
   cancelBiometricPrompt,
   isAndroidActivityReadyForBiometrics,
   isPersonalApiToken,
@@ -1014,6 +1015,21 @@ export default function App() {
     }
   };
 
+  const handleManualPinUnlock = async () => {
+    needsAutoUnlockPromptRef.current = false;
+    setLockError(null);
+    setPendingLockLogoutCount(null);
+    setPendingLockEraseLocal(false);
+    await cancelBiometricPrompt();
+    const passed = await authenticateWithDeviceCredentials(translate('lock.unlockGuanaco'));
+    if (passed) {
+      isLockedRef.current = false;
+      await unlockOfflineSession();
+    } else {
+      setLockError(t('lock.authFailedTryAgain'));
+    }
+  };
+
   const showLoginOverlay = showReauthLogin || showConnectServerFromLocal;
   const showAppShell = isAuthenticated && !isLocked && !showLoginOverlay;
   const isLockedInLocalMode = pendingLocalSession || Boolean(isLocalMode);
@@ -1167,6 +1183,25 @@ export default function App() {
               >
                 <Text style={styles.unlockButtonText}>{t('auth.unlock')}</Text>
               </TouchableOpacity>
+
+              {Platform.OS !== 'web' && (
+                <TouchableOpacity
+                  testID="lock-pin-fallback-btn"
+                  accessibilityRole="button"
+                  style={styles.lockPinFallbackBtn}
+                  onPress={handleManualPinUnlock}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.lockPinFallbackText,
+                      { color: theme.colors.accent },
+                    ]}
+                  >
+                    {t('lock.enterPinOrPassword')}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 testID="lock-logout-btn"
@@ -1401,6 +1436,15 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  lockPinFallbackBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginBottom: 2,
+  },
+  lockPinFallbackText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   lockSignOutBtn: {
     marginTop: 4,
