@@ -47,7 +47,7 @@ export interface LoginScreenProps {
     username: string,
     pass: string,
     options?: LoginConnectOptions
-  ) => Promise<void>;
+  ) => Promise<void | { cancelled?: boolean }>;
   onBiometricUnlock?: () => Promise<void>;
   onUseOffline?: () => Promise<void> | void;
   isConnectingFromLocal?: boolean;
@@ -182,15 +182,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         isInsecureHttp ||
         isConnectingFromLocal;
 
+      let connectResult: void | { cancelled?: boolean };
       if (needsOptions) {
         const opts: LoginConnectOptions = {};
         if (effectiveTokenMode) opts.authMethod = 'api_token';
         if (cleanTotp && !effectiveTokenMode) opts.totpPasscode = cleanTotp;
         if (isInsecureHttp) opts.allowInsecureHttp = true;
         if (isConnectingFromLocal) opts.migrationMode = migrationMode;
-        await onConnect(normalizedUrl, cleanUser, secretValue, opts);
+        connectResult = await onConnect(normalizedUrl, cleanUser, secretValue, opts);
       } else {
-        await onConnect(normalizedUrl, cleanUser, secretValue);
+        connectResult = await onConnect(normalizedUrl, cleanUser, secretValue);
+      }
+
+      if (connectResult && typeof connectResult === 'object' && connectResult.cancelled) {
+        return;
       }
 
       try {

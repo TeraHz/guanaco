@@ -198,3 +198,39 @@ export function wouldCreateProjectCycle(
 
   return false;
 }
+
+/**
+ * Returns all positive descendant project IDs (children, grandchildren, etc., including archived)
+ * beneath `rootId` with a cycle-safe BFS guard. Does NOT include `rootId` itself.
+ */
+export function getDescendantProjectIds(projects: Project[], rootId: number): Set<number> {
+  const descendants = new Set<number>();
+  if (!Array.isArray(projects) || rootId <= 0) return descendants;
+
+  const childrenByParent = new Map<number, number[]>();
+  for (const p of projects) {
+    if (!p || p.id <= 0 || p.is_saved_filter) continue;
+    const parentId = p.parent_project_id || 0;
+    if (parentId > 0 && parentId !== p.id) {
+      if (!childrenByParent.has(parentId)) {
+        childrenByParent.set(parentId, []);
+      }
+      childrenByParent.get(parentId)!.push(p.id);
+    }
+  }
+
+  const visited = new Set<number>([rootId]);
+  const queue: number[] = [...(childrenByParent.get(rootId) || [])];
+  while (queue.length > 0) {
+    const nextId = queue.shift()!;
+    if (visited.has(nextId)) continue;
+    visited.add(nextId);
+    descendants.add(nextId);
+    const kids = childrenByParent.get(nextId);
+    if (kids && kids.length > 0) {
+      queue.push(...kids);
+    }
+  }
+
+  return descendants;
+}

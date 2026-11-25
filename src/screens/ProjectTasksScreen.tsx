@@ -17,6 +17,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useShallow } from 'zustand/react/shallow';
 import { useTaskStore } from '../store/taskStore';
 import { SwipeableTaskItem } from '../components/SwipeableTaskItem';
 import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
@@ -28,6 +29,7 @@ import { LabelManagementModal } from '../components/LabelManagementModal';
 import { ProjectEditorModal } from '../components/ProjectEditorModal';
 import { ProjectSharingModal } from '../components/ProjectSharingModal';
 import { SortOption } from '../utils/sorting';
+import { isShoppingList } from '../utils/smartClassifier';
 import { isAICoreSupported, classifyTaskWithAI } from '../utils/aiCore';
 import {
   useFilteredSortedTasks,
@@ -39,9 +41,31 @@ import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
 import { getLabelBadgeStyles, hexToRgba, normalizeHexColor } from '../utils/colors';
 import { useAppTheme } from '../utils/theme';
-import { CreateTaskInput, Task, Project } from '../types/vikunja';
+import { CreateTaskInput, Task, Project, SyncFailureRecord } from '../types/vikunja';
 import { localizeCategoryName, TranslationKey, useTranslation } from '../i18n';
 import { syncAllTaskReminders, syncAppBadgeCount } from '../services/localNotifications';
+import {
+  canAdminProject,
+  canWriteProject,
+  canWriteTask,
+  isProjectReadOnly,
+} from '../utils/permissions';
+import { getDescendantProjectIds } from '../utils/projectTree';
+
+const EMPTY_SAVED_FILTER_IDS: Record<number, number[]> = {};
+const EMPTY_SYNC_FAILURES: SyncFailureRecord[] = [];
+const EMPTY_SORT_MODES: Record<string, string> = {};
+
+const VALID_SORT_OPTIONS = new Set<string>([
+  'default',
+  'manual',
+  'aiSmart',
+  'department',
+  'name',
+  'label',
+  'dueDate',
+  'priority',
+]);
 
 interface ProjectTasksScreenProps {
   onOpenDrawer?: () => void;
@@ -67,19 +91,42 @@ interface TrackedTaskRef {
   done?: boolean;
 }
 
+function findTaskByIdIncludingSubtasks(tasks: Task[], id: number): Task | null {
+  for (const t of tasks) {
+    if (t && t.id === id) return t;
+  }
+  for (const t of tasks) {
+    const subs = t?.related_tasks?.subtask;
+    if (Array.isArray(subs)) {
+      const foundSub = subs.find((s) => s && s.id === id);
+      if (foundSub) return foundSub;
+    }
+  }
+  return null;
+}
+
 /**
- * Resolves a tracked task against the live `tasks` array in `useTaskStore`.
+ * Resolves a tracked task against the live `tasks` array in `useTaskStore` (including nested `related_tasks.subtask`).
  * If an optimistic negative `tempId` was replaced with a positive server ID while a modal or Undo window was open,
  * seamlessly resolves to the newest matching live server task!
  */
 function resolveLiveTask(tasks: Task[], ref: TrackedTaskRef | null): Task | null {
   if (!ref) return null;
   const safe = Array.isArray(tasks) ? tasks : [];
-  const exact = safe.find((t) => t.id === ref.id);
+  const exact = findTaskByIdIncludingSubtasks(safe, ref.id);
   if (exact) return exact;
 
   if (ref.id < 0) {
-    const candidates = safe.filter(
+    const allSearchable: Task[] = [...safe];
+    for (const t of safe) {
+      const subs = t?.related_tasks?.subtask;
+      if (Array.isArray(subs)) {
+        for (const s of subs) {
+          if (s) allSearchable.push(s);
+        }
+      }
+    }
+    const candidates = allSearchable.filter(
       (t) => t.id > 0 && t.title === ref.title && t.project_id === ref.project_id
     );
     if (candidates.length > 0) {
@@ -96,18 +143,28 @@ function resolveLiveTask(tasks: Task[], ref: TrackedTaskRef | null): Task | null
 }
 
 /**
- * Splices a reordered subset (`newSubsetIds`) into the full project task list (`allProjectTasks`)
- * at the exact positions originally occupied by that subset, preventing position collisions/corruption
- * on filtered-out tasks (e.g. completed tasks or other labels)!
+ * Splices a reordered subset (`newSubsetIds`) into the positioned project task list,
+ * excluding unpositioned (`position <= 0` / `undefined`) filtered-out tasks (such as completed items)
+ * while preserving collision-free positions on positioned filtered-out tasks!
  */
 function buildCollisionFreeProjectOrder(
   allProjectTasks: Task[],
   newSubsetIds: number[]
 ): number[] {
   const subsetSet = new Set(newSubsetIds);
-  const sortedFull = [...allProjectTasks].sort((a, b) => {
-    const posA = a.position ?? Number.MAX_SAFE_INTEGER;
-    const posB = b.position ?? Number.MAX_SAFE_INTEGER;
+  const participatingTasks = allProjectTasks.filter(
+    (task) =>
+      subsetSet.has(task.id) || (typeof task.position === 'number' && task.position > 0)
+  );
+  const sortedFull = [...participatingTasks].sort((a, b) => {
+    const posA =
+      typeof a.position === 'number' && a.position > 0
+        ? a.position
+        : Number.MAX_SAFE_INTEGER;
+    const posB =
+      typeof b.position === 'number' && b.position > 0
+        ? b.position
+        : Number.MAX_SAFE_INTEGER;
     if (posA !== posB) return posA - posB;
     return a.id - b.id;
   });
@@ -148,11 +205,13 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     taskItemScale = 100,
     taskItemTextScale = 100,
     weekStartDay = 1,
-    savedFilterTaskIds = {},
+    savedFilterTaskIds = EMPTY_SAVED_FILTER_IDS,
     localDataVersion = 0,
     isLoading = false,
     isSyncingAll = false,
     pendingOpenTaskId = null,
+    syncFailures = EMPTY_SYNC_FAILURES,
+    sortModesByProject = EMPTY_SORT_MODES,
     setPendingOpenTaskId,
     toggleTask,
     reenableTask,
@@ -173,7 +232,73 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     toggleProjectFavorite,
     archiveProject,
     deleteProject,
-  } = useTaskStore();
+    dismissSyncFailure,
+    dismissAllSyncFailures,
+    recoverFailedTask,
+    setProjectSortMode,
+    consumeSelectedProjectFetch,
+  } = useTaskStore(
+    useShallow((s) => {
+      const ext = s as typeof s & {
+        syncFailures?: SyncFailureRecord[];
+        dismissSyncFailure?: (id: string) => void;
+        dismissAllSyncFailures?: () => void;
+        recoverFailedTask?: (failureId: string, targetProjectId: number) => boolean;
+        sortModesByProject?: Record<string, string>;
+        setProjectSortMode?: (scopeKey: string, sortMode: string) => void;
+        consumeSelectedProjectFetch?: (id: number | null) => boolean;
+      };
+      return {
+        client: s.client,
+        isLocalMode: s.isLocalMode ?? false,
+        projects: s.projects,
+        tasks: s.tasks,
+        labels: s.labels,
+        cachedUsers: s.cachedUsers,
+        currentUser: s.currentUser,
+        selectedProjectId: s.selectedProjectId,
+        syncStatus: s.syncStatus,
+        pendingSyncCount: s.pendingSyncCount,
+        reenableStaples: s.reenableStaples,
+        largeTaskItems: s.largeTaskItems,
+        taskItemScale: s.taskItemScale ?? 100,
+        taskItemTextScale: s.taskItemTextScale ?? 100,
+        weekStartDay: s.weekStartDay ?? 1,
+        savedFilterTaskIds: s.savedFilterTaskIds ?? EMPTY_SAVED_FILTER_IDS,
+        localDataVersion: s.localDataVersion ?? 0,
+        isLoading: s.isLoading ?? false,
+        isSyncingAll: s.isSyncingAll ?? false,
+        pendingOpenTaskId: s.pendingOpenTaskId ?? null,
+        syncFailures: ext.syncFailures ?? EMPTY_SYNC_FAILURES,
+        sortModesByProject: ext.sortModesByProject ?? EMPTY_SORT_MODES,
+        setPendingOpenTaskId: s.setPendingOpenTaskId,
+        toggleTask: s.toggleTask,
+        reenableTask: s.reenableTask,
+        updateTaskLabels: s.updateTaskLabels,
+        updateTaskDetails: s.updateTaskDetails,
+        addTask: s.addTask,
+        addSubtask: s.addSubtask,
+        unlinkSubtask: s.unlinkSubtask,
+        duplicateTask: s.duplicateTask,
+        moveTask: s.moveTask,
+        reorderTasks: s.reorderTasks,
+        deleteTask: s.deleteTask,
+        fetchTasks: s.fetchTasks,
+        fetchSavedFilterTasks: s.fetchSavedFilterTasks,
+        retrySync: s.retrySync,
+        syncAll: s.syncAll,
+        fetchAllTasks: s.fetchAllTasks,
+        toggleProjectFavorite: s.toggleProjectFavorite,
+        archiveProject: s.archiveProject,
+        deleteProject: s.deleteProject,
+        dismissSyncFailure: ext.dismissSyncFailure,
+        dismissAllSyncFailures: ext.dismissAllSyncFailures,
+        recoverFailedTask: ext.recoverFailedTask,
+        setProjectSortMode: ext.setProjectSortMode,
+        consumeSelectedProjectFetch: ext.consumeSelectedProjectFetch,
+      };
+    })
+  );
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
@@ -211,7 +336,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
 
   const [filter, setFilter] = useState<FilterType>('active');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>('default');
+  const [fallbackSortByScope, setFallbackSortByScope] = useState<Record<string, SortOption>>({});
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchAllLists, setSearchAllLists] = useState(false);
@@ -236,6 +361,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   const [showEditor, setShowEditor] = useState(false);
   const [sharingProjectId, setSharingProjectId] = useState<number | null>(null);
   const [noProjectWarning, setNoProjectWarning] = useState<string | null>(null);
+  const [projectActionError, setProjectActionError] = useState<string | null>(null);
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -302,15 +428,73 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     setSharingProjectId(null);
   };
 
-  const commitDeleteProject = (projectId: number) => {
-    setConfirmingProjectDelete(false);
-    setActionSheetProjectId(null);
-    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-    deleteProject(projectId).catch(() => {});
+  const surfaceProjectActionError = (
+    err: any,
+    fallbackKey: TranslationKey,
+    alertTitle?: string
+  ) => {
+    const msg = err?.message || t(fallbackKey);
+    safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+    if (Platform.OS === 'web') {
+      setProjectActionError(msg);
+    } else {
+      Alert.alert(alertTitle || t('drawer.title'), msg);
+    }
   };
 
+  const commitDeleteProject = async (projectId: number) => {
+    setConfirmingProjectDelete(false);
+    setActionSheetProjectId(null);
+    setProjectActionError(null);
+    safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await deleteProject(projectId);
+    } catch (err: any) {
+      surfaceProjectActionError(err, 'listEditor.deleteError', t('drawer.deleteList'));
+    }
+  };
+
+  const handleToggleFavoriteProject = async (proj: Project) => {
+    setActionSheetProjectId(null);
+    setProjectActionError(null);
+    try {
+      await toggleProjectFavorite(proj.id);
+    } catch (err: any) {
+      surfaceProjectActionError(err, 'listEditor.saveError', proj.title);
+    }
+  };
+
+  const handleArchiveProjectAction = async (proj: Project, nextArchived: boolean) => {
+    setActionSheetProjectId(null);
+    setProjectActionError(null);
+    try {
+      await archiveProject(proj.id, nextArchived);
+    } catch (err: any) {
+      surfaceProjectActionError(err, 'listEditor.archiveError', proj.title);
+    }
+  };
+
+  const safeProjects = useMemo(
+    () => (Array.isArray(projects) ? projects.filter((p) => p.id > 0 && !p.is_archived) : []),
+    [projects]
+  );
+
+  const writableProjects = useMemo(
+    () => safeProjects.filter((p) => isLocalMode || canWriteProject(p)),
+    [safeProjects, isLocalMode]
+  );
+
+  const allPositiveProjects = useMemo(
+    () => (Array.isArray(projects) ? projects.filter((p) => p.id > 0) : []),
+    [projects]
+  );
+
   const handleRequestDeleteProject = (proj: Project) => {
-    const message = t('drawer.deleteListConfirm', { title: proj.title });
+    const childCount = getDescendantProjectIds(allPositiveProjects, proj.id).size;
+    const message =
+      childCount > 0
+        ? t('drawer.deleteListWithSublistsConfirm', { title: proj.title, count: childCount })
+        : t('drawer.deleteListConfirm', { title: proj.title });
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
         if (window.confirm(`${t('drawer.deleteList')}\n\n${message}`)) {
@@ -331,16 +515,6 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       },
     ]);
   };
-
-  const safeProjects = useMemo(
-    () => (Array.isArray(projects) ? projects.filter((p) => p.id > 0 && !p.is_archived) : []),
-    [projects]
-  );
-
-  const allPositiveProjects = useMemo(
-    () => (Array.isArray(projects) ? projects.filter((p) => p.id > 0) : []),
-    [projects]
-  );
 
   // Live resolved entities from store (prevents stale task/project snapshots & dead negative tempIds)
   const liveSelectedTask = useMemo(
@@ -463,9 +637,16 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     [allPositiveProjects, sharingProjectId]
   );
 
-  // Fetch tasks on mount & when active project changes (Regression Issue #1)
+  // Fetch tasks on mount & when active project changes (skipping duplicate fetch if setSelectedProjectId already started it)
   useEffect(() => {
     setIsReordering(false);
+    setProjectActionError(null);
+    if (
+      typeof consumeSelectedProjectFetch === 'function' &&
+      consumeSelectedProjectFetch(selectedProjectId)
+    ) {
+      return;
+    }
     if (selectedProjectId && selectedProjectId > 0) {
       fetchTasks(selectedProjectId);
     } else if (
@@ -517,6 +698,80 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     setRefreshing(false);
   };
 
+  const resolvedActivePositiveId = useMemo(() => {
+    if (selectedProjectId === null || selectedProjectId < 0) return 0;
+    const exact = allPositiveProjects.find((p) => p.id === selectedProjectId);
+    if (exact) return exact.id;
+    const fallback =
+      allPositiveProjects.find((p) => !p.is_archived) || allPositiveProjects[0];
+    return fallback?.id || selectedProjectId || 0;
+  }, [selectedProjectId, allPositiveProjects]);
+
+  const preResolvedProjectTitle = useMemo(() => {
+    if (selectedProjectId === null) return t('drawer.allTasks');
+    if (!isLocalMode && selectedProjectId === MY_TASKS_PROJECT_ID) return t('drawer.myOpenTasks');
+    if (selectedProjectId < 0) {
+      return (
+        (Array.isArray(projects) ? projects : []).find((p) => p?.id === selectedProjectId)?.title ||
+        ''
+      );
+    }
+    return allPositiveProjects.find((p) => p.id === resolvedActivePositiveId)?.title || '';
+  }, [
+    selectedProjectId,
+    isLocalMode,
+    projects,
+    allPositiveProjects,
+    resolvedActivePositiveId,
+    t,
+    locale,
+  ]);
+
+  const hasAICore = isAICoreSupported();
+  const isShoppingPreview = useMemo(
+    () => isShoppingList(preResolvedProjectTitle),
+    [preResolvedProjectTitle]
+  );
+
+  const sortScopeKey = useMemo(() => {
+    if (selectedProjectId === null) return 'all';
+    if (!isLocalMode && selectedProjectId === MY_TASKS_PROJECT_ID) return 'my_tasks';
+    if (selectedProjectId < 0) return `filter:${selectedProjectId}`;
+    return String(resolvedActivePositiveId || selectedProjectId);
+  }, [selectedProjectId, isLocalMode, resolvedActivePositiveId]);
+
+  const rawSort =
+    typeof setProjectSortMode === 'function'
+      ? sortModesByProject?.[sortScopeKey]
+      : fallbackSortByScope[sortScopeKey];
+
+  const sortBy: SortOption = useMemo(() => {
+    if (!rawSort || !VALID_SORT_OPTIONS.has(rawSort)) {
+      return 'default';
+    }
+    if (rawSort === 'department' && hasAICore) {
+      return 'aiSmart';
+    }
+    if (rawSort === 'department' && !hasAICore && !isShoppingPreview) {
+      return 'default';
+    }
+    if (rawSort === 'aiSmart' && !hasAICore) {
+      return isShoppingPreview ? 'department' : 'default';
+    }
+    return rawSort as SortOption;
+  }, [rawSort, hasAICore, isShoppingPreview]);
+
+  const handleSetSortBy = useCallback(
+    (nextSort: SortOption) => {
+      if (typeof setProjectSortMode === 'function') {
+        setProjectSortMode(sortScopeKey, nextSort);
+      } else {
+        setFallbackSortByScope((prev) => ({ ...prev, [sortScopeKey]: nextSort }));
+      }
+    },
+    [setProjectSortMode, sortScopeKey]
+  );
+
   const {
     activeProject,
     isAllTasksView,
@@ -562,7 +817,6 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     [sortedTasks, livePendingDeleteTask]
   );
 
-  const hasAICore = isAICoreSupported();
   const isVirtualView =
     isAllTasksView ||
     isMyTasksView ||
@@ -570,6 +824,28 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
     (showSearch && searchAllLists) ||
     !activeProject ||
     activeProject.id <= 0;
+  const isActiveProjectReadOnly = !isLocalMode && isProjectReadOnly(activeProject);
+  const canReorderActiveProject = !isVirtualView && !isActiveProjectReadOnly;
+
+  const writableDoneTasks = useMemo(
+    () => (isLocalMode ? doneTasks : doneTasks.filter((dt) => canWriteTask(dt, projects))),
+    [doneTasks, isLocalMode, projects]
+  );
+
+  const safeSyncFailures = useMemo(
+    () => (Array.isArray(syncFailures) ? syncFailures : []),
+    [syncFailures]
+  );
+
+  const actionSheetChildCount = actionSheetProject
+    ? getDescendantProjectIds(allPositiveProjects, actionSheetProject.id).size
+    : 0;
+  const actionSheetCanWrite = actionSheetProject
+    ? isLocalMode || canWriteProject(actionSheetProject)
+    : false;
+  const actionSheetCanAdmin = actionSheetProject
+    ? isLocalMode || canAdminProject(actionSheetProject)
+    : false;
 
   const showTemporaryNotice = (msg: string) => {
     setReorderNotice(msg);
@@ -594,6 +870,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
 
   const handleMoveTaskPosition = useCallback(
     (taskId: number, direction: 'up' | 'down') => {
+      if (isActiveProjectReadOnly) return;
       if (isVirtualView) {
         showTemporaryNotice(t('tasks.openSpecificListToReorder'));
         return;
@@ -615,17 +892,29 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         currentList.map((t) => t.id)
       );
       if (sortBy !== 'manual') {
-        setSortBy('manual');
+        handleSetSortBy('manual');
       }
     },
-    [isVirtualView, visibleTasks, activeProject.id, applySafeProjectReorder, sortBy]
+    [
+      isActiveProjectReadOnly,
+      isVirtualView,
+      visibleTasks,
+      activeProject.id,
+      applySafeProjectReorder,
+      sortBy,
+      handleSetSortBy,
+    ]
   );
 
   const handleStageDeleteTask = useCallback(
     (taskId: number) => {
       const safeTasks = Array.isArray(tasks) ? tasks : [];
-      const target = safeTasks.find((t) => t.id === taskId);
+      const target = findTaskByIdIncludingSubtasks(safeTasks, taskId);
+      if (!isLocalMode && target && !canWriteTask(target, projects)) {
+        return;
+      }
       if (!target) {
+        if (!isLocalMode && isActiveProjectReadOnly) return;
         deleteTask(taskId);
         return;
       }
@@ -651,7 +940,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       pendingDeleteRef.current = { ref: nextRef, timer, hadActiveSession };
       setPendingDeleteTaskRef(nextRef);
     },
-    [tasks, deleteTask, flushPendingDelete]
+    [tasks, isLocalMode, projects, isActiveProjectReadOnly, deleteTask, flushPendingDelete]
   );
 
   const handleUndoDelete = () => {
@@ -664,14 +953,17 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
   };
 
   const defaultTargetProjectId =
-    activeProject && activeProject.id > 0
+    activeProject && activeProject.id > 0 && (isLocalMode || canWriteProject(activeProject))
       ? activeProject.id
-      : safeProjects[0]?.id || 0;
+      : writableProjects[0]?.id || 0;
 
   const handleOpenMoveModal = useCallback(
     (taskId: number) => {
       const safeTasks = Array.isArray(tasks) ? tasks : [];
-      const found = safeTasks.find((t) => t.id === taskId);
+      const found = findTaskByIdIncludingSubtasks(safeTasks, taskId);
+      if (!isLocalMode && found && !canWriteTask(found, projects)) {
+        return;
+      }
       closeAllModals();
       setMovingTaskRef(
         found
@@ -684,18 +976,24 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           : { id: taskId, title: '', project_id: defaultTargetProjectId }
       );
     },
-    [tasks, defaultTargetProjectId]
+    [tasks, isLocalMode, projects, defaultTargetProjectId]
   );
 
-  const handleOpenEditLabels = useCallback((task: Task) => {
-    closeAllModals();
-    setEditingLabelsRef({
-      id: task.id,
-      title: task.title,
-      project_id: task.project_id,
-      done: Boolean(task.done),
-    });
-  }, []);
+  const handleOpenEditLabels = useCallback(
+    (task: Task) => {
+      if (!isLocalMode && task && !canWriteTask(task, projects)) {
+        return;
+      }
+      closeAllModals();
+      setEditingLabelsRef({
+        id: task.id,
+        title: task.title,
+        project_id: task.project_id,
+        done: Boolean(task.done),
+      });
+    },
+    [isLocalMode, projects]
+  );
 
   const handleOpenTaskDetails = useCallback(
     (task: Task) => {
@@ -795,6 +1093,22 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                 {activeProject?.is_favorite ? '★ ' : ''}
                 {activeProject?.title || t('tasks.defaultTitle')}
               </Text>
+              {isActiveProjectReadOnly && (
+                <View
+                  testID="header-readonly-badge"
+                  style={[
+                    styles.readOnlyBadge,
+                    {
+                      backgroundColor: theme.colors.surfaceSecondary,
+                      borderColor: theme.colors.borderStrong,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.readOnlyBadgeText, { color: theme.colors.textSecondary }]}>
+                    {t('permissions.readOnlyBadge')}
+                  </Text>
+                </View>
+              )}
               {activeProject && activeProject.id > 0 && (
                 <Text style={[styles.projectTitleChevron, { color: theme.colors.textSecondary }]}>
                   {' '}
@@ -895,7 +1209,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   ? t('tasks.syncSyncingA11y')
                   : (syncStatus as string) === 'auth_required'
                   ? t('tasks.syncReauthA11y')
-                  : t('tasks.syncOfflineA11y', { count: pendingSyncCount })
+                  : pendingSyncCount > 0
+                  ? t('tasks.syncOfflineA11y', { count: pendingSyncCount })
+                  : t('tasks.syncOfflineNoCountA11y')
               }
             >
               <Text
@@ -916,8 +1232,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   : syncStatus === 'syncing'
                   ? t('tasks.syncSyncing')
                   : (syncStatus as string) === 'auth_required'
-                  ? t('tasks.syncSignIn', { count: pendingSyncCount })
-                  : t('tasks.syncOffline', { count: pendingSyncCount })}
+                  ? pendingSyncCount > 0
+                    ? t('tasks.syncSignIn', { count: pendingSyncCount })
+                    : `● ${t('tasks.syncSignInNoCount')}`
+                  : pendingSyncCount > 0
+                  ? t('tasks.syncOffline', { count: pendingSyncCount })
+                  : `● ${t('tasks.syncOfflineNoCount')}`}
               </Text>
             </TouchableOpacity>
           )}
@@ -1238,6 +1558,133 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             );
           })()}
 
+        {/* Project Action Error Banner (Web / Non-Modal Feedback) */}
+        {projectActionError && (
+          <View
+            testID="project-action-error-banner"
+            style={[
+              styles.warningBanner,
+              {
+                backgroundColor: hexToRgba(theme.colors.danger, 0.12),
+                borderColor: theme.colors.danger,
+              },
+            ]}
+            accessibilityRole="alert"
+          >
+            <Text style={[styles.warningBannerText, { color: theme.colors.danger }]}>
+              {projectActionError}
+            </Text>
+            <TouchableOpacity
+              testID="dismiss-project-action-error-btn"
+              onPress={() => setProjectActionError(null)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.clearLabelText, { color: theme.colors.danger }]}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Sync Failures & Skipped Migration Recovery Banner */}
+        {safeSyncFailures.length > 0 && (
+          <View
+            testID="sync-failures-banner"
+            accessibilityRole="alert"
+            style={[
+              styles.syncFailuresBanner,
+              {
+                backgroundColor: hexToRgba(theme.colors.warning, 0.14),
+                borderColor: hexToRgba(theme.colors.warning, 0.45),
+              },
+            ]}
+          >
+            <View style={styles.syncFailuresHeader}>
+              <Text style={[styles.syncFailuresTitle, { color: theme.colors.text }]}>
+                {t('syncFailure.bannerTitle', { count: safeSyncFailures.length })}
+              </Text>
+              <TouchableOpacity
+                testID="sync-failures-dismiss-all-btn"
+                onPress={() => dismissAllSyncFailures?.()}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.syncFailuresDismissAllText, { color: theme.colors.accent }]}>
+                  {t('syncFailure.dismissAllBtn')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {safeSyncFailures.slice(0, 3).map((item) => {
+              const canRecover = Boolean(item.taskSnapshot && writableProjects.length > 0);
+              const noteText =
+                item.source === 'migration'
+                  ? t('syncFailure.migrationSkippedNote', {
+                      title: item.taskTitle,
+                      reason: item.message,
+                    })
+                  : t('syncFailure.itemNote', {
+                      title: item.taskTitle,
+                      reason: item.message,
+                    });
+              return (
+                <View key={item.id} style={styles.syncFailureItemRow}>
+                  <Text
+                    style={[styles.syncFailureItemText, { color: theme.colors.textSecondary }]}
+                    numberOfLines={2}
+                  >
+                    {noteText}
+                  </Text>
+                  <View style={styles.syncFailureItemActions}>
+                    {canRecover && (
+                      <TouchableOpacity
+                        testID={`sync-failure-recover-${item.id}`}
+                        style={[
+                          styles.syncFailureRecoverBtn,
+                          { backgroundColor: theme.colors.accent },
+                        ]}
+                        onPress={() => {
+                          const originalPid = item.projectId ?? item.taskSnapshot?.project_id;
+                          const isOriginalWritable =
+                            typeof originalPid === 'number' &&
+                            originalPid > 0 &&
+                            writableProjects.some((p) => p.id === originalPid);
+                          const targetPid = isOriginalWritable
+                            ? originalPid
+                            : defaultTargetProjectId || writableProjects[0]?.id;
+                          if (targetPid && targetPid > 0) {
+                            recoverFailedTask?.(item.id, targetPid);
+                          }
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.syncFailureRecoverBtnText}>
+                          {t('syncFailure.recoverBtn')}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      testID={`sync-failure-dismiss-${item.id}`}
+                      style={styles.syncFailureDismissItemBtn}
+                      onPress={() => dismissSyncFailure?.(item.id)}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('syncFailure.dismissBtn')}
+                    >
+                      <Text
+                        style={[
+                          styles.syncFailureDismissIcon,
+                          { color: theme.colors.textSecondary },
+                        ]}
+                      >
+                        ✕
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         {/* No-List Warning Banner */}
         {noProjectWarning && (
           <View
@@ -1288,7 +1735,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         )}
 
         {/* Reorder Mode Banner */}
-        {isReordering && !isVirtualView && (
+        {isReordering && canReorderActiveProject && (
           <View
             style={[
               styles.reorderBanner,
@@ -1350,14 +1797,14 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
             }}
             onDragEnd={({ data }) => {
-              if (isVirtualView) return;
+              if (!canReorderActiveProject) return;
               safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
               applySafeProjectReorder(
                 activeProject.id,
                 data.map((t) => t.id)
               );
               if (sortBy !== 'manual') {
-                setSortBy('manual');
+                handleSetSortBy('manual');
               }
             }}
             refreshControl={
@@ -1414,6 +1861,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   <ScaleDecorator activeScale={1.03}>
                     <SwipeableTaskItem
                       task={item}
+                      readOnly={!isLocalMode && !canWriteTask(item, projects)}
                       scale={taskItemScale}
                       textScale={taskItemTextScale}
                       isLarge={largeTaskItems}
@@ -1423,6 +1871,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                       onDelete={handleStageDeleteTask}
                       onPress={handleOpenTaskDetails}
                       onLongPress={() => {
+                        if (isActiveProjectReadOnly) return;
                         safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
                         if (isVirtualView) {
                           showTemporaryNotice(t('tasks.openSpecificListToReorder'));
@@ -1439,13 +1888,13 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         }
                         setIsReordering(true);
                         if (sortBy !== 'manual') {
-                          setSortBy('manual');
+                          handleSetSortBy('manual');
                         }
                         drag();
                       }}
-                      drag={isVirtualView ? undefined : drag}
+                      drag={canReorderActiveProject ? drag : undefined}
                       isDragging={isActive}
-                      isReordering={isReordering && !isVirtualView}
+                      isReordering={isReordering && canReorderActiveProject}
                       onMoveUp={() => handleMoveTaskPosition(item.id, 'up')}
                       onMoveDown={() => handleMoveTaskPosition(item.id, 'down')}
                       canMoveUp={index !== undefined && index > 0}
@@ -1594,10 +2043,15 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         >
           <QuickAddBar
             activeProjectId={defaultTargetProjectId}
-            availableProjects={safeProjects}
+            availableProjects={writableProjects}
+            allProjects={safeProjects}
             availableUsers={isLocalMode ? [] : cachedUsers}
             hideAssignees={isLocalMode}
-            doneTasks={doneTasks}
+            disabled={
+              isActiveProjectReadOnly ||
+              (!isLocalMode && safeProjects.length > 0 && writableProjects.length === 0)
+            }
+            doneTasks={writableDoneTasks}
             historyTasks={projectTasks}
             availableLabels={availableLabels}
             reenableStaples={reenableStaples}
@@ -1628,7 +2082,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
             placeholder={t('quickAdd.placeholderToProject', { title: activeProject.title })}
             onDetailedAdd={() => {
               safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-              if (defaultTargetProjectId <= 0 && safeProjects.length === 0) {
+              if (defaultTargetProjectId <= 0 && writableProjects.length === 0) {
                 setNoProjectWarning(t('tasks.createListFirstWarning'));
                 closeAllModals();
                 setEditorProjectId(null);
@@ -1647,7 +2101,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       <MoveListModal
         visible={liveMovingTask !== null}
         currentProjectId={liveMovingTask?.project_id ?? activeProject?.id}
-        projects={safeProjects}
+        projects={writableProjects}
         onSelectProject={(targetProjectId) => {
           if (liveMovingTask !== null) {
             moveTask(liveMovingTask.id, targetProjectId);
@@ -1678,10 +2132,12 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
       <TaskDetailModal
         visible={liveSelectedTask !== null || showCreateTaskModal}
         task={liveSelectedTask}
+        readOnly={liveSelectedTask ? !isLocalMode && !canWriteTask(liveSelectedTask, projects) : false}
         availableLabels={availableLabels}
         labelDefinitions={storeLabels}
         availableUsers={cachedUsers}
-        availableProjects={safeProjects}
+        availableProjects={writableProjects}
+        allProjects={isLocalMode ? undefined : allPositiveProjects}
         defaultProjectId={defaultTargetProjectId}
         weekStartDay={weekStartDay}
         hideAssignees={isLocalMode}
@@ -1691,6 +2147,9 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
         }}
         onSave={(taskId, updates) => {
           updateTaskDetails(taskId, updates);
+        }}
+        onSaveDirty={(taskId, dirtyUpdates) => {
+          updateTaskDetails(taskId, dirtyUpdates);
         }}
         onDelete={(taskId) => {
           deleteTask(taskId);
@@ -1702,7 +2161,8 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
           deleteTask(subId);
         }}
         onSelectSubtask={(sub) => {
-          const live = (Array.isArray(tasks) ? tasks : []).find((t) => t.id === sub.id) || sub;
+          const live =
+            findTaskByIdIncludingSubtasks(Array.isArray(tasks) ? tasks : [], sub.id) || sub;
           setSelectedTaskRef({
             id: live.id,
             title: live.title,
@@ -1846,7 +2306,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   ]}
                   onPress={() => {
                     safeHaptics.selection();
-                    if (option === 'manual' && !isVirtualView) {
+                    if (option === 'manual' && canReorderActiveProject) {
                       const hasPositions = visibleTasks.some(
                         (t) => t.position !== undefined && t.position > 0
                       );
@@ -1857,7 +2317,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         );
                       }
                     }
-                    setSortBy(option);
+                    handleSetSortBy(option);
                     setShowSortModal(false);
                   }}
                   activeOpacity={0.7}
@@ -1886,7 +2346,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
               );
             })}
 
-            {!isVirtualView && (
+            {canReorderActiveProject && (
               <TouchableOpacity
                 testID="sort-option-reorder"
                 style={[
@@ -1904,7 +2364,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                       visibleTasks.map((t) => t.id)
                     );
                   }
-                  setSortBy('manual');
+                  handleSetSortBy('manual');
                   setIsReordering(true);
                   setShowSortModal(false);
                 }}
@@ -1986,7 +2446,14 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                   {confirmingProjectDelete ? (
                     <View style={styles.inlineConfirmContainer}>
                       <Text style={[styles.inlineConfirmText, { color: theme.colors.text }]}>
-                        {t('drawer.deleteListInlineConfirm', { title: actionSheetProject.title })}
+                        {actionSheetChildCount > 0
+                          ? t('drawer.deleteListWithSublistsInlineConfirm', {
+                              title: actionSheetProject.title,
+                              count: actionSheetChildCount,
+                            })
+                          : t('drawer.deleteListInlineConfirm', {
+                              title: actionSheetProject.title,
+                            })}
                       </Text>
                       <View style={styles.inlineConfirmActions}>
                         <TouchableOpacity
@@ -2023,23 +2490,40 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                     </View>
                   ) : (
                     <>
-                      <TouchableOpacity
-                        testID="project-option-edit"
-                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => {
-                          const pid = actionSheetProject.id;
-                          closeAllModals();
-                          setEditorProjectId(pid);
-                          setShowEditor(true);
-                        }}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {t('drawer.editList')}
+                      {!actionSheetCanWrite && (
+                        <Text
+                          testID="project-action-readonly-note"
+                          style={[
+                            styles.actionSheetReadOnlyNote,
+                            {
+                              color: theme.colors.textSecondary,
+                              borderBottomColor: theme.colors.border,
+                            },
+                          ]}
+                        >
+                          {t('permissions.readOnlyError')}
                         </Text>
-                      </TouchableOpacity>
+                      )}
 
-                      {!isLocalMode && (
+                      {actionSheetCanWrite && (
+                        <TouchableOpacity
+                          testID="project-option-edit"
+                          style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                          onPress={() => {
+                            const pid = actionSheetProject.id;
+                            closeAllModals();
+                            setEditorProjectId(pid);
+                            setShowEditor(true);
+                          }}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                            {t('drawer.editList')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {!isLocalMode && actionSheetCanAdmin && (
                         <TouchableOpacity
                           testID="project-option-share"
                           style={[
@@ -2062,10 +2546,7 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                       <TouchableOpacity
                         testID="project-option-favorite"
                         style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => {
-                          toggleProjectFavorite(actionSheetProject.id).catch(() => {});
-                          setActionSheetProjectId(null);
-                        }}
+                        onPress={() => handleToggleFavoriteProject(actionSheetProject)}
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
@@ -2075,35 +2556,38 @@ export const ProjectTasksScreen: React.FC<ProjectTasksScreenProps> = ({
                         </Text>
                       </TouchableOpacity>
 
-                      <TouchableOpacity
-                        testID="project-option-archive"
-                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => {
-                          archiveProject(
-                            actionSheetProject.id,
-                            !actionSheetProject.is_archived
-                          ).catch(() => {});
-                          setActionSheetProjectId(null);
-                        }}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {actionSheetProject.is_archived
-                            ? t('drawer.unarchiveList')
-                            : t('drawer.archiveList')}
-                        </Text>
-                      </TouchableOpacity>
+                      {actionSheetCanWrite && (
+                        <TouchableOpacity
+                          testID="project-option-archive"
+                          style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                          onPress={() =>
+                            handleArchiveProjectAction(
+                              actionSheetProject,
+                              !actionSheetProject.is_archived
+                            )
+                          }
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                            {actionSheetProject.is_archived
+                              ? t('drawer.unarchiveList')
+                              : t('drawer.archiveList')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
-                      <TouchableOpacity
-                        testID="project-option-delete"
-                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => handleRequestDeleteProject(actionSheetProject)}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.danger }]}>
-                          {t('drawer.deleteList')}
-                        </Text>
-                      </TouchableOpacity>
+                      {actionSheetCanAdmin && (
+                        <TouchableOpacity
+                          testID="project-option-delete"
+                          style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                          onPress={() => handleRequestDeleteProject(actionSheetProject)}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.actionSheetOptionText, { color: theme.colors.danger }]}>
+                            {t('drawer.deleteList')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
                       <TouchableOpacity
                         style={styles.actionSheetCancel}
@@ -2571,5 +3055,81 @@ const styles = StyleSheet.create({
   inlineConfirmBtnText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  readOnlyBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginLeft: 6,
+  },
+  readOnlyBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  actionSheetReadOnlyNote: {
+    fontSize: 13.5,
+    fontWeight: '500',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  syncFailuresBanner: {
+    marginHorizontal: 12,
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 6,
+  },
+  syncFailuresHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  syncFailuresTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  syncFailuresDismissAllText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  syncFailureItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingTop: 2,
+  },
+  syncFailureItemText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  syncFailureItemActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  syncFailureRecoverBtn: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  syncFailureRecoverBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  syncFailureDismissItemBtn: {
+    padding: 3,
+  },
+  syncFailureDismissIcon: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

@@ -326,4 +326,61 @@ describe('localMigration — standalone Local Mode to Vikunja server migration',
       { reminder: '2026-12-10T09:00:00.000Z', relative_to: '' },
     ]);
   });
+
+  it('never maps local tasks into read-only shared server projects, truncates >250 char fallback titles, and records skippedTasks on permanent 403/400 rejection', async () => {
+    let createdProjSeq = 300;
+    const longTitle = 'A'.repeat(280);
+
+    const mockClient = {
+      getBaseApiUrl: () => 'https://vikunja.example.com/api/v1',
+      getProjects: jest.fn().mockResolvedValue([
+        // Same title 'Tasks', but read-only shared project (max_permission: 0)!
+        { id: 10, title: 'Tasks', max_permission: 0, is_archived: false },
+      ]),
+      getLabels: jest.fn().mockResolvedValue([]),
+      createProject: jest.fn().mockImplementation(async (input) => ({
+        id: ++createdProjSeq,
+        ...input,
+        max_permission: 2,
+        is_archived: false,
+      })),
+      createLabel: jest.fn(),
+      createTask: jest.fn().mockImplementation(async (projectId, data) => {
+        if (data.title.length > 250) {
+          throw new VikunjaApiError(400, 'Title exceeds 250 characters');
+        }
+        if (data.title === 'Always Rejected') {
+          throw new VikunjaApiError(403, 'Forbidden by policy');
+        }
+        return {
+          id: 950,
+          ...data,
+          project_id: projectId,
+          done: Boolean(data.done),
+        };
+      }),
+    } as unknown as VikunjaClient;
+
+    const res = await migrateLocalDataToServer({
+      client: mockClient,
+      localProjects: [{ id: 1, title: 'Tasks' }],
+      localTasks: [
+        { id: -1, title: longTitle, done: false, priority: 1, project_id: 1 },
+        { id: -2, title: 'Always Rejected', done: false, priority: 1, project_id: 1 },
+      ],
+      localLabels: [],
+      selectedProjectId: 1,
+    });
+
+    // Created a fresh writable project (301) instead of mapping into read-only project 10!
+    expect(res.projectIdMap.get(1)).toBe(301);
+    expect(res.uploadedTasks).toBe(1);
+    expect(res.uploadedServerTasks[0].title).toHaveLength(250);
+    expect(res.skippedTasks).toHaveLength(1);
+    expect(res.skippedTasks[0]).toMatchObject({
+      serverProjectId: 301,
+      status: 403,
+      errorMessage: 'Forbidden by policy',
+    });
+  });
 });

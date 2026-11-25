@@ -1,6 +1,7 @@
 import {
   buildProjectTree,
   flattenProjectTree,
+  getDescendantProjectIds,
   wouldCreateProjectCycle,
   filterProjects,
   ProjectTreeNode,
@@ -133,6 +134,27 @@ describe('projectTree utils', () => {
       expect(wouldCreateProjectCycle(corruptedServerProjects, 1, 3)).toBe(false);
       expect(wouldCreateProjectCycle(corruptedServerProjects, 1, 2)).toBe(true);
       expect(wouldCreateProjectCycle(corruptedServerProjects, 3, 1)).toBe(false);
+    });
+  });
+
+  describe('getDescendantProjectIds', () => {
+    it('returns all nested child and grandchild project IDs (including archived) without rootId or cycle overflow', () => {
+      const projectsWithArchivedDescendant: Project[] = [
+        ...sampleProjects,
+        { id: 6, title: 'Archived Sub-List', is_archived: true, parent_project_id: 4 },
+        { id: -2, title: 'Saved Filter', is_saved_filter: true, parent_project_id: 1 },
+      ];
+
+      const desc = getDescendantProjectIds(projectsWithArchivedDescendant, 1);
+      expect(Array.from(desc).sort((a, b) => a - b)).toEqual([3, 4, 6]);
+      expect(desc.has(1)).toBe(false);
+
+      const cyclic: Project[] = [
+        { id: 1, title: 'A', parent_project_id: 2 },
+        { id: 2, title: 'B', parent_project_id: 1 },
+      ];
+      expect(Array.from(getDescendantProjectIds(cyclic, 1))).toEqual([2]);
+      expect(getDescendantProjectIds(sampleProjects, 0).size).toBe(0);
     });
   });
 });

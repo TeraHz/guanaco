@@ -4,6 +4,8 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import {
   checkBiometricAvailable,
+  getAppLockCapability,
+  unlockWithBestAvailableMethod,
   authenticateWithBiometrics,
   authenticateWithDeviceCredentials,
   isAndroidActivityReadyForBiometrics,
@@ -187,11 +189,119 @@ describe('Biometrics & Auth Persistence', () => {
       expect(enabled).toBe(false);
     });
 
-    it('enables and disables biometric lock in AsyncStorage', async () => {
+    it('enables and disables biometric lock in AsyncStorage and syncs native Recents privacy', async () => {
+      (Platform as any).OS = 'android';
       await setBiometricEnabled(true);
+      expect(NativeModules.InAppUpdate.setAppLockPrivacyEnabled).toHaveBeenLastCalledWith(true);
       expect(await isBiometricEnabled()).toBe(true);
 
       await setBiometricEnabled(false);
+      expect(NativeModules.InAppUpdate.setAppLockPrivacyEnabled).toHaveBeenLastCalledWith(false);
+      expect(await isBiometricEnabled()).toBe(false);
+
+      await setBiometricEnabled(true);
+      await clearStoredAuth();
+      expect(NativeModules.InAppUpdate.setAppLockPrivacyEnabled).toHaveBeenLastCalledWith(false);
+    });
+
+    it('resolves getAppLockCapability and unlockWithBestAvailableMethod across PIN fallback and removed-PIN edge cases', async () => {
+      // 1. Web is never enforceable
+      (Platform as any).OS = 'web';
+      expect(await getAppLockCapability()).toEqual({
+        enforceable: false,
+        biometricAvailable: false,
+      });
+      expect(await unlockWithBestAvailableMethod()).toEqual({ passed: false });
+
+      // 2. Biometrics enrolled -> enforceable with biometricAvailable: true
+      (Platform as any).OS = 'android';
+      (LocalAuthentication.hasHardwareAsync as jest.Mock).mockResolvedValue(true);
+      (LocalAuthentication.isEnrolledAsync as jest.Mock).mockResolvedValue(true);
+      expect(await getAppLockCapability()).toEqual({
+        enforceable: true,
+        biometricAvailable: true,
+      });
+
+      // 3. Fingerprints deleted or sensor unavailable (`none_enrolled`), but OS PIN/Pattern is still set -> enforceable!
+      (LocalAuthentication.isEnrolledAsync as jest.Mock).mockResolvedValue(false);
+      (NativeModules.InAppUpdate.getBiometricSensorState as jest.Mock).mockResolvedValue({
+        status: 'none_enrolled',
+        msSinceResume: 5000,
+        decorReady: true,
+        isDeviceSecure: true,
+      });
+      (LocalAuthentication.getEnrolledLevelAsync as jest.Mock).mockResolvedValue(1);
+      expect(await getAppLockCapability()).toEqual({
+        enforceable: true,
+        biometricAvailable: false,
+      });
+
+      // Fallback unlock uses device credentials (`disableDeviceFallback: false`)
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+      expect(await unlockWithBestAvailableMethod('Unlock Guanaco')).toEqual({ passed: true });
+      expect(LocalAuthentication.authenticateAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          promptMessage: 'Unlock Guanaco',
+          disableDeviceFallback: false,
+          requireConfirmation: false,
+        })
+      );
+
+      // 4. User deleted ALL screen locks at OS level -> auto-disables App Lock instead of bricking the user!
+      await setBiometricEnabled(true);
+      (NativeModules.InAppUpdate.getBiometricSensorState as jest.Mock).mockResolvedValue({
+        status: 'none_enrolled',
+        msSinceResume: 5000,
+        decorReady: true,
+        isDeviceSecure: false,
+      });
+      (LocalAuthentication.getEnrolledLevelAsync as jest.Mock).mockResolvedValue(0);
+      expect(await getAppLockCapability()).toEqual({
+        enforceable: false,
+        biometricAvailable: false,
+      });
+
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({
+        success: false,
+        error: 'not_enrolled',
+      });
+      expect(await unlockWithBestAvailableMethod('Unlock Guanaco')).toEqual({
+        passed: true,
+        autoDisabledNoDeviceLock: true,
+      });
+      expect(await isBiometricEnabled()).toBe(false);
+
+      // iOS `passcode_not_set` also auto-disables cleanly
+      (Platform as any).OS = 'ios';
+      await setBiometricEnabled(true);
+      (LocalAuthentication.isEnrolledAsync as jest.Mock).mockResolvedValue(false);
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({
+        success: false,
+        error: 'passcode_not_set',
+      });
+      expect(await unlockWithBestAvailableMethod('Unlock Guanaco')).toEqual({
+        passed: true,
+        autoDisabledNoDeviceLock: true,
+      });
+      expect(await isBiometricEnabled()).toBe(false);
+
+      // Explicit manual PIN fallback (`authenticateWithDeviceCredentials`) also auto-clears when OS has zero screen lock
+      (Platform as any).OS = 'android';
+      await setBiometricEnabled(true);
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({
+        success: false,
+        error: 'not_enrolled',
+      });
+      expect(await authenticateWithDeviceCredentials('Unlock Guanaco')).toBe(true);
+      expect(await isBiometricEnabled()).toBe(false);
+
+      (Platform as any).OS = 'ios';
+      await setBiometricEnabled(true);
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({
+        success: false,
+        error: 'passcode_not_set',
+      });
+      expect(await authenticateWithDeviceCredentials('Unlock Guanaco')).toBe(true);
       expect(await isBiometricEnabled()).toBe(false);
     });
   });

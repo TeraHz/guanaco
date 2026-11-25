@@ -59,6 +59,27 @@ export const en = {
   'auth.migrationKeepUpload': 'Upload local tasks to server',
   'auth.migrationStartFresh': 'Replace with server data',
   'auth.migratingProgress': 'Syncing local tasks...',
+  'auth.unsyncedSwitchTitle': 'Unsynced Offline Changes',
+  'auth.unsyncedDifferentUserMsg':
+    'You have {count} unsynced change(s) from your previous account. Signing in as a different user will permanently discard them.',
+  'auth.unsyncedDifferentUrlMsg':
+    'You have {count} unsynced change(s) for {prevUrl}. Is {nextUrl} the same Vikunja server at a new address, or a different server?',
+  'auth.keepAndSyncNewUrl': 'Same Server — Keep & Sync',
+  'auth.discardAndConnect': 'Discard Changes',
+
+  // Permissions & Read-Only Shared Lists
+  'permissions.readOnlyBadge': 'Read-only',
+  'permissions.readOnlyPlaceholder': 'Read-only shared list',
+  'permissions.readOnlyError': 'This list is read-only.',
+  'permissions.adminRequiredError': 'Admin permission is required for this action.',
+
+  // Sync Failure & Skipped Migration Recovery
+  'syncFailure.bannerTitle': 'Could not sync {count} item(s)',
+  'syncFailure.migrationSkippedNote': 'Skipped during server upload: {title} ({reason})',
+  'syncFailure.itemNote': '{title}: {reason}',
+  'syncFailure.recoverBtn': 'Save Copy',
+  'syncFailure.dismissBtn': 'Dismiss',
+  'syncFailure.dismissAllBtn': 'Dismiss All',
 
   // Standalone Local Mode
   'local.starterTasksList': 'Tasks',
@@ -112,6 +133,10 @@ export const en = {
   'drawer.deleteList': 'Delete List',
   'drawer.deleteListConfirm': 'Delete "{title}" and all tasks inside it?',
   'drawer.deleteListInlineConfirm': 'Delete "{title}" and all tasks inside?',
+  'drawer.deleteListWithSublistsConfirm':
+    'Delete "{title}", its {count} sub-list(s), and all tasks inside them?',
+  'drawer.deleteListWithSublistsInlineConfirm':
+    'Delete "{title}", {count} sub-list(s), and all tasks inside?',
 
   // Project Editor Modal
   'listEditor.nameLabel': 'NAME',
@@ -135,6 +160,10 @@ export const en = {
   'listEditor.deleteConfirmMessage':
     'Are you sure you want to delete "{title}"? All tasks inside will be deleted.',
   'listEditor.deleteWebConfirm': 'Delete "{title}" and all its tasks?',
+  'listEditor.deleteConfirmWithSublists':
+    'Are you sure you want to delete "{title}"? Its {count} sub-list(s) and all tasks inside will also be deleted.',
+  'listEditor.deleteWebConfirmWithSublists':
+    'Delete "{title}", its {count} sub-list(s), and all its tasks?',
   'listEditor.networkRequiredError': 'Network connection required to manage lists.',
 
   // Project Sharing Modal
@@ -536,6 +565,15 @@ export const en = {
   // Store Sync Errors
   'store.connectionLostRenewing': 'Connection lost while renewing session. Offline changes are safe.',
   'store.sessionExpiredPleaseSignIn': 'Session expired. Please sign in again to sync your changes.',
+  'store.failedFetchTasks': 'Failed to load tasks.',
+  'store.failedFetchProjects': 'Failed to load lists.',
+  'tasks.syncOfflineNoCount': 'Offline',
+  'tasks.syncOfflineNoCountA11y': 'Offline. Tap to retry sync',
+  'tasks.syncSignInNoCount': 'Sign In',
+  'taskDetail.discardChangesTitle': 'Discard Changes?',
+  'taskDetail.discardChangesMessage': 'You have unsaved changes to this task.',
+  'taskDetail.keepEditing': 'Keep Editing',
+  'taskDetail.discardBtn': 'Discard',
 
   // In-App Update Prompt Modal
   'updates.restartToUpdate': 'Restart to Update',

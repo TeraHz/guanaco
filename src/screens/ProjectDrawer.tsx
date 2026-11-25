@@ -12,6 +12,7 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useShallow } from 'zustand/react/shallow';
 import { useTaskStore } from '../store/taskStore';
 import * as Haptics from 'expo-haptics';
 import { safeHaptics } from '../utils/haptics';
@@ -21,10 +22,23 @@ import { SettingsModal } from '../components/SettingsModal';
 import { LabelManagementModal } from '../components/LabelManagementModal';
 import { ProjectEditorModal } from '../components/ProjectEditorModal';
 import { ProjectSharingModal } from '../components/ProjectSharingModal';
-import { Project } from '../types/vikunja';
-import { buildProjectTree, flattenProjectTree } from '../utils/projectTree';
+import { Project, Task } from '../types/vikunja';
+import {
+  buildProjectTree,
+  flattenProjectTree,
+  getDescendantProjectIds,
+} from '../utils/projectTree';
+import {
+  canAdminProject,
+  canWriteProject,
+  isProjectReadOnly,
+} from '../utils/permissions';
 import { MY_TASKS_PROJECT_ID, isTaskAssignedToUser } from '../utils/taskFilters';
-import { useTranslation } from '../i18n';
+import { TranslationKey, useTranslation } from '../i18n';
+
+const EMPTY_PROJECTS: Project[] = [];
+const EMPTY_TASKS: Task[] = [];
+const EMPTY_FILTER_MAP: Record<number, number[]> = {};
 
 interface ProjectDrawerProps {
   visible: boolean;
@@ -45,19 +59,6 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
 }) => {
   const theme = useAppTheme();
   const { t } = useTranslation();
-  const {
-    isLocalMode = false,
-    projects,
-    tasks,
-    currentUser,
-    selectedProjectId,
-    savedFilterTaskIds = {},
-    pendingOpenTaskId = null,
-    setSelectedProjectId,
-    toggleProjectFavorite,
-    archiveProject,
-    deleteProject,
-  } = useTaskStore();
 
   const [showSettings, setShowSettings] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
@@ -67,10 +68,56 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   const [actionSheetProjectId, setActionSheetProjectId] = useState<number | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
+
+  const hasActiveSubModal =
+    showSettings ||
+    showLabels ||
+    showEditor ||
+    sharingProjectId !== null ||
+    actionSheetProjectId !== null;
+
+  const shouldComputeDrawer = visible || inline;
+
+  const {
+    isLocalMode = false,
+    projects,
+    tasks,
+    currentUser,
+    selectedProjectId,
+    savedFilterTaskIds = EMPTY_FILTER_MAP,
+    pendingOpenTaskId = null,
+    setSelectedProjectId,
+    toggleProjectFavorite,
+    archiveProject,
+    deleteProject,
+  } = useTaskStore(
+    useShallow((s) => ({
+      isLocalMode: s.isLocalMode ?? false,
+      projects: shouldComputeDrawer || hasActiveSubModal ? s.projects : EMPTY_PROJECTS,
+      tasks: shouldComputeDrawer ? s.tasks : EMPTY_TASKS,
+      currentUser: shouldComputeDrawer ? s.currentUser : null,
+      selectedProjectId: shouldComputeDrawer ? s.selectedProjectId : null,
+      savedFilterTaskIds: shouldComputeDrawer
+        ? s.savedFilterTaskIds ?? EMPTY_FILTER_MAP
+        : EMPTY_FILTER_MAP,
+      pendingOpenTaskId: s.pendingOpenTaskId ?? null,
+      setSelectedProjectId: s.setSelectedProjectId,
+      toggleProjectFavorite: s.toggleProjectFavorite,
+      archiveProject: s.archiveProject,
+      deleteProject: s.deleteProject,
+    }))
+  );
 
   useEffect(() => {
     setConfirmingDelete(false);
   }, [actionSheetProjectId]);
+
+  useEffect(() => {
+    if (!visible && !inline) {
+      setDrawerError(null);
+    }
+  }, [visible, inline]);
 
   // Dismiss drawer & nested modals when a notification tap requests opening a task detail sheet
   useEffect(() => {
@@ -88,6 +135,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     projectId: number | null = null
   ) => {
     setConfirmingDelete(false);
+    setDrawerError(null);
     setShowSettings(target === 'settings');
     setShowLabels(target === 'labels');
     setShowEditor(target === 'editor');
@@ -95,15 +143,6 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     setSharingProjectId(target === 'sharing' ? projectId : null);
     setActionSheetProjectId(target === 'actionSheet' ? projectId : null);
   };
-
-  const hasActiveSubModal =
-    showSettings ||
-    showLabels ||
-    showEditor ||
-    sharingProjectId !== null ||
-    actionSheetProjectId !== null;
-
-  const shouldComputeDrawer = visible || inline;
 
   const safeProjects = useMemo(
     () => (Array.isArray(projects) ? projects : []),
@@ -197,16 +236,59 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
     onClose();
   };
 
-  const commitDeleteProject = (projectId: number) => {
+  const surfaceProjectError = (
+    err: any,
+    fallbackKey: TranslationKey,
+    alertTitle?: string
+  ) => {
+    const msg = err?.message || t(fallbackKey);
+    safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
+    if (Platform.OS === 'web') {
+      setDrawerError(msg);
+    } else {
+      Alert.alert(alertTitle || t('drawer.title'), msg);
+    }
+  };
+
+  const commitDeleteProject = async (projectId: number) => {
     setConfirmingDelete(false);
     setActionSheetProjectId(null);
+    setDrawerError(null);
     safeHaptics.impact(Haptics.ImpactFeedbackStyle.Medium);
-    deleteProject(projectId).catch(() => {});
+    try {
+      await deleteProject(projectId);
+    } catch (err: any) {
+      surfaceProjectError(err, 'listEditor.deleteError', t('drawer.deleteList'));
+    }
+  };
+
+  const handleToggleFavoriteAction = async (proj: Project) => {
+    setActionSheetProjectId(null);
+    setDrawerError(null);
+    try {
+      await toggleProjectFavorite(proj.id);
+    } catch (err: any) {
+      surfaceProjectError(err, 'listEditor.saveError', proj.title);
+    }
+  };
+
+  const handleArchiveAction = async (proj: Project, nextArchived: boolean) => {
+    setActionSheetProjectId(null);
+    setDrawerError(null);
+    try {
+      await archiveProject(proj.id, nextArchived);
+    } catch (err: any) {
+      surfaceProjectError(err, 'listEditor.archiveError', proj.title);
+    }
   };
 
   const handleRequestDeleteProject = (proj: Project) => {
+    const childCount = getDescendantProjectIds(safeProjects, proj.id).size;
     const title = t('drawer.deleteList');
-    const message = t('drawer.deleteListConfirm', { title: proj.title });
+    const message =
+      childCount > 0
+        ? t('drawer.deleteListWithSublistsConfirm', { title: proj.title, count: childCount })
+        : t('drawer.deleteListConfirm', { title: proj.title });
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
         if (window.confirm(`${title}\n\n${message}`)) {
@@ -227,6 +309,16 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
       },
     ]);
   };
+
+  const actionSheetChildCount = actionSheetProject
+    ? getDescendantProjectIds(safeProjects, actionSheetProject.id).size
+    : 0;
+  const actionSheetCanWrite = actionSheetProject
+    ? isLocalMode || canWriteProject(actionSheetProject)
+    : false;
+  const actionSheetCanAdmin = actionSheetProject
+    ? isLocalMode || canAdminProject(actionSheetProject)
+    : false;
 
   if (!visible && !inline && !hasActiveSubModal) {
     return null;
@@ -267,6 +359,34 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           </TouchableOpacity>
         )}
       </View>
+
+      {drawerError ? (
+        <View
+          testID="drawer-error-banner"
+          accessibilityRole="alert"
+          style={[
+            styles.errorBanner,
+            {
+              borderLeftColor: theme.colors.danger,
+              backgroundColor: theme.isDark
+                ? 'rgba(255, 69, 58, 0.15)'
+                : 'rgba(215, 0, 21, 0.1)',
+            },
+          ]}
+        >
+          <Text style={[styles.errorBannerText, { color: theme.colors.danger }]}>
+            {drawerError}
+          </Text>
+          <TouchableOpacity
+            testID="drawer-error-dismiss-btn"
+            onPress={() => setDrawerError(null)}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.errorBannerText, { color: theme.colors.danger }]}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {/* Project List */}
       <ScrollView style={styles.projectList}>
@@ -413,6 +533,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           const indentPadding = Math.min(node.depth * 14, 42);
           const dotColor =
             normalizeHexColor(proj.hex_color ?? undefined, true) || theme.colors.accent;
+          const projReadOnly = !isLocalMode && isProjectReadOnly(proj);
 
           return (
             <View
@@ -456,6 +577,22 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                   {proj.is_favorite ? '★ ' : ''}
                   {proj.title}
                 </Text>
+                {projReadOnly && (
+                  <View
+                    testID={`drawer-readonly-badge-${proj.id}`}
+                    style={[
+                      styles.readOnlyBadge,
+                      {
+                        backgroundColor: theme.colors.surfaceSecondary,
+                        borderColor: theme.colors.borderStrong,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.readOnlyBadgeText, { color: theme.colors.textSecondary }]}>
+                      {t('permissions.readOnlyBadge')}
+                    </Text>
+                  </View>
+                )}
                 {activeTasks > 0 && (
                   <Text
                     testID={`drawer-count-${proj.id}`}
@@ -514,6 +651,8 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                 const isSelected = proj.id === selectedProjectId;
                 const dotColor =
                   normalizeHexColor(proj.hex_color ?? undefined, true) || theme.colors.textSecondary;
+                const projReadOnly = !isLocalMode && isProjectReadOnly(proj);
+                const projCanWrite = isLocalMode || canWriteProject(proj);
                 return (
                   <View
                     key={proj.id}
@@ -546,28 +685,48 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                       >
                         {proj.title}
                       </Text>
+                      {projReadOnly && (
+                        <View
+                          testID={`drawer-readonly-badge-${proj.id}`}
+                          style={[
+                            styles.readOnlyBadge,
+                            {
+                              backgroundColor: theme.colors.surfaceSecondary,
+                              borderColor: theme.colors.borderStrong,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[styles.readOnlyBadgeText, { color: theme.colors.textSecondary }]}
+                          >
+                            {t('permissions.readOnlyBadge')}
+                          </Text>
+                        </View>
+                      )}
                     </TouchableOpacity>
 
-                    <TouchableOpacity
-                      testID={`drawer-unarchive-${proj.id}`}
-                      style={[
-                        styles.unarchivePill,
-                        {
-                          backgroundColor: theme.colors.surfaceSecondary,
-                          borderColor: theme.colors.borderStrong,
-                        },
-                      ]}
-                      onPress={() => {
-                        safeHaptics.selection();
-                        archiveProject(proj.id, false).catch(() => {});
-                      }}
-                      accessibilityRole="button"
-                      accessibilityLabel={t('drawer.unarchiveA11y', { title: proj.title })}
-                    >
-                      <Text style={[styles.unarchivePillText, { color: theme.colors.text }]}>
-                        {t('drawer.unarchive')}
-                      </Text>
-                    </TouchableOpacity>
+                    {projCanWrite && (
+                      <TouchableOpacity
+                        testID={`drawer-unarchive-${proj.id}`}
+                        style={[
+                          styles.unarchivePill,
+                          {
+                            backgroundColor: theme.colors.surfaceSecondary,
+                            borderColor: theme.colors.borderStrong,
+                          },
+                        ]}
+                        onPress={() => {
+                          safeHaptics.selection();
+                          handleArchiveAction(proj, false);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('drawer.unarchiveA11y', { title: proj.title })}
+                      >
+                        <Text style={[styles.unarchivePillText, { color: theme.colors.text }]}>
+                          {t('drawer.unarchive')}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
 
                     <TouchableOpacity
                       testID={`drawer-project-options-${proj.id}`}
@@ -712,9 +871,14 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                   {confirmingDelete ? (
                     <View style={styles.inlineConfirmContainer}>
                       <Text style={[styles.inlineConfirmText, { color: theme.colors.text }]}>
-                        {t('drawer.deleteListInlineConfirm', {
-                          title: actionSheetProject.title,
-                        })}
+                        {actionSheetChildCount > 0
+                          ? t('drawer.deleteListWithSublistsInlineConfirm', {
+                              title: actionSheetProject.title,
+                              count: actionSheetChildCount,
+                            })
+                          : t('drawer.deleteListInlineConfirm', {
+                              title: actionSheetProject.title,
+                            })}
                       </Text>
                       <View style={styles.inlineConfirmActions}>
                         <TouchableOpacity
@@ -751,21 +915,35 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                     </View>
                   ) : (
                     <>
-                      <TouchableOpacity
-                        testID="drawer-option-edit"
-                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => {
-                          const pid = actionSheetProject.id;
-                          openExclusiveSubModal('editor', pid);
-                        }}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {t('drawer.editList')}
+                      {!actionSheetCanWrite && (
+                        <Text
+                          testID="drawer-action-readonly-note"
+                          style={[
+                            styles.actionSheetReadOnlyNote,
+                            { color: theme.colors.textSecondary, borderBottomColor: theme.colors.border },
+                          ]}
+                        >
+                          {t('permissions.readOnlyError')}
                         </Text>
-                      </TouchableOpacity>
+                      )}
 
-                      {!isLocalMode && (
+                      {actionSheetCanWrite && (
+                        <TouchableOpacity
+                          testID="drawer-option-edit"
+                          style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                          onPress={() => {
+                            const pid = actionSheetProject.id;
+                            openExclusiveSubModal('editor', pid);
+                          }}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                            {t('drawer.editList')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {!isLocalMode && actionSheetCanAdmin && (
                         <TouchableOpacity
                           testID="drawer-option-share"
                           style={[
@@ -787,10 +965,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                       <TouchableOpacity
                         testID="drawer-option-favorite"
                         style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => {
-                          toggleProjectFavorite(actionSheetProject.id).catch(() => {});
-                          setActionSheetProjectId(null);
-                        }}
+                        onPress={() => handleToggleFavoriteAction(actionSheetProject)}
                         accessibilityRole="button"
                       >
                         <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
@@ -800,35 +975,38 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                         </Text>
                       </TouchableOpacity>
 
-                      <TouchableOpacity
-                        testID="drawer-option-archive"
-                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => {
-                          archiveProject(
-                            actionSheetProject.id,
-                            !actionSheetProject.is_archived
-                          ).catch(() => {});
-                          setActionSheetProjectId(null);
-                        }}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
-                          {actionSheetProject.is_archived
-                            ? t('drawer.unarchiveList')
-                            : t('drawer.archiveList')}
-                        </Text>
-                      </TouchableOpacity>
+                      {actionSheetCanWrite && (
+                        <TouchableOpacity
+                          testID="drawer-option-archive"
+                          style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                          onPress={() =>
+                            handleArchiveAction(
+                              actionSheetProject,
+                              !actionSheetProject.is_archived
+                            )
+                          }
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.actionSheetOptionText, { color: theme.colors.text }]}>
+                            {actionSheetProject.is_archived
+                              ? t('drawer.unarchiveList')
+                              : t('drawer.archiveList')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
-                      <TouchableOpacity
-                        testID="drawer-option-delete"
-                        style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
-                        onPress={() => handleRequestDeleteProject(actionSheetProject)}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.actionSheetOptionText, { color: theme.colors.danger }]}>
-                          {t('drawer.deleteList')}
-                        </Text>
-                      </TouchableOpacity>
+                      {actionSheetCanAdmin && (
+                        <TouchableOpacity
+                          testID="drawer-option-delete"
+                          style={[styles.actionSheetOption, { borderBottomColor: theme.colors.border }]}
+                          onPress={() => handleRequestDeleteProject(actionSheetProject)}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.actionSheetOptionText, { color: theme.colors.danger }]}>
+                            {t('drawer.deleteList')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
                       <TouchableOpacity
                         style={styles.actionSheetCancel}
@@ -1121,6 +1299,41 @@ const styles = StyleSheet.create({
   },
   inlineConfirmBtnText: {
     fontSize: 14,
+    fontWeight: '600',
+  },
+  readOnlyBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginLeft: 6,
+  },
+  readOnlyBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+  },
+  actionSheetReadOnlyNote: {
+    fontSize: 13.5,
+    fontWeight: '500',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderLeftWidth: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    marginHorizontal: 12,
+    marginTop: 8,
+    borderRadius: 6,
+    gap: 8,
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 12.5,
     fontWeight: '600',
   },
 });

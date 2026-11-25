@@ -74,6 +74,27 @@ export interface AndroidBiometricSensorState {
     | 'unknown';
   msSinceResume: number;
   decorReady: boolean;
+  isDeviceSecure?: boolean;
+}
+
+export interface AppLockCapability {
+  enforceable: boolean;
+  biometricAvailable: boolean;
+}
+
+export interface UnlockWithBestAvailableResult {
+  passed: boolean;
+  autoDisabledNoDeviceLock?: boolean;
+}
+
+function syncNativeAppLockPrivacy(enabled: boolean): void {
+  if (Platform.OS === 'web') return;
+  try {
+    const res = NativeModules?.InAppUpdate?.setAppLockPrivacyEnabled?.(enabled);
+    if (res && typeof res.catch === 'function') {
+      res.catch(() => {});
+    }
+  } catch (_) {}
 }
 
 /**
@@ -97,6 +118,7 @@ export async function getAndroidBiometricSensorState(): Promise<AndroidBiometric
       status: raw.status || 'unknown',
       msSinceResume: typeof raw.msSinceResume === 'number' ? raw.msSinceResume : 1000,
       decorReady: raw.decorReady !== false,
+      ...(typeof raw.isDeviceSecure === 'boolean' ? { isDeviceSecure: raw.isDeviceSecure } : {}),
     };
   } catch (_) {
     return null;
@@ -220,12 +242,23 @@ export async function authenticateWithDeviceCredentials(reason?: string): Promis
   };
   try {
     let result = await LocalAuthentication.authenticateAsync(credentialConfig);
-    if (!result.success && (result as any).error === 'app_cancel') {
+    if (!result?.success && (result as any)?.error === 'app_cancel') {
       await cancelBiometricPrompt();
       await delayMs(80);
       result = await LocalAuthentication.authenticateAsync(credentialConfig);
     }
-    return Boolean(result?.success);
+    if (result?.success) {
+      return true;
+    }
+    const err = (result as any)?.error as string | undefined;
+    if (
+      (Platform.OS === 'android' && err === 'not_enrolled') ||
+      (Platform.OS === 'ios' && err === 'passcode_not_set')
+    ) {
+      await setBiometricEnabled(false);
+      return true;
+    }
+    return false;
   } catch (_) {
     return false;
   }
@@ -318,6 +351,108 @@ export async function authenticateWithBiometrics(
   }
 }
 
+/**
+ * Determines whether App Lock can be enforced on the current device (either via biometrics
+ * or via OS device credentials / PIN / Pattern / Passcode) so sensor HAL hiccups or deleted
+ * fingerprints never silently bypass App Lock when a device screen lock is still configured.
+ */
+export async function getAppLockCapability(): Promise<AppLockCapability> {
+  if (Platform.OS === 'web') {
+    return { enforceable: false, biometricAvailable: false };
+  }
+  try {
+    if (await checkBiometricAvailable()) {
+      return { enforceable: true, biometricAvailable: true };
+    }
+
+    const sensorState =
+      Platform.OS === 'android' ? await getAndroidBiometricSensorState() : null;
+
+    if (typeof LocalAuthentication.getEnrolledLevelAsync !== 'function') {
+      if (sensorState?.isDeviceSecure === true) {
+        return { enforceable: true, biometricAvailable: false };
+      }
+      if (sensorState?.isDeviceSecure === false) {
+        return { enforceable: false, biometricAvailable: false };
+      }
+      return { enforceable: true, biometricAvailable: false };
+    }
+
+    const level = Number(await LocalAuthentication.getEnrolledLevelAsync());
+    const secretLevel = Number(LocalAuthentication.SecurityLevel?.SECRET ?? 1);
+    if (
+      (!Number.isNaN(level) && level >= secretLevel) ||
+      sensorState?.isDeviceSecure === true
+    ) {
+      return { enforceable: true, biometricAvailable: false };
+    }
+    if (level === 0) {
+      return { enforceable: false, biometricAvailable: false };
+    }
+    return { enforceable: true, biometricAvailable: false };
+  } catch (_) {
+    return { enforceable: true, biometricAvailable: false };
+  }
+}
+
+/**
+ * Prompts biometric unlock when available, or falls back to OS device credentials (PIN / Passcode).
+ * If the user removed their OS screen lock completely (`not_enrolled` / `passcode_not_set`),
+ * automatically disables App Lock and passes so the user is never permanently locked out.
+ */
+export async function unlockWithBestAvailableMethod(
+  reason?: string,
+  options?: AuthenticateBiometricsOptions
+): Promise<UnlockWithBestAvailableResult> {
+  if (Platform.OS === 'web') {
+    return { passed: false };
+  }
+
+  if (await checkBiometricAvailable()) {
+    const passed = await authenticateWithBiometrics(reason, options);
+    return { passed };
+  }
+
+  try {
+    if (options?.forceReset) {
+      await cancelBiometricPrompt();
+      await delayMs(60);
+    }
+
+    const credentialConfig: LocalAuthentication.LocalAuthenticationOptions = {
+      promptMessage: reason || t('lock.unlockGuanaco'),
+      fallbackLabel: t('lock.enterPinOrPassword'),
+      cancelLabel: t('common.cancel'),
+      disableDeviceFallback: false,
+      requireConfirmation: false,
+    };
+
+    let result = await LocalAuthentication.authenticateAsync(credentialConfig);
+    if (!result?.success && (result as any)?.error === 'app_cancel') {
+      await cancelBiometricPrompt();
+      await delayMs(80);
+      result = await LocalAuthentication.authenticateAsync(credentialConfig);
+    }
+
+    if (result?.success) {
+      return { passed: true };
+    }
+
+    const err = (result as any)?.error as string | undefined;
+    if (
+      (Platform.OS === 'android' && err === 'not_enrolled') ||
+      (Platform.OS === 'ios' && err === 'passcode_not_set')
+    ) {
+      await setBiometricEnabled(false);
+      return { passed: true, autoDisabledNoDeviceLock: true };
+    }
+
+    return { passed: false };
+  } catch (_) {
+    return { passed: false };
+  }
+}
+
 let cachedBiometricEnabled: boolean | null = null;
 
 export function getCachedBiometricEnabled(): boolean | null {
@@ -329,9 +464,11 @@ export async function isBiometricEnabled(): Promise<boolean> {
     const value = await AsyncStorage.getItem(STORAGE_KEY_BIOMETRIC_ENABLED);
     const enabled = value === 'true';
     cachedBiometricEnabled = enabled;
+    syncNativeAppLockPrivacy(enabled);
     return enabled;
   } catch (_) {
     cachedBiometricEnabled = false;
+    syncNativeAppLockPrivacy(false);
     return false;
   }
 }
@@ -340,6 +477,7 @@ export async function setBiometricEnabled(enabled: boolean): Promise<void> {
   cachedBiometricEnabled = enabled;
   try {
     await AsyncStorage.setItem(STORAGE_KEY_BIOMETRIC_ENABLED, enabled ? 'true' : 'false');
+    syncNativeAppLockPrivacy(enabled);
   } catch (err) {
     cachedBiometricEnabled = null;
     throw err;
@@ -558,6 +696,7 @@ export async function clearNativeCookies(): Promise<void> {
 
 export async function clearStoredCredentialsOnly(): Promise<void> {
   cachedBiometricEnabled = false;
+  syncNativeAppLockPrivacy(false);
   try {
     const secureAvailable = await isSecureStoreAvailable();
     await purgeLegacyPasswords(secureAvailable);

@@ -16,11 +16,13 @@ import {
 } from 'react-native';
 import { Project } from '../types/vikunja';
 import * as Haptics from 'expo-haptics';
+import { useShallow } from 'zustand/react/shallow';
 import { useTaskStore } from '../store/taskStore';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import { normalizeHexColor } from '../utils/colors';
-import { wouldCreateProjectCycle } from '../utils/projectTree';
+import { getDescendantProjectIds, wouldCreateProjectCycle } from '../utils/projectTree';
+import { canAdminProject, canWriteProject } from '../utils/permissions';
 import { useTranslation } from '../i18n';
 
 const PALETTE = [
@@ -45,6 +47,8 @@ export interface ProjectEditorModalProps {
   onDeleted?: (projectId: number) => void;
 }
 
+const EMPTY_PROJECTS: Project[] = [];
+
 export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   visible,
   onClose,
@@ -56,14 +60,27 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   const theme = useAppTheme();
   const { t } = useTranslation();
   const {
+    isLocalMode = false,
+    projects: storeProjects,
     createProject,
     updateProject,
     deleteProject,
     archiveProject,
     duplicateProject,
-  } = useTaskStore();
+  } = useTaskStore(
+    useShallow((s) => ({
+      isLocalMode: s.isLocalMode ?? false,
+      projects: visible ? s.projects : EMPTY_PROJECTS,
+      createProject: s.createProject,
+      updateProject: s.updateProject,
+      deleteProject: s.deleteProject,
+      archiveProject: s.archiveProject,
+      duplicateProject: s.duplicateProject,
+    }))
+  );
 
   const isEditMode = Boolean(project && project.id);
+  const canDeleteProject = isLocalMode || !project || canAdminProject(project);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -104,6 +121,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   const validParentProjects = React.useMemo(() => {
     return safeAllProjects
       .filter((p) => {
+        if (!isLocalMode && !canWriteProject(p)) return false;
         if (p.is_archived && p.id !== project?.parent_project_id) return false;
         if (!isEditMode || !project) return true;
         if (p.id === project.id) return false;
@@ -112,7 +130,15 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       .sort((a, b) =>
         (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
       );
-  }, [safeAllProjects, isEditMode, project]);
+  }, [safeAllProjects, isLocalMode, isEditMode, project]);
+
+  const descendantSourceProjects =
+    safeAllProjects.length > 0
+      ? safeAllProjects
+      : Array.isArray(storeProjects)
+      ? storeProjects
+      : [];
+  const childCount = project ? getDescendantProjectIds(descendantSourceProjects, project.id).size : 0;
 
   const parentProjectName =
     safeAllProjects.find((p) => p.id === parentProjectId)?.title || t('common.none');
@@ -193,7 +219,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   };
 
   const performDeleteProject = async () => {
-    if (!project) return;
+    if (!project || !canDeleteProject) return;
     setShowWebDeleteConfirm(false);
     setIsLoading(true);
     setErrorMessage(null);
@@ -211,8 +237,14 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   };
 
   const handleDelete = () => {
-    if (!project) return;
-    const message = t('listEditor.deleteConfirmMessage', { title: project.title });
+    if (!project || !canDeleteProject) return;
+    const message =
+      childCount > 0
+        ? t('listEditor.deleteConfirmWithSublists', {
+            title: project.title,
+            count: childCount,
+          })
+        : t('listEditor.deleteConfirmMessage', { title: project.title });
 
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
@@ -321,7 +353,12 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   ]}
                 >
                   <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
-                    {t('listEditor.deleteWebConfirm', { title: project.title })}
+                    {childCount > 0
+                      ? t('listEditor.deleteWebConfirmWithSublists', {
+                          title: project.title,
+                          count: childCount,
+                        })
+                      : t('listEditor.deleteWebConfirm', { title: project.title })}
                   </Text>
                   <View style={styles.confirmBannerActions}>
                     <TouchableOpacity
@@ -573,27 +610,29 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                       </Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity
-                      testID="project-modal-delete-btn"
-                      style={[
-                        styles.destructiveBtn,
-                        {
-                          borderColor: theme.isDark
-                            ? 'rgba(255, 69, 58, 0.35)'
-                            : 'rgba(215, 0, 21, 0.3)',
-                          backgroundColor: theme.isDark
-                            ? 'rgba(255, 69, 58, 0.12)'
-                            : 'rgba(215, 0, 21, 0.08)',
-                        },
-                      ]}
-                      onPress={handleDelete}
-                      disabled={isLoading}
-                      accessibilityRole="button"
-                    >
-                      <Text style={[styles.destructiveBtnText, { color: theme.colors.danger }]}>
-                        {t('drawer.deleteList')}
-                      </Text>
-                    </TouchableOpacity>
+                    {canDeleteProject && (
+                      <TouchableOpacity
+                        testID="project-modal-delete-btn"
+                        style={[
+                          styles.destructiveBtn,
+                          {
+                            borderColor: theme.isDark
+                              ? 'rgba(255, 69, 58, 0.35)'
+                              : 'rgba(215, 0, 21, 0.3)',
+                            backgroundColor: theme.isDark
+                              ? 'rgba(255, 69, 58, 0.12)'
+                              : 'rgba(215, 0, 21, 0.08)',
+                          },
+                        ]}
+                        onPress={handleDelete}
+                        disabled={isLoading}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.destructiveBtnText, { color: theme.colors.danger }]}>
+                          {t('drawer.deleteList')}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
               </ScrollView>

@@ -325,7 +325,7 @@ function buildDemoDataset() {
     },
     sub3,
 
-    // 3. Family & Errands (Project 3 — great for Gemini / Smart Grouping on Tablet!)
+    // 3. Family & Errands (Project 3 — showcases On-Device Smart Grouping on Tablet!)
     {
       id: 301,
       title: 'Schedule annual dentist checkup for kids',
@@ -658,7 +658,6 @@ async function seedSessionAndReload(cdp, baseUrl, opts = {}) {
     width = 405,
     height = 720,
     dpr = 3,
-    enableAiCore = false,
   } = opts;
 
   await cdp.send('Emulation.setDeviceMetricsOverride', {
@@ -671,12 +670,7 @@ async function seedSessionAndReload(cdp, baseUrl, opts = {}) {
     features: [{ name: 'prefers-color-scheme', value: themeMode === 'light' ? 'light' : 'dark' }],
   });
 
-  // Optional Gemini Nano / AICore mock before scripts execute so Smart Grouping appears on non-shopping lists
-  await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-    source: enableAiCore
-      ? `window.ai = { languageModel: { create: async () => ({ prompt: async () => '' }) } };`
-      : `try { delete window.ai; } catch (_) {}`,
-  });
+  // On-device heuristic Smart Grouping runs deterministically offline without browser prompt APIs
 
   await cdp.send('Page.navigate', { url: baseUrl });
   await sleep(650);
@@ -719,7 +713,15 @@ async function clickTestId(cdp, testId) {
 async function selectSortOption(cdp, sortKey) {
   await clickSelector(cdp, '[aria-label="Sort tasks"]');
   await sleep(250);
-  await clickTestId(cdp, `sort-option-${sortKey}`);
+  await cdp.evalJs(`(() => {
+    const primary = document.querySelector('[data-testid="sort-option-' + ${JSON.stringify(sortKey)} + '"]');
+    const fallback = ${JSON.stringify(sortKey)} === 'department'
+      ? document.querySelector('[data-testid="sort-option-aiSmart"]')
+      : null;
+    const el = primary || fallback;
+    if (!el) throw new Error('Missing sort option: ' + ${JSON.stringify(sortKey)});
+    el.click();
+  })()`);
   await sleep(350);
 }
 
@@ -773,7 +775,6 @@ async function main() {
       width: 405,
       height: 720,
       dpr: 3,
-      enableAiCore: false,
     });
     await selectSortOption(cdp, 'department');
     await saveScreenshot(cdp, '01-tasks-dark.png');
@@ -785,7 +786,6 @@ async function main() {
       width: 405,
       height: 720,
       dpr: 3,
-      enableAiCore: false,
     });
     await setInputValue(
       cdp,
@@ -802,7 +802,6 @@ async function main() {
       width: 405,
       height: 720,
       dpr: 3,
-      enableAiCore: false,
     });
     await clickTestId(cdp, 'task-item-201');
     await sleep(450);
@@ -822,7 +821,6 @@ async function main() {
       width: 405,
       height: 720,
       dpr: 3,
-      enableAiCore: false,
     });
     await clickTestId(cdp, 'header-search-btn');
     await sleep(250);
@@ -838,7 +836,6 @@ async function main() {
       width: 1120,
       height: 630,
       dpr: 2,
-      enableAiCore: true,
     });
     await selectSortOption(cdp, 'aiSmart');
     await saveScreenshot(cdp, '06-tablet-split-view.png');
@@ -850,7 +847,6 @@ async function main() {
       width: 1120,
       height: 630,
       dpr: 2,
-      enableAiCore: false,
     });
     await selectSortOption(cdp, 'department');
     await saveScreenshot(cdp, '07-tablet-groceries-light.png');

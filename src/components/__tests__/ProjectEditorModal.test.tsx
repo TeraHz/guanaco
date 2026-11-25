@@ -301,5 +301,46 @@ describe('ProjectEditorModal', () => {
         );
       });
     });
+
+    it('filters read-only projects out of validParentProjects, hides Delete List for non-admin projects, and warns about sub-lists on delete', () => {
+      const projectsWithPerms: Project[] = [
+        { id: 1, title: 'Parent List', hex_color: '#3498db', max_permission: 2 },
+        { id: 2, title: 'Child List', hex_color: '#e74c3c', parent_project_id: 1, max_permission: 1 },
+        { id: 3, title: 'Grandchild List', hex_color: '#2ecc71', parent_project_id: 2, max_permission: 2 },
+        { id: 7, title: 'Shared ReadOnly List', hex_color: '#9b59b6', max_permission: 0 },
+      ];
+
+      // 1. Editing non-admin (max_permission: 1) list hides Delete List and excludes ReadOnly parent
+      const { getByTestId, queryByTestId, queryByText, queryAllByText, rerender } = render(
+        <ProjectEditorModal
+          visible={true}
+          project={projectsWithPerms[1]}
+          onClose={mockOnClose}
+          allProjects={projectsWithPerms}
+        />
+      );
+
+      expect(queryByTestId('project-modal-delete-btn')).toBeNull();
+      fireEvent.press(getByTestId('project-modal-parent-selector'));
+      expect(queryByText('Shared ReadOnly List')).toBeNull();
+      expect(queryAllByText('Parent List').length).toBeGreaterThanOrEqual(2);
+
+      // 2. Editing admin parent list (id: 1, which has 2 descendants: id 2 & id 3) warns about 2 sub-lists
+      rerender(
+        <ProjectEditorModal
+          visible={true}
+          project={projectsWithPerms[0]}
+          onClose={mockOnClose}
+          allProjects={projectsWithPerms}
+        />
+      );
+
+      fireEvent.press(getByTestId('project-modal-delete-btn'));
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Delete List',
+        expect.stringContaining('2 sub-list(s)'),
+        expect.any(Array)
+      );
+    });
   });
 });

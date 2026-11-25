@@ -85,7 +85,7 @@
   <div class="container">
     <div class="badge">No Tracking • Direct Server Connection</div>
     <h1>Privacy Policy for Guanaco</h1>
-    <div class="meta">Effective Date: October 4, 2026 | Last Updated: November 23, 2026</div>
+    <div class="meta">Effective Date: October 4, 2026 | Last Updated: November 25, 2026</div>
 
     <p>Guanaco is a free, open-source mobile and tablet app for Vikunja. Your tasks and personal information belong solely to you.</p>
     <p><strong>Guanaco does not collect, track, store on developer servers, or sell any personal data, tasks, or usage statistics.</strong></p>
@@ -103,15 +103,15 @@
       <li><strong>Direct Connection to Your Server:</strong> All syncing happens strictly between your device and the Vikunja server address you enter. Connections use encrypted HTTPS by default (connecting over unencrypted local HTTP requires your confirmation).</li>
       <li><strong>Encrypted Session Storage:</strong> Your active login token and username are stored in your device's encrypted system keychain/keystore.</li>
       <li><strong>Local Offline Copy:</strong> Tasks and unsent offline edits are stored locally inside the app's private storage so you can work without an internet connection. Automatic cloud app-data backups are disabled on Android so your cached tasks are not uploaded to third-party backup services.</li>
-      <li><strong>On-Device Grouping:</strong> Smart task grouping (such as shopping aisles) runs locally on your phone — task titles are never sent to external AI services.</li>
+      <li><strong>On-Device Grouping:</strong> Smart task grouping (such as shopping aisles) runs locally on your phone or tablet using on-device heuristics — task titles are never sent to external AI services.</li>
       <li><strong>App Updates (Google Play):</strong> Play Store builds use the standard Google Play update check solely to notify you when a newer version of Guanaco is available.</li>
     </ul>
 
     <h2>3. Device Permissions</h2>
     <ul>
-      <li><strong>Network Access:</strong> Used to sync directly with your Vikunja server and detect when you go offline or reconnect.</li>
+      <li><strong>Internet Access:</strong> Used solely to sync directly with your configured Vikunja server (when connected) and check for Google Play app updates. Standalone offline mode makes no network requests, and Guanaco performs no background connectivity tracking.</li>
       <li><strong>Notifications (Optional):</strong> Used only to show task reminders scheduled locally on your device, and to restore pending reminders after your phone restarts.</li>
-      <li><strong>Biometrics (Optional):</strong> Used only when you turn on Biometric Lock (Fingerprint or Face ID). Unlock checks are handled by your device's operating system; Guanaco never sees or stores biometric data.</li>
+      <li><strong>Biometrics &amp; Device Lock (Optional):</strong> Used only when you turn on Biometric Lock (Fingerprint, Face ID, or device PIN/passcode fallback). Unlock checks are handled by your device's operating system; Guanaco never sees or stores biometric or passcode data.</li>
       <li><strong>Vibration:</strong> Used for subtle touch feedback when completing or swiping tasks.</li>
     </ul>
 

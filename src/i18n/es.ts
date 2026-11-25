@@ -61,6 +61,27 @@ export const es: Record<TranslationKey, string> = {
   'auth.migrationKeepUpload': 'Subir tareas locales al servidor',
   'auth.migrationStartFresh': 'Reemplazar con datos del servidor',
   'auth.migratingProgress': 'Sincronizando tareas locales...',
+  'auth.unsyncedSwitchTitle': 'Cambios sin conexión pendientes',
+  'auth.unsyncedDifferentUserMsg':
+    'Tienes {count} cambio(s) sin sincronizar de tu cuenta anterior. Iniciar sesión con otro usuario los descartará permanentemente.',
+  'auth.unsyncedDifferentUrlMsg':
+    'Tienes {count} cambio(s) sin sincronizar para {prevUrl}. ¿Es {nextUrl} el mismo servidor Vikunja en una nueva dirección o un servidor distinto?',
+  'auth.keepAndSyncNewUrl': 'Mismo servidor — Conservar y sincronizar',
+  'auth.discardAndConnect': 'Descartar cambios',
+
+  // Permissions & Read-Only Shared Lists
+  'permissions.readOnlyBadge': 'Solo lectura',
+  'permissions.readOnlyPlaceholder': 'Lista compartida de solo lectura',
+  'permissions.readOnlyError': 'Esta lista es de solo lectura.',
+  'permissions.adminRequiredError': 'Se requieren permisos de administrador para esta acción.',
+
+  // Sync Failure & Skipped Migration Recovery
+  'syncFailure.bannerTitle': 'No se pudo sincronizar {count} elemento(s)',
+  'syncFailure.migrationSkippedNote': 'Omitido al subir al servidor: {title} ({reason})',
+  'syncFailure.itemNote': '{title}: {reason}',
+  'syncFailure.recoverBtn': 'Guardar copia',
+  'syncFailure.dismissBtn': 'Descartar',
+  'syncFailure.dismissAllBtn': 'Descartar todo',
 
   // Standalone Local Mode
   'local.starterTasksList': 'Tareas',
@@ -115,6 +136,10 @@ export const es: Record<TranslationKey, string> = {
   'drawer.deleteList': 'Eliminar lista',
   'drawer.deleteListConfirm': '¿Eliminar "{title}" y todas las tareas que contiene?',
   'drawer.deleteListInlineConfirm': '¿Eliminar "{title}" y todas sus tareas?',
+  'drawer.deleteListWithSublistsConfirm':
+    '¿Eliminar "{title}", sus {count} sublista(s) y todas las tareas que contienen?',
+  'drawer.deleteListWithSublistsInlineConfirm':
+    '¿Eliminar "{title}", {count} sublista(s) y todas sus tareas?',
 
   // Project Editor Modal
   'listEditor.nameLabel': 'NOMBRE',
@@ -138,6 +163,10 @@ export const es: Record<TranslationKey, string> = {
   'listEditor.deleteConfirmMessage':
     '¿Seguro que quieres eliminar "{title}"? Se eliminarán todas las tareas que contiene.',
   'listEditor.deleteWebConfirm': '¿Eliminar "{title}" y todas sus tareas?',
+  'listEditor.deleteConfirmWithSublists':
+    '¿Seguro que quieres eliminar "{title}"? También se eliminarán sus {count} sublista(s) y todas las tareas que contienen.',
+  'listEditor.deleteWebConfirmWithSublists':
+    '¿Eliminar "{title}", sus {count} sublista(s) y todas sus tareas?',
   'listEditor.networkRequiredError': 'Se requiere conexión de red para gestionar listas.',
 
   // Project Sharing Modal
@@ -543,6 +572,15 @@ export const es: Record<TranslationKey, string> = {
     'Se perdió la conexión al renovar la sesión. Tus cambios sin conexión están a salvo.',
   'store.sessionExpiredPleaseSignIn':
     'La sesión expiró. Vuelve a iniciar sesión para sincronizar tus cambios.',
+  'store.failedFetchTasks': 'No se pudieron cargar las tareas.',
+  'store.failedFetchProjects': 'No se pudieron cargar las listas.',
+  'tasks.syncOfflineNoCount': 'Sin conexión',
+  'tasks.syncOfflineNoCountA11y': 'Sin conexión. Toca para reintentar',
+  'tasks.syncSignInNoCount': 'Entrar',
+  'taskDetail.discardChangesTitle': '¿Descartar cambios?',
+  'taskDetail.discardChangesMessage': 'Tienes cambios sin guardar en esta tarea.',
+  'taskDetail.keepEditing': 'Seguir editando',
+  'taskDetail.discardBtn': 'Descartar',
 
   // In-App Update Prompt Modal
   'updates.restartToUpdate': 'Reiniciar para actualizar',

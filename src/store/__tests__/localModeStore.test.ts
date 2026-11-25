@@ -90,10 +90,12 @@ describe('useTaskStore — Standalone Local Mode, Recurring Rollover & Backup/Re
     expect(archived.is_archived).toBe(true);
     expect(useTaskStore.getState().selectedProjectId).toBeNull();
 
-    // Deleting parent project promotes orphaned child ('Kitchen') to root (parent_project_id cleared)
+    // Deleting parent project cascades to remove its entire sub-list subtree ('Kitchen') and tasks inside it
     await useTaskStore.getState().deleteProject(parent.id);
-    const remainingChild = useTaskStore.getState().projects.find((p) => p.id === child.id)!;
-    expect(remainingChild.parent_project_id).toBeUndefined();
+    expect(useTaskStore.getState().projects.find((p) => p.id === child.id)).toBeUndefined();
+    expect(
+      useTaskStore.getState().tasks.filter((t) => t.project_id === child.id)
+    ).toHaveLength(0);
   });
 
   it('rolls recurring tasks forward in toggleTask and updateTaskDetails ONLY when in standalone Local Mode', async () => {
@@ -236,6 +238,21 @@ describe('useTaskStore — Standalone Local Mode, Recurring Rollover & Backup/Re
     await useTaskStore.getState().initialize('https://vikunja.example.com', 'jwt_tok', null);
 
     const rolledDue = '2026-12-08T09:00:00.000Z';
+    const getTaskSpy = jest
+      .spyOn(VikunjaClient.prototype, 'getTask')
+      .mockResolvedValue({
+        id: 50,
+        title: 'Weekly Sync',
+        done: false,
+        priority: 2,
+        project_id: 1,
+        due_date: '2026-12-01T09:00:00.000Z',
+        repeat_after: 604800,
+        repeat_mode: RepeatMode.FromDueDate,
+        labels: [{ id: 7, title: 'Ops', hex_color: '#0A84FF' }],
+        assignees: [{ id: 3, username: 'alice' }],
+        reminders: [{ relative_to: 'due_date', relative_period: -900 }],
+      });
     const updateTaskSpy = jest
       .spyOn(VikunjaClient.prototype, 'updateTask')
       .mockResolvedValue({
@@ -299,6 +316,7 @@ describe('useTaskStore — Standalone Local Mode, Recurring Rollover & Backup/Re
     expect(updated.reminders).toHaveLength(1);
     expect(updated.related_tasks?.subtask?.[0]?.id).toBe(51);
 
+    getTaskSpy.mockRestore();
     updateTaskSpy.mockRestore();
   });
 });

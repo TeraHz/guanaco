@@ -1,10 +1,19 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { VikunjaApiError, VikunjaClient } from '../api/client';
-import { CreateTaskInput, Label, Project, Task, TaskReminder } from '../types/vikunja';
+import {
+  CreateTaskInput,
+  Label,
+  Project,
+  SkippedMigrationTask,
+  Task,
+  TaskReminder,
+} from '../types/vikunja';
 import { normalizeHexColor } from '../utils/colors';
 import { normalizeVikunjaDate } from '../utils/dates';
 import { containsHtmlMarkup, plainTextToVikunjaHtml } from '../utils/htmlDescription';
+import { canWriteProject } from '../utils/permissions';
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree';
+import { t } from '../i18n';
 
 export const MIGRATION_CHECKPOINT_STORAGE_KEY = '@vikunja_migration_checkpoint';
 
@@ -81,6 +90,7 @@ export interface LocalMigrationResult {
   deferredTasks: DeferredMigrationTask[];
   deferredRelations: DeferredMigrationRelation[];
   deferredFollowUps: DeferredMigrationFollowUp[];
+  skippedTasks: SkippedMigrationTask[];
 }
 
 export function isUntouchedEmptyStarterProject(
@@ -112,7 +122,6 @@ function isPermanentClientError(err: unknown): boolean {
     status >= 400 &&
     status < 500 &&
     status !== 401 &&
-    status !== 403 &&
     status !== 408 &&
     status !== 429
   );
@@ -294,6 +303,7 @@ export async function migrateLocalDataToServer(params: {
       deferredTasks: [],
       deferredRelations: [],
       deferredFollowUps: [],
+      skippedTasks: [],
     };
   }
 
@@ -311,8 +321,10 @@ export async function migrateLocalDataToServer(params: {
     (p) => p && p.id > 0 && !p.is_saved_filter
   );
   const serverProjectIds = new Set<number>(serverProjects.map((p) => p.id));
-  const serverOriginallyHadProjects = serverProjects.length > 0;
   const preExistingServerProjects = [...serverProjects];
+  const serverOriginallyHadWritableProjects = preExistingServerProjects.some((p) =>
+    canWriteProject(p)
+  );
   const claimedServerProjectIds = new Set<number>();
 
   let uploadedProjects = 0;
@@ -341,20 +353,25 @@ export async function migrateLocalDataToServer(params: {
       ? checkpoint.projectMap[projKey]
       : undefined;
 
-    if (typeof cpMappedId === 'number' && serverProjectIds.has(cpMappedId)) {
+    const existingCpProj =
+      typeof cpMappedId === 'number' && serverProjectIds.has(cpMappedId)
+        ? serverProjects.find((sp) => sp.id === cpMappedId)
+        : undefined;
+
+    if (typeof cpMappedId === 'number' && existingCpProj && canWriteProject(existingCpProj)) {
       projectIdMap.set(localProj.id, cpMappedId);
       claimedServerProjectIds.add(cpMappedId);
-      const existingCpProj = serverProjects.find((sp) => sp.id === cpMappedId);
       if (
         localProj.is_archived &&
-        existingCpProj &&
         !existingCpProj.is_archived &&
         typeof client.updateProject === 'function'
       ) {
         try {
           const hex = normalizeHexColor(existingCpProj.hex_color, true);
           await client.updateProject(cpMappedId, {
-            title: (existingCpProj.title || localProj.title || '').trim() || 'Tasks',
+            title:
+              (existingCpProj.title || localProj.title || '').trim() ||
+              t('local.starterTasksList'),
             description: existingCpProj.description ?? localProj.description ?? '',
             ...(hex ? { hex_color: hex } : {}),
             ...(existingCpProj.parent_project_id && existingCpProj.parent_project_id > 0
@@ -374,9 +391,10 @@ export async function migrateLocalDataToServer(params: {
         ? projectIdMap.get(localProj.parent_project_id) || 0
         : 0;
 
-    // Match a pre-existing unclaimed server project with the exact same case-insensitive title, parent, and archive state
+    // Match a pre-existing unclaimed WRITABLE server project with the exact same case-insensitive title, parent, and archive state
     const matchingServerProj = preExistingServerProjects.find(
       (sp) =>
+        canWriteProject(sp) &&
         !claimedServerProjectIds.has(sp.id) &&
         (sp.title || '').trim().toLowerCase() === (localProj.title || '').trim().toLowerCase() &&
         (sp.parent_project_id || 0) === resolvedServerParentId &&
@@ -391,16 +409,16 @@ export async function migrateLocalDataToServer(params: {
       continue;
     }
 
-    // Skip creating untouched empty starter lists ONLY if the server originally already had projects
+    // Skip creating untouched empty starter lists ONLY if the server originally already had writable projects
     if (
-      serverOriginallyHadProjects &&
+      serverOriginallyHadWritableProjects &&
       isUntouchedEmptyStarterProject(localProj, localProjects, localTasks)
     ) {
       continue;
     }
 
     const cleanHex = normalizeHexColor(localProj.hex_color, true);
-    const cleanTitle = (localProj.title || '').trim() || 'Tasks';
+    const cleanTitle = (localProj.title || '').trim() || t('local.starterTasksList');
     const createdProj = await client.createProject({
       title: cleanTitle,
       description: localProj.description || '',
@@ -436,12 +454,15 @@ export async function migrateLocalDataToServer(params: {
     await saveCheckpoint(checkpoint);
   }
 
-  // Ensure a fallback server project exists if any local task references an unmapped project_id
+  // Ensure a writable fallback server project exists if any local task references an unmapped project_id
+  const writableServerProjects = serverProjects.filter((p) => canWriteProject(p));
   let fallbackServerProjectId =
-    serverProjects.find((p) => !p.is_archived)?.id || serverProjects[0]?.id || 0;
+    writableServerProjects.find((p) => !p.is_archived)?.id ||
+    writableServerProjects[0]?.id ||
+    0;
   if (localTasks.length > 0 && fallbackServerProjectId <= 0) {
     const fallbackCreated = await client.createProject({
-      title: 'Tasks',
+      title: t('local.starterTasksList'),
       hex_color: '#0A84FF',
     });
     uploadedProjects += 1;
@@ -538,6 +559,7 @@ export async function migrateLocalDataToServer(params: {
 
   const deferredTasks: DeferredMigrationTask[] = [];
   const deferredFollowUps: DeferredMigrationFollowUp[] = [];
+  const skippedTasks: SkippedMigrationTask[] = [];
   const uploadedServerTasks: Task[] = [];
   const cachedListViewIdByProject = new Map<number, number | null>();
   let hitTransientNetworkDrop = false;
@@ -566,8 +588,14 @@ export async function migrateLocalDataToServer(params: {
   };
 
   for (const localTask of sortedLocalTasks) {
+    const mappedProjId = projectIdMap.get(localTask.project_id);
+    const mappedProjObj = mappedProjId
+      ? serverProjects.find((sp) => sp.id === mappedProjId)
+      : undefined;
     const targetServerProjectId =
-      projectIdMap.get(localTask.project_id) || fallbackServerProjectId;
+      mappedProjId && (!mappedProjObj || canWriteProject(mappedProjObj))
+        ? mappedProjId
+        : fallbackServerProjectId;
     const cleanTitle = localTask.title.trim();
     const taskKey = String(localTask.id);
     const rawCpEntry = hasOwn(checkpoint.taskMap, taskKey) ? checkpoint.taskMap[taskKey] : undefined;
@@ -680,17 +708,33 @@ export async function migrateLocalDataToServer(params: {
       createdTask = await client.createTask(targetServerProjectId, taskData);
     } catch (err) {
       if (isPermanentClientError(err)) {
-        // Retry once with minimal safe core fields so unusual metadata never silently loses a user's task!
+        // Retry once with minimal safe core fields (truncating >250 char titles) so unusual metadata never silently loses a user's task!
+        const fallbackTitle = cleanTitle.length > 250 ? cleanTitle.slice(0, 250) : cleanTitle;
         try {
           createdTask = await client.createTask(targetServerProjectId, {
-            title: cleanTitle,
+            title: fallbackTitle,
             ...(cleanDesc ? { description: cleanDesc } : {}),
             done: Boolean(localTask.done),
             priority: taskData.priority,
             project_id: targetServerProjectId,
           });
-        } catch (fallbackErr) {
+        } catch (fallbackErr: any) {
           if (isPermanentClientError(fallbackErr)) {
+            const errStatus =
+              fallbackErr?.status ??
+              fallbackErr?.response?.status ??
+              (err as any)?.status ??
+              (err as any)?.response?.status;
+            const errMsg =
+              (typeof fallbackErr?.message === 'string' && fallbackErr.message) ||
+              (typeof (err as any)?.message === 'string' && (err as any).message) ||
+              'Rejected by server';
+            skippedTasks.push({
+              localTask,
+              serverProjectId: targetServerProjectId,
+              errorMessage: errMsg,
+              ...(typeof errStatus === 'number' ? { status: errStatus } : {}),
+            });
             continue;
           }
           hitTransientNetworkDrop = true;
@@ -960,5 +1004,6 @@ export async function migrateLocalDataToServer(params: {
     deferredTasks,
     deferredRelations,
     deferredFollowUps,
+    skippedTasks,
   };
 }

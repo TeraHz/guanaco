@@ -19,6 +19,7 @@ import { getLabelBadgeStyles, normalizeHexColor } from '../utils/colors';
 import { normalizeVikunjaDate } from '../utils/dates';
 import { getUserSuggestions } from '../utils/userSuggestions';
 import { htmlToPlainText, serializeDescriptionForServer } from '../utils/htmlDescription';
+import { canWriteTask } from '../utils/permissions';
 import { Label, Project, Task, User, RepeatMode, TaskReminder, WeekStartDay } from '../types/vikunja';
 import { TaskScheduleSection } from './TaskScheduleSection';
 import { useTranslation } from '../i18n';
@@ -30,11 +31,14 @@ interface TaskDetailModalProps {
   labelDefinitions?: Label[];
   availableUsers?: User[];
   availableProjects?: Project[];
+  allProjects?: Project[];
   defaultProjectId?: number;
   weekStartDay?: WeekStartDay;
   hideAssignees?: boolean;
+  readOnly?: boolean;
   onClose: () => void;
   onSave: (taskId: number, updates: Partial<Task>) => void;
+  onSaveDirty?: (taskId: number, dirtyUpdates: Partial<Task>) => void;
   onDelete: (taskId: number) => void;
   onCreateTask?: (taskData: Partial<Task>, initialSubtaskTitles?: string[]) => void;
   onMoveTask?: (taskId: number, newProjectId: number) => void;
@@ -77,6 +81,50 @@ export function uiScaleToPercentDone(uiPct: number): number {
   return Math.max(0, Math.min(1, Number((uiPct / 100).toFixed(4))));
 }
 
+interface TaskFormSnapshot {
+  title: string;
+  description: string;
+  done: boolean;
+  priority: number;
+  percentDone: number;
+  color: string;
+  repeatAfter: number;
+  repeatMode: RepeatMode;
+  dueDate: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  remindersJson: string;
+  labelsSig: string;
+  assigneesSig: string;
+  projectId: number;
+}
+
+function serializeLabelsSig(items: Label[]): string {
+  return (items || [])
+    .map((l) => (l?.title || '').trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join('\0');
+}
+
+function serializeAssigneesSig(items: User[]): string {
+  return (items || [])
+    .map((u) => (u?.username || '').trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join('\0');
+}
+
+function serializeRemindersSig(items: TaskReminder[] | null | undefined): string {
+  return JSON.stringify(
+    (items || []).map((r) => ({
+      reminder: normalizeVikunjaDate(r?.reminder ?? null),
+      relative_to: r?.relative_to || '',
+      relative_period: r?.relative_period ?? 0,
+    }))
+  );
+}
+
 export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   visible,
   task,
@@ -84,11 +132,14 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   labelDefinitions = [],
   availableUsers = [],
   availableProjects = [],
+  allProjects,
   defaultProjectId,
   weekStartDay = 1,
   hideAssignees = false,
+  readOnly = false,
   onClose,
   onSave,
+  onSaveDirty,
   onDelete,
   onCreateTask,
   onAddSubtask,
@@ -99,6 +150,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 }) => {
   const theme = useAppTheme();
   const { t } = useTranslation();
+  const isReadOnly = Boolean(readOnly && task);
 
   const priorityLevels = [
     { value: 0, label: t('taskDetail.prioNone'), color: theme.colors.accent },
@@ -129,6 +181,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [showWebDeleteConfirm, setShowWebDeleteConfirm] = useState(false);
+  const [showWebDiscardConfirm, setShowWebDiscardConfirm] = useState(false);
 
   const [newAssigneeText, setNewAssigneeText] = useState('');
   const [newLabelText, setNewLabelText] = useState('');
@@ -137,27 +190,30 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [isDescriptionDirty, setIsDescriptionDirty] = useState(false);
   const rawOriginalDescriptionRef = useRef<string | undefined>(undefined);
   const initialTaskTitleRef = useRef<string>('');
+  const initialSnapshotRef = useRef<TaskFormSnapshot | null>(null);
   const titleInputRef = useRef<TextInput>(null);
   const initializedRef = useRef<number | 'create' | null>(null);
 
   useEffect(() => {
-    if (visible && !task) {
+    if (visible && !task && !isReadOnly) {
       const timer = setTimeout(() => {
         titleInputRef.current?.focus();
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [visible, task]);
+  }, [visible, task, isReadOnly]);
 
   useEffect(() => {
     if (!visible) {
       initializedRef.current = null;
+      initialSnapshotRef.current = null;
+      setShowWebDiscardConfirm(false);
       return;
     }
 
     if (task) {
       // If same optimistic task resolved from negative tempId -> positive server ID while modal is open,
-      // update our tracked ID WITHOUT wiping user's in-progress edits!
+      // update our tracked ID WITHOUT wiping user's in-progress edits or initial snapshot!
       if (
         typeof initializedRef.current === 'number' &&
         initializedRef.current < 0 &&
@@ -170,26 +226,56 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
       if (initializedRef.current !== task.id) {
         initializedRef.current = task.id;
-        initialTaskTitleRef.current = task.title || '';
-        rawOriginalDescriptionRef.current = task.description;
-        setTitle(task.title || '');
-        setDescription(htmlToPlainText(task.description || ''));
-        setIsDescriptionDirty(false);
-        setDone(Boolean(task.done));
-        setPriority(task.priority || 0);
-        setPercentDone(percentDoneToUiScale(task.percent_done));
-
+        const initTitle = task.title || '';
+        const initDesc = htmlToPlainText(task.description || '');
+        const initDone = Boolean(task.done);
+        const initPriority = task.priority || 0;
+        const initPercentDone = percentDoneToUiScale(task.percent_done);
         const effectiveColor = normalizeHexColor(task.hex_color || task.color, true) || '';
-        setColor(effectiveColor);
+        const initRepeatAfter = task.repeat_after || 0;
+        const initRepeatMode = (task.repeat_mode ?? RepeatMode.FromDueDate) as RepeatMode;
+        const initDueDate = normalizeVikunjaDate(task.due_date);
+        const initStartDate = normalizeVikunjaDate(task.start_date);
+        const initEndDate = normalizeVikunjaDate(task.end_date);
+        const initReminders = task.reminders ? [...task.reminders] : [];
+        const initLabels = task.labels ? [...task.labels] : [];
+        const initAssignees = task.assignees ? [...task.assignees] : [];
 
-        setRepeatAfter(task.repeat_after || 0);
-        setRepeatMode((task.repeat_mode ?? RepeatMode.FromDueDate) as RepeatMode);
-        setDueDate(normalizeVikunjaDate(task.due_date));
-        setStartDate(normalizeVikunjaDate(task.start_date));
-        setEndDate(normalizeVikunjaDate(task.end_date));
-        setReminders(task.reminders ? [...task.reminders] : []);
-        setLabels(task.labels ? [...task.labels] : []);
-        setAssignees(task.assignees ? [...task.assignees] : []);
+        initialTaskTitleRef.current = initTitle;
+        rawOriginalDescriptionRef.current = task.description;
+        initialSnapshotRef.current = {
+          title: initTitle,
+          description: initDesc,
+          done: initDone,
+          priority: initPriority,
+          percentDone: initPercentDone,
+          color: effectiveColor,
+          repeatAfter: initRepeatAfter,
+          repeatMode: initRepeatMode,
+          dueDate: initDueDate,
+          startDate: initStartDate,
+          endDate: initEndDate,
+          remindersJson: serializeRemindersSig(initReminders),
+          labelsSig: serializeLabelsSig(initLabels),
+          assigneesSig: serializeAssigneesSig(initAssignees),
+          projectId: task.project_id,
+        };
+
+        setTitle(initTitle);
+        setDescription(initDesc);
+        setIsDescriptionDirty(false);
+        setDone(initDone);
+        setPriority(initPriority);
+        setPercentDone(initPercentDone);
+        setColor(effectiveColor);
+        setRepeatAfter(initRepeatAfter);
+        setRepeatMode(initRepeatMode);
+        setDueDate(initDueDate);
+        setStartDate(initStartDate);
+        setEndDate(initEndDate);
+        setReminders(initReminders);
+        setLabels(initLabels);
+        setAssignees(initAssignees);
         setProjectId(task.project_id);
         setNewAssigneeText('');
         setNewLabelText('');
@@ -198,10 +284,32 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         setShowProjectPicker(false);
         setValidationError(null);
         setShowWebDeleteConfirm(false);
+        setShowWebDiscardConfirm(false);
       }
     } else if (initializedRef.current !== 'create') {
       initializedRef.current = 'create';
       rawOriginalDescriptionRef.current = undefined;
+      const fallbackPid =
+        (defaultProjectId && defaultProjectId > 0 ? defaultProjectId : undefined) ||
+        availableProjects[0]?.id ||
+        0;
+      initialSnapshotRef.current = {
+        title: '',
+        description: '',
+        done: false,
+        priority: 0,
+        percentDone: 0,
+        color: '',
+        repeatAfter: 0,
+        repeatMode: RepeatMode.FromDueDate,
+        dueDate: null,
+        startDate: null,
+        endDate: null,
+        remindersJson: serializeRemindersSig([]),
+        labelsSig: '',
+        assigneesSig: '',
+        projectId: fallbackPid,
+      };
       setTitle('');
       setDescription('');
       setIsDescriptionDirty(false);
@@ -217,10 +325,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       setReminders([]);
       setLabels([]);
       setAssignees([]);
-      const fallbackPid =
-        (defaultProjectId && defaultProjectId > 0 ? defaultProjectId : undefined) ||
-        availableProjects[0]?.id ||
-        0;
       setProjectId(fallbackPid);
       setNewAssigneeText('');
       setNewLabelText('');
@@ -229,8 +333,75 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       setShowProjectPicker(false);
       setValidationError(null);
       setShowWebDeleteConfirm(false);
+      setShowWebDiscardConfirm(false);
     }
   }, [task?.id, visible, defaultProjectId, availableProjects]);
+
+  const hasUnsavedChanges = (): boolean => {
+    if (isReadOnly) return false;
+    const snap = initialSnapshotRef.current;
+    if (!snap) return false;
+    if (title !== snap.title) return true;
+    if (description !== snap.description) return true;
+    if (done !== snap.done) return true;
+    if (priority !== snap.priority) return true;
+    if (percentDone !== snap.percentDone) return true;
+    if ((normalizeHexColor(color, true) || '') !== snap.color) return true;
+    const effRepeatAfter = repeatAfter || 0;
+    const isRepeatActive = effRepeatAfter > 0 || repeatMode === RepeatMode.Monthly;
+    const wasRepeatActive = snap.repeatAfter > 0 || snap.repeatMode === RepeatMode.Monthly;
+    if (effRepeatAfter !== snap.repeatAfter) return true;
+    if (isRepeatActive !== wasRepeatActive) return true;
+    if (isRepeatActive && repeatMode !== snap.repeatMode) return true;
+    if (normalizeVikunjaDate(dueDate) !== snap.dueDate) return true;
+    if (normalizeVikunjaDate(startDate) !== snap.startDate) return true;
+    if (normalizeVikunjaDate(endDate) !== snap.endDate) return true;
+    if (serializeRemindersSig(reminders) !== snap.remindersJson) return true;
+    if (serializeLabelsSig(labels) !== snap.labelsSig) return true;
+    if (serializeAssigneesSig(assignees) !== snap.assigneesSig) return true;
+    if (projectId !== snap.projectId) return true;
+    if (newAssigneeText.trim().length > 0) return true;
+    if (newLabelText.trim().length > 0) return true;
+    if (newSubtaskText.trim().length > 0) return true;
+    if (!task && draftSubtasks.length > 0) return true;
+    return false;
+  };
+
+  const handleRequestClose = () => {
+    if (!hasUnsavedChanges()) {
+      setShowWebDiscardConfirm(false);
+      onClose();
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        if (
+          window.confirm(
+            `${t('taskDetail.discardChangesTitle')}\n\n${t('taskDetail.discardChangesMessage')}`
+          )
+        ) {
+          onClose();
+        }
+      } else {
+        setShowWebDiscardConfirm(true);
+      }
+      return;
+    }
+
+    Alert.alert(
+      t('taskDetail.discardChangesTitle'),
+      t('taskDetail.discardChangesMessage'),
+      [
+        { text: t('taskDetail.keepEditing'), style: 'cancel' },
+        {
+          text: t('taskDetail.discardBtn'),
+          style: 'destructive',
+          onPress: onClose,
+        },
+      ]
+    );
+  };
 
   const resolveAssigneeUser = (userOrText: User | string): User | null => {
     if (
@@ -270,6 +441,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleSave = () => {
+    if (isReadOnly) return;
     if (!title.trim()) {
       setValidationError(t('taskDetail.emptyTitleError'));
       return;
@@ -374,6 +546,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       isDescriptionDirty
     );
 
+    const normDue = normalizeVikunjaDate(dueDate);
     const updatePayload: Partial<Task> = {
       title: title.trim(),
       description: serializedDescription,
@@ -387,7 +560,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       hex_color: normalizedChosenColor,
       repeat_after: repeatAfter,
       repeat_mode: repeatMode,
-      due_date: normalizeVikunjaDate(dueDate),
+      due_date: normDue,
       start_date: normStart,
       end_date: normEnd,
       reminders,
@@ -396,11 +569,75 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       assignees: finalAssignees,
     };
 
+    const snap = initialSnapshotRef.current;
+    if (onSaveDirty && snap) {
+      const dirtyUpdates: Partial<Task> = {};
+      if (title !== snap.title) {
+        dirtyUpdates.title = title.trim();
+      }
+      if (isDescriptionDirty && description !== snap.description) {
+        dirtyUpdates.description = serializedDescription;
+      }
+      if (done !== snap.done) {
+        dirtyUpdates.done = done;
+        dirtyUpdates.done_at = done ? new Date().toISOString() : null;
+      }
+      if (priority !== snap.priority) {
+        dirtyUpdates.priority = priority;
+      }
+      if (percentDone !== snap.percentDone) {
+        dirtyUpdates.percent_done = uiScaleToPercentDone(percentDone);
+      }
+      if (normalizedChosenColor !== snap.color) {
+        dirtyUpdates.color = normalizedChosenColor;
+        dirtyUpdates.hex_color = normalizedChosenColor;
+      }
+      const effectiveRepeatAfter = repeatAfter || 0;
+      const isRepeatActive = effectiveRepeatAfter > 0 || repeatMode === RepeatMode.Monthly;
+      const wasRepeatActive = snap.repeatAfter > 0 || snap.repeatMode === RepeatMode.Monthly;
+      if (
+        effectiveRepeatAfter !== snap.repeatAfter ||
+        isRepeatActive !== wasRepeatActive ||
+        (isRepeatActive && repeatMode !== snap.repeatMode)
+      ) {
+        dirtyUpdates.repeat_after = repeatAfter;
+        dirtyUpdates.repeat_mode = repeatMode;
+      }
+      if (normDue !== snap.dueDate) {
+        dirtyUpdates.due_date = normDue;
+      }
+      if (normStart !== snap.startDate) {
+        dirtyUpdates.start_date = normStart;
+      }
+      if (normEnd !== snap.endDate) {
+        dirtyUpdates.end_date = normEnd;
+      }
+      if (serializeRemindersSig(reminders) !== snap.remindersJson) {
+        dirtyUpdates.reminders = reminders;
+      }
+      if (resolvedPid !== snap.projectId) {
+        dirtyUpdates.project_id = resolvedPid;
+      }
+      if (serializeLabelsSig(finalLabels) !== snap.labelsSig) {
+        dirtyUpdates.labels = finalLabels;
+      }
+      if (serializeAssigneesSig(finalAssignees) !== snap.assigneesSig) {
+        dirtyUpdates.assignees = finalAssignees;
+      }
+
+      if (Object.keys(dirtyUpdates).length > 0) {
+        onSaveDirty(task.id, dirtyUpdates);
+      }
+      onClose();
+      return;
+    }
+
     onSave(task.id, updatePayload);
     onClose();
   };
 
   const handleAddSubtaskSubmit = () => {
+    if (isReadOnly) return;
     const cleaned = newSubtaskText.trim();
     if (!cleaned) return;
     safeHaptics.selection();
@@ -413,14 +650,14 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleDuplicate = () => {
-    if (!task || !onDuplicateTask) return;
+    if (isReadOnly || !task || !onDuplicateTask) return;
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
     onDuplicateTask(task.id);
     onClose();
   };
 
   const performDeleteTask = () => {
-    if (!task) return;
+    if (isReadOnly || !task) return;
     setShowWebDeleteConfirm(false);
     safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
     onDelete(task.id);
@@ -428,7 +665,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleDelete = () => {
-    if (!task) return;
+    if (isReadOnly || !task) return;
     const message = t('taskDetail.deleteConfirmMessage', { title: task.title });
 
     if (Platform.OS === 'web') {
@@ -453,11 +690,13 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleRemoveAssignee = (username: string) => {
+    if (isReadOnly) return;
     safeHaptics.selection();
     setAssignees((prev) => prev.filter((u) => u.username !== username));
   };
 
   const handleAddAssignee = (userOrText?: User | string) => {
+    if (isReadOnly) return;
     const resolved = resolveAssigneeUser(userOrText !== undefined ? userOrText : newAssigneeText);
     if (!resolved) return;
 
@@ -472,11 +711,13 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleRemoveLabel = (labelTitle: string) => {
+    if (isReadOnly) return;
     safeHaptics.selection();
     setLabels((prev) => prev.filter((l) => l.title !== labelTitle));
   };
 
   const handleAddLabel = (labelTitle?: string) => {
+    if (isReadOnly) return;
     const resolved = resolveLabelObj(labelTitle !== undefined ? labelTitle : newLabelText);
     if (!resolved) return;
 
@@ -513,7 +754,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       visible={visible}
       animationType="slide"
       presentationStyle="pageSheet"
-      onRequestClose={onClose}
+      onRequestClose={handleRequestClose}
     >
       <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.background }]}>
         <SafeAreaView
@@ -541,29 +782,40 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             >
               <TouchableOpacity
                 testID="task-detail-close-btn"
-                onPress={onClose}
+                onPress={handleRequestClose}
                 style={styles.headerBtn}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel={t('common.cancel')}
+                accessibilityLabel={isReadOnly ? t('common.close') : t('common.cancel')}
               >
                 <Text style={[styles.cancelText, { color: theme.colors.textSecondary }]}>
-                  {t('common.cancel')}
+                  {isReadOnly ? t('common.close') : t('common.cancel')}
                 </Text>
               </TouchableOpacity>
               <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
                 {task ? t('taskDetail.titleEdit') : t('taskDetail.titleNew')}
               </Text>
-              <TouchableOpacity
-                testID="task-detail-save-btn"
-                onPress={handleSave}
-                style={[styles.headerBtn, styles.saveBtn, { backgroundColor: theme.colors.accent }]}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityRole="button"
-                accessibilityLabel={t('taskDetail.saveA11y')}
-              >
-                <Text style={styles.saveBtnText}>{t('common.save')}</Text>
-              </TouchableOpacity>
+              {isReadOnly ? (
+                <View
+                  testID="task-detail-readonly-badge"
+                  style={[styles.readOnlyBadge, secondarySurface]}
+                >
+                  <Text style={[styles.readOnlyBadgeText, { color: theme.colors.textSecondary }]}>
+                    {t('permissions.readOnlyBadge')}
+                  </Text>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  testID="task-detail-save-btn"
+                  onPress={handleSave}
+                  style={[styles.headerBtn, styles.saveBtn, { backgroundColor: theme.colors.accent }]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('taskDetail.saveA11y')}
+                >
+                  <Text style={styles.saveBtnText}>{t('common.save')}</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {validationError ? (
@@ -583,6 +835,46 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 <Text style={[styles.errorText, { color: theme.colors.danger }]}>
                   {validationError}
                 </Text>
+              </View>
+            ) : null}
+
+            {showWebDiscardConfirm ? (
+              <View
+                testID="task-web-discard-confirm"
+                style={[
+                  styles.confirmBanner,
+                  {
+                    backgroundColor: theme.colors.cardBackground,
+                    borderColor: theme.colors.danger,
+                  },
+                ]}
+              >
+                <Text style={[styles.confirmBannerText, { color: theme.colors.text }]}>
+                  {t('taskDetail.discardChangesMessage')}
+                </Text>
+                <View style={styles.confirmBannerActions}>
+                  <TouchableOpacity
+                    testID="task-discard-cancel-btn"
+                    style={[styles.confirmCancelBtn, secondarySurface]}
+                    onPress={() => setShowWebDiscardConfirm(false)}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.confirmCancelBtnText, { color: theme.colors.text }]}>
+                      {t('taskDetail.keepEditing')}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="task-discard-confirm-btn"
+                    style={[styles.confirmDeleteBtn, { backgroundColor: theme.colors.danger }]}
+                    onPress={() => {
+                      setShowWebDiscardConfirm(false);
+                      onClose();
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.confirmDeleteBtnText}>{t('taskDetail.discardBtn')}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : null}
 
@@ -651,13 +943,18 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                           ? 'rgba(255, 255, 255, 0.03)'
                           : 'transparent',
                       },
+                      isReadOnly && styles.controlReadOnly,
                     ]}
+                    disabled={isReadOnly ? true : undefined}
                     onPress={() => {
+                      if (isReadOnly) return;
                       safeHaptics.selection();
                       setDone(!done);
                     }}
                     accessibilityRole="checkbox"
-                    accessibilityState={{ checked: done }}
+                    accessibilityState={
+                      isReadOnly ? { checked: done, disabled: true } : { checked: done }
+                    }
                     accessibilityLabel={
                       done ? t('taskDetail.markIncompleteA11y') : t('taskDetail.markCompleteA11y')
                     }
@@ -674,19 +971,21 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     ]}
                     value={title}
                     onChangeText={(txt) => {
+                      if (isReadOnly) return;
                       setTitle(txt);
                       if (validationError) setValidationError(null);
                     }}
+                    editable={!isReadOnly}
                     placeholder={t('taskDetail.titlePlaceholder')}
                     placeholderTextColor={theme.colors.placeholder}
                     multiline
-                    autoFocus={task === null}
+                    autoFocus={!isReadOnly && task === null}
                   />
                 </View>
               </View>
 
               {/* List Picker */}
-              {availableProjects && availableProjects.length > 0 && (
+              {!isReadOnly && availableProjects && availableProjects.length > 0 && (
                 <View
                   style={[
                     styles.sectionCard,
@@ -812,9 +1111,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   ]}
                   value={description}
                   onChangeText={(txt) => {
+                    if (isReadOnly) return;
                     setDescription(txt);
                     setIsDescriptionDirty(true);
                   }}
+                  editable={!isReadOnly}
                   placeholder={t('taskDetail.notesPlaceholder')}
                   placeholderTextColor={theme.colors.placeholder}
                   multiline
@@ -858,82 +1159,93 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     </View>
 
                     {task
-                      ? liveSubtasks.map((sub) => (
-                          <View
-                            key={sub.id}
-                            style={[
-                              styles.subtaskRow,
-                              { borderBottomColor: theme.colors.cardBorder },
-                            ]}
-                          >
-                            <TouchableOpacity
-                              testID={`subtask-checkbox-${sub.id}`}
+                      ? liveSubtasks.map((sub) => {
+                          const isSubtaskReadOnly =
+                            isReadOnly || Boolean(allProjects && !canWriteTask(sub, allProjects));
+                          return (
+                            <View
+                              key={sub.id}
                               style={[
-                                styles.subtaskCheckbox,
-                                {
-                                  borderColor: sub.done
-                                    ? theme.colors.success
-                                    : theme.colors.checkboxBorder,
-                                  backgroundColor: sub.done
-                                    ? theme.colors.success
-                                    : 'transparent',
-                                },
+                                styles.subtaskRow,
+                                { borderBottomColor: theme.colors.cardBorder },
                               ]}
-                              onPress={() => {
-                                safeHaptics.selection();
-                                onToggleSubtask?.(sub.id);
-                              }}
-                              accessibilityRole="checkbox"
-                              accessibilityState={{ checked: Boolean(sub.done) }}
                             >
-                              {sub.done && <Text style={styles.subtaskCheckmark}>✓</Text>}
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              testID={`subtask-title-btn-${sub.id}`}
-                              style={styles.subtaskTitleBtn}
-                              disabled={!onSelectSubtask}
-                              onPress={() => onSelectSubtask?.(sub)}
-                            >
-                              <Text
-                                style={[
-                                  styles.subtaskTitleText,
-                                  {
-                                    color: sub.done
-                                      ? theme.colors.textSecondary
-                                      : theme.colors.text,
-                                  },
-                                  sub.done && styles.titleInputDone,
-                                ]}
-                              >
-                                {sub.title}
-                              </Text>
-                            </TouchableOpacity>
-                            {onDeleteSubtask && (
                               <TouchableOpacity
-                                testID={`delete-subtask-${sub.id}`}
+                                testID={`subtask-checkbox-${sub.id}`}
+                                style={[
+                                  styles.subtaskCheckbox,
+                                  {
+                                    borderColor: sub.done
+                                      ? theme.colors.success
+                                      : theme.colors.checkboxBorder,
+                                    backgroundColor: sub.done
+                                      ? theme.colors.success
+                                      : 'transparent',
+                                  },
+                                  isSubtaskReadOnly && styles.controlReadOnly,
+                                ]}
+                                disabled={isSubtaskReadOnly ? true : undefined}
                                 onPress={() => {
+                                  if (isSubtaskReadOnly) return;
                                   safeHaptics.selection();
-                                  onDeleteSubtask(task.id, sub.id);
+                                  onToggleSubtask?.(sub.id);
                                 }}
-                                style={styles.removeBadgeBtn}
-                                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                                accessibilityRole="button"
-                                accessibilityLabel={t('taskDetail.deleteSubtaskA11y', {
-                                  title: sub.title,
-                                })}
+                                accessibilityRole="checkbox"
+                                accessibilityState={
+                                  isSubtaskReadOnly
+                                    ? { checked: Boolean(sub.done), disabled: true }
+                                    : { checked: Boolean(sub.done) }
+                                }
+                              >
+                                {sub.done && <Text style={styles.subtaskCheckmark}>✓</Text>}
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                testID={`subtask-title-btn-${sub.id}`}
+                                style={styles.subtaskTitleBtn}
+                                disabled={!onSelectSubtask}
+                                onPress={() => onSelectSubtask?.(sub)}
                               >
                                 <Text
                                   style={[
-                                    styles.removeBadgeIcon,
-                                    { color: theme.colors.textSecondary },
+                                    styles.subtaskTitleText,
+                                    {
+                                      color: sub.done
+                                        ? theme.colors.textSecondary
+                                        : theme.colors.text,
+                                    },
+                                    sub.done && styles.titleInputDone,
                                   ]}
                                 >
-                                  ✕
+                                  {sub.title}
                                 </Text>
                               </TouchableOpacity>
-                            )}
-                          </View>
-                        ))
+                              {!isSubtaskReadOnly && onDeleteSubtask && (
+                                <TouchableOpacity
+                                  testID={`delete-subtask-${sub.id}`}
+                                  onPress={() => {
+                                    safeHaptics.selection();
+                                    onDeleteSubtask(task.id, sub.id);
+                                  }}
+                                  style={styles.removeBadgeBtn}
+                                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={t('taskDetail.deleteSubtaskA11y', {
+                                    title: sub.title,
+                                  })}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.removeBadgeIcon,
+                                      { color: theme.colors.textSecondary },
+                                    ]}
+                                  >
+                                    ✕
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          );
+                        })
                       : draftSubtasks.map((subTitle, idx) => (
                           <View
                             key={`${subTitle}-${idx}`}
@@ -963,34 +1275,36 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                           </View>
                         ))}
 
-                    <View style={styles.addInputRow}>
-                      <TextInput
-                        testID="task-detail-subtask-input"
-                        style={[
-                          styles.addInput,
-                          {
-                            color: theme.colors.text,
-                            backgroundColor: theme.colors.inputBg,
-                            borderColor: theme.colors.borderStrong,
-                          },
-                        ]}
-                        placeholder={t('taskDetail.addSubtaskPlaceholder')}
-                        placeholderTextColor={theme.colors.placeholder}
-                        value={newSubtaskText}
-                        onChangeText={setNewSubtaskText}
-                        onSubmitEditing={handleAddSubtaskSubmit}
-                        blurOnSubmit={false}
-                        returnKeyType="done"
-                      />
-                      <TouchableOpacity
-                        testID="add-subtask-btn"
-                        style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
-                        onPress={handleAddSubtaskSubmit}
-                        accessibilityRole="button"
-                      >
-                        <Text style={styles.addBtnText}>{t('common.add')}</Text>
-                      </TouchableOpacity>
-                    </View>
+                    {!isReadOnly && (
+                      <View style={styles.addInputRow}>
+                        <TextInput
+                          testID="task-detail-subtask-input"
+                          style={[
+                            styles.addInput,
+                            {
+                              color: theme.colors.text,
+                              backgroundColor: theme.colors.inputBg,
+                              borderColor: theme.colors.borderStrong,
+                            },
+                          ]}
+                          placeholder={t('taskDetail.addSubtaskPlaceholder')}
+                          placeholderTextColor={theme.colors.placeholder}
+                          value={newSubtaskText}
+                          onChangeText={setNewSubtaskText}
+                          onSubmitEditing={handleAddSubtaskSubmit}
+                          blurOnSubmit={false}
+                          returnKeyType="done"
+                        />
+                        <TouchableOpacity
+                          testID="add-subtask-btn"
+                          style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
+                          onPress={handleAddSubtaskSubmit}
+                          accessibilityRole="button"
+                        >
+                          <Text style={styles.addBtnText}>{t('common.add')}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
                 );
               })()}
@@ -1023,8 +1337,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                                 borderColor: item.color,
                               }
                             : secondarySurface,
+                          isReadOnly && !isSelected && styles.controlReadOnly,
                         ]}
+                        disabled={isReadOnly ? true : undefined}
                         onPress={() => {
+                          if (isReadOnly) return;
                           safeHaptics.selection();
                           setPriority(item.value);
                         }}
@@ -1088,8 +1405,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                                 borderColor: theme.colors.accent,
                               }
                             : secondarySurface,
+                          isReadOnly && !isSelected && styles.controlReadOnly,
                         ]}
+                        disabled={isReadOnly ? true : undefined}
                         onPress={() => {
+                          if (isReadOnly) return;
                           safeHaptics.selection();
                           setPercentDone(pct);
                         }}
@@ -1113,7 +1433,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               </View>
 
               {/* Assignees */}
-              {(!hideAssignees || assignees.length > 0) && (
+              {((!hideAssignees && !isReadOnly) || assignees.length > 0) && (
               <View
                 style={[
                   styles.sectionCard,
@@ -1135,58 +1455,62 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       <Text style={[styles.itemBadgeText, { color: theme.colors.text }]}>
                         @{user.username}
                       </Text>
-                      <TouchableOpacity
-                        testID={`remove-assignee-${user.username}`}
-                        onPress={() => handleRemoveAssignee(user.username)}
-                        style={styles.removeBadgeBtn}
-                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('taskDetail.removeAssigneeA11y', {
-                          username: user.username,
-                        })}
-                      >
-                        <Text
-                          style={[styles.removeBadgeIcon, { color: theme.colors.textSecondary }]}
+                      {!isReadOnly && (
+                        <TouchableOpacity
+                          testID={`remove-assignee-${user.username}`}
+                          onPress={() => handleRemoveAssignee(user.username)}
+                          style={styles.removeBadgeBtn}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={t('taskDetail.removeAssigneeA11y', {
+                            username: user.username,
+                          })}
                         >
-                          ✕
-                        </Text>
-                      </TouchableOpacity>
+                          <Text
+                            style={[styles.removeBadgeIcon, { color: theme.colors.textSecondary }]}
+                          >
+                            ✕
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   ))}
                 </View>
 
                 {/* Add Assignee Input */}
-                <View style={styles.addInputRow}>
-                  <TextInput
-                    testID="task-detail-assignee-input"
-                    style={[
-                      styles.addInput,
-                      {
-                        color: theme.colors.text,
-                        backgroundColor: theme.colors.inputBg,
-                        borderColor: theme.colors.borderStrong,
-                      },
-                    ]}
-                    placeholder={t('taskDetail.addAssigneePlaceholder')}
-                    placeholderTextColor={theme.colors.placeholder}
-                    value={newAssigneeText}
-                    onChangeText={setNewAssigneeText}
-                    onSubmitEditing={() => handleAddAssignee()}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                  <TouchableOpacity
-                    testID="add-assignee-btn"
-                    style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
-                    onPress={() => handleAddAssignee()}
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.addBtnText}>{t('common.add')}</Text>
-                  </TouchableOpacity>
-                </View>
+                {!isReadOnly && (
+                  <View style={styles.addInputRow}>
+                    <TextInput
+                      testID="task-detail-assignee-input"
+                      style={[
+                        styles.addInput,
+                        {
+                          color: theme.colors.text,
+                          backgroundColor: theme.colors.inputBg,
+                          borderColor: theme.colors.borderStrong,
+                        },
+                      ]}
+                      placeholder={t('taskDetail.addAssigneePlaceholder')}
+                      placeholderTextColor={theme.colors.placeholder}
+                      value={newAssigneeText}
+                      onChangeText={setNewAssigneeText}
+                      onSubmitEditing={() => handleAddAssignee()}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <TouchableOpacity
+                      testID="add-assignee-btn"
+                      style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
+                      onPress={() => handleAddAssignee()}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.addBtnText}>{t('common.add')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 {/* Assignee Suggestions */}
-                {assigneeSuggestions.length > 0 && (
+                {!isReadOnly && assigneeSuggestions.length > 0 && (
                   <View style={styles.suggestionsList}>
                     {assigneeSuggestions.slice(0, 3).map((user) => (
                       <TouchableOpacity
@@ -1240,56 +1564,60 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         <Text style={[styles.itemBadgeText, { color: badgeStyle.textColor }]}>
                           #{lbl.title}
                         </Text>
-                        <TouchableOpacity
-                          testID={`remove-label-${lbl.title}`}
-                          onPress={() => handleRemoveLabel(lbl.title)}
-                          style={styles.removeBadgeBtn}
-                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                          accessibilityRole="button"
-                          accessibilityLabel={t('taskDetail.removeLabelA11y', {
-                            label: lbl.title,
-                          })}
-                        >
-                          <Text style={[styles.removeBadgeIcon, { color: badgeStyle.textColor }]}>
-                            ✕
-                          </Text>
-                        </TouchableOpacity>
+                        {!isReadOnly && (
+                          <TouchableOpacity
+                            testID={`remove-label-${lbl.title}`}
+                            onPress={() => handleRemoveLabel(lbl.title)}
+                            style={styles.removeBadgeBtn}
+                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('taskDetail.removeLabelA11y', {
+                              label: lbl.title,
+                            })}
+                          >
+                            <Text style={[styles.removeBadgeIcon, { color: badgeStyle.textColor }]}>
+                              ✕
+                            </Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
                     );
                   })}
                 </View>
 
                 {/* Add Label Input */}
-                <View style={styles.addInputRow}>
-                  <TextInput
-                    testID="task-detail-label-input"
-                    style={[
-                      styles.addInput,
-                      {
-                        color: theme.colors.text,
-                        backgroundColor: theme.colors.inputBg,
-                        borderColor: theme.colors.borderStrong,
-                      },
-                    ]}
-                    placeholder={t('taskDetail.addLabelPlaceholder')}
-                    placeholderTextColor={theme.colors.placeholder}
-                    value={newLabelText}
-                    onChangeText={setNewLabelText}
-                    onSubmitEditing={() => handleAddLabel()}
-                    autoCapitalize="none"
-                  />
-                  <TouchableOpacity
-                    testID="add-label-btn"
-                    style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
-                    onPress={() => handleAddLabel()}
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.addBtnText}>{t('common.add')}</Text>
-                  </TouchableOpacity>
-                </View>
+                {!isReadOnly && (
+                  <View style={styles.addInputRow}>
+                    <TextInput
+                      testID="task-detail-label-input"
+                      style={[
+                        styles.addInput,
+                        {
+                          color: theme.colors.text,
+                          backgroundColor: theme.colors.inputBg,
+                          borderColor: theme.colors.borderStrong,
+                        },
+                      ]}
+                      placeholder={t('taskDetail.addLabelPlaceholder')}
+                      placeholderTextColor={theme.colors.placeholder}
+                      value={newLabelText}
+                      onChangeText={setNewLabelText}
+                      onSubmitEditing={() => handleAddLabel()}
+                      autoCapitalize="none"
+                    />
+                    <TouchableOpacity
+                      testID="add-label-btn"
+                      style={[styles.addBtn, { backgroundColor: theme.colors.accent }]}
+                      onPress={() => handleAddLabel()}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.addBtnText}>{t('common.add')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 {/* Available Labels shortcuts */}
-                {availableLabels.length > 0 && (
+                {!isReadOnly && availableLabels.length > 0 && (
                   <View style={styles.availableLabelsRow}>
                     {availableLabels
                       .filter(
@@ -1340,8 +1668,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         styles.colorCircleSelected,
                         { borderColor: selectedRingColor },
                       ],
+                      isReadOnly && Boolean(color) && styles.controlReadOnly,
                     ]}
+                    disabled={isReadOnly ? true : undefined}
                     onPress={() => {
+                      if (isReadOnly) return;
                       safeHaptics.selection();
                       setColor('');
                     }}
@@ -1370,8 +1701,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                             styles.colorCircleSelected,
                             { borderColor: selectedRingColor },
                           ],
+                          isReadOnly && !isSelected && styles.controlReadOnly,
                         ]}
+                        disabled={isReadOnly ? true : undefined}
                         onPress={() => {
+                          if (isReadOnly) return;
                           safeHaptics.selection();
                           setColor(preset);
                         }}
@@ -1391,7 +1725,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     backgroundColor: theme.colors.cardBackground,
                     borderColor: theme.colors.cardBorder,
                   },
+                  isReadOnly && styles.scheduleReadOnly,
                 ]}
+                pointerEvents={isReadOnly ? 'none' : 'auto'}
               >
                 <TaskScheduleSection
                   dueDate={dueDate}
@@ -1401,19 +1737,23 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   repeatMode={repeatMode}
                   reminders={reminders}
                   weekStartDay={weekStartDay}
-                  onChangeDueDate={setDueDate}
-                  onChangeStartDate={setStartDate}
-                  onChangeEndDate={setEndDate}
-                  onChangeRepeat={(after, mode) => {
-                    setRepeatAfter(after);
-                    setRepeatMode(mode);
-                  }}
-                  onChangeReminders={setReminders}
+                  onChangeDueDate={isReadOnly ? () => {} : setDueDate}
+                  onChangeStartDate={isReadOnly ? () => {} : setStartDate}
+                  onChangeEndDate={isReadOnly ? () => {} : setEndDate}
+                  onChangeRepeat={
+                    isReadOnly
+                      ? () => {}
+                      : (after, mode) => {
+                          setRepeatAfter(after);
+                          setRepeatMode(mode);
+                        }
+                  }
+                  onChangeReminders={isReadOnly ? () => {} : setReminders}
                 />
               </View>
 
-              {/* Duplicate Task Button (Only for existing tasks) */}
-              {task && onDuplicateTask && (
+              {/* Duplicate Task Button (Only for existing writable tasks) */}
+              {task && !isReadOnly && onDuplicateTask && (
                 <TouchableOpacity
                   testID="task-detail-duplicate-btn"
                   style={[styles.duplicateBtn, secondarySurface]}
@@ -1427,8 +1767,8 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 </TouchableOpacity>
               )}
 
-              {/* Delete Button (Only for existing tasks) */}
-              {task && (
+              {/* Delete Button (Only for existing writable tasks) */}
+              {task && !isReadOnly && (
                 <TouchableOpacity
                   testID="task-detail-delete-btn"
                   style={[
@@ -1811,5 +2151,21 @@ const styles = StyleSheet.create({
   projectCheckmark: {
     fontSize: 14,
     fontWeight: '700',
+  },
+  readOnlyBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  readOnlyBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  controlReadOnly: {
+    opacity: 0.45,
+  },
+  scheduleReadOnly: {
+    opacity: 0.65,
   },
 });

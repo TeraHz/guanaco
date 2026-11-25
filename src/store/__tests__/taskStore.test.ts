@@ -223,7 +223,7 @@ describe('useTaskStore', () => {
             json: async () => ({ id: 777, title: 'Offline Groceries', labels: [], assignees: [] }),
           } as Response);
         }
-        if (url.endsWith('/labels') && opts?.method === 'GET') {
+        if (/\/labels(\?|$)/.test(url) && opts?.method === 'GET') {
           return Promise.resolve({
             ok: true,
             status: 200,
@@ -398,8 +398,10 @@ describe('useTaskStore', () => {
       reorderTasks(0, [201, 101]);
 
       const updatedTasks = useTaskStore.getState().tasks;
-      expect(updatedTasks.find((t) => t.id === 201)?.position).toBe(1000);
-      expect(updatedTasks.find((t) => t.id === 101)?.position).toBe(2000);
+      const pos201 = updatedTasks.find((t) => t.id === 201)?.position ?? 0;
+      const pos101 = updatedTasks.find((t) => t.id === 101)?.position ?? 0;
+      expect(pos201).toBeGreaterThan(0);
+      expect(pos201).toBeLessThan(pos101);
     });
 
     it('fetchTasks should NOT overwrite local task positions when server returns Go default position: 0', async () => {
@@ -511,7 +513,53 @@ describe('useTaskStore', () => {
       await new Promise((r) => setTimeout(r, 20));
 
       expect(mockClient.getProjectViews).toHaveBeenCalledWith(1);
-      expect(mockEnqueue).toHaveBeenCalledTimes(2);
+      expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    });
+
+    it('queues only 1 REORDER_TASK using LIS float midpoint when dragging 1 item in a 20-item list', async () => {
+      const mockEnqueue = jest.fn();
+      const mockSyncQueue = {
+        enqueue: mockEnqueue,
+        processQueue: jest.fn(),
+      };
+      const mockClient = {
+        getProjectViews: jest.fn().mockResolvedValue([
+          { id: 7, title: 'List', project_id: 1, view_kind: 'list' },
+        ]),
+      };
+
+      const twentyTasks = Array.from({ length: 20 }, (_, i) => ({
+        id: i + 1,
+        title: `Item ${i + 1}`,
+        done: false,
+        priority: 0,
+        project_id: 1,
+        position: (i + 1) * 1000,
+      }));
+
+      useTaskStore.setState({
+        client: mockClient as any,
+        syncQueue: mockSyncQueue as any,
+        projects: [{ id: 1, title: 'Inbox', views: [{ id: 7, title: 'List', project_id: 1, view_kind: 'list' }] }],
+        tasks: twentyTasks,
+      });
+
+      // Drag item 20 between item 2 (2000) and item 3 (3000)
+      const newOrder = [1, 2, 20, ...Array.from({ length: 17 }, (_, i) => i + 3)];
+      useTaskStore.getState().reorderTasks(1, newOrder, true);
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(mockEnqueue).toHaveBeenCalledTimes(1);
+      expect(mockEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'REORDER_TASK',
+          payload: expect.objectContaining({
+            taskId: 20,
+            position: 2500,
+            projectViewId: 7,
+          }),
+        })
+      );
     });
   });
 
@@ -1426,7 +1474,7 @@ describe('useTaskStore', () => {
             }),
           } as Response;
         }
-        if (url.endsWith('/projects')) {
+        if (/\/projects(\?|$)/.test(url)) {
           return {
             ok: true,
             status: 200,
@@ -1662,6 +1710,83 @@ describe('useTaskStore', () => {
         expect(useTaskStore.getState().projects[0].is_favorite).toBe(true);
       });
 
+      it('allows favoriting a read-only shared list with a minimal is_favorite-only payload', async () => {
+        const mockClient = {
+          updateProject: jest.fn().mockResolvedValue({
+            id: 9,
+            title: 'Shared ReadOnly',
+            max_permission: 0,
+            is_favorite: true,
+          }),
+        };
+        useTaskStore.setState({
+          client: mockClient as any,
+          isLocalMode: false,
+          projects: [
+            { id: 9, title: 'Shared ReadOnly', max_permission: 0, is_favorite: false } as any,
+          ],
+        });
+
+        await useTaskStore.getState().toggleProjectFavorite(9);
+        expect(mockClient.updateProject).toHaveBeenCalledWith(9, { is_favorite: true });
+        expect(useTaskStore.getState().projects[0].is_favorite).toBe(true);
+      });
+
+      it('keeps local task alive on MOVE_TASK 404 when destination project is missing and getTask() still finds the task', async () => {
+        const prevFetch = global.fetch;
+        global.fetch = jest.fn().mockRejectedValue(new Error('Offline')) as any;
+        try {
+          await useTaskStore.getState().initialize('https://vikunja.example.com', 'tk_test');
+          const activeClient = useTaskStore.getState().client!;
+          const getTaskSpy = jest.spyOn(activeClient, 'getTask').mockResolvedValue({
+            id: 501,
+            title: 'Keep Me Alive',
+            done: false,
+            priority: 1,
+            project_id: 1,
+          } as any);
+          jest.spyOn(activeClient, 'updateTask').mockRejectedValue(
+            Object.assign(new Error('Project does not exist'), {
+              status: 404,
+              data: { code: 3001, message: 'Project does not exist' },
+            })
+          );
+          useTaskStore.setState({
+            projects: [
+              { id: 1, title: 'Inbox', max_permission: 2 } as any,
+              { id: 2, title: 'Deleted Target', max_permission: 2 } as any,
+            ],
+            tasks: [
+              {
+                id: 501,
+                title: 'Keep Me Alive',
+                done: false,
+                priority: 1,
+                project_id: 2,
+              } as any,
+            ],
+          });
+
+          const sq = useTaskStore.getState().syncQueue!;
+          sq.enqueue({
+            id: 'move-404-target',
+            type: 'MOVE_TASK',
+            payload: { taskId: 501, targetProjectId: 2, patch: { project_id: 2 } },
+            timestamp: Date.now(),
+          });
+          await sq.processQueue();
+          await new Promise((r) => setTimeout(r, 0));
+
+          expect(getTaskSpy).toHaveBeenCalledWith(501);
+          const kept = useTaskStore.getState().tasks.find((t) => t.id === 501);
+          expect(kept).toBeTruthy();
+          expect(kept?.project_id).toBe(1);
+          expect(useTaskStore.getState().syncFailures.length).toBeGreaterThanOrEqual(1);
+        } finally {
+          global.fetch = prevFetch;
+        }
+      });
+
       it('duplicateProject() should call client and append duplicate to projects', async () => {
         const mockClient = {
           duplicateProject: jest.fn().mockResolvedValue({ id: 50, title: 'Work Copy' }),
@@ -1823,6 +1948,268 @@ describe('useTaskStore', () => {
         expect(useTaskStore.getState().themeMode).toBe('oled');
         expect(useTaskStore.getState().weekStartDay).toBe(0);
         expect(useTaskStore.getState().appBadgeMode).toBe('due_today');
+      });
+
+      it('enforces read-only & admin permission guards in Server Mode, records & recovers syncFailures, diffs dirty task updates, and keeps local state intact on offline resetAndSyncFromServer', async () => {
+        const mockEnqueue = jest.fn();
+        useTaskStore.setState({
+          isLocalMode: false,
+          projects: [
+            { id: 1, title: 'Writable List', max_permission: 1 },
+            { id: 2, title: 'Read-Only Shared', max_permission: 0 },
+          ],
+          tasks: [
+            { id: 10, title: 'Writable Task', done: false, priority: 1, project_id: 1, labels: [{ id: 1, title: 'Tag' }] },
+            { id: 20, title: 'Read-Only Task', done: false, priority: 1, project_id: 2 },
+          ],
+          syncQueue: { enqueue: mockEnqueue, processQueue: jest.fn(), clear: jest.fn() } as any,
+          client: {
+            deleteProject: jest.fn(),
+            getLabels: jest.fn().mockRejectedValue(new Error('Offline')),
+            getProjects: jest.fn().mockRejectedValue(new Error('Offline')),
+          } as any,
+        });
+
+        // Read-only addTask returns unpersisted stub and sets error without mutating tasks or syncQueue
+        const blockedStub = useTaskStore.getState().addTask({ title: 'Blocked', project_id: 2 });
+        expect(blockedStub.id).toBe(0);
+        expect(useTaskStore.getState().tasks.some((t) => t.title === 'Blocked')).toBe(false);
+        expect(useTaskStore.getState().error).toMatch(/read-only/i);
+
+        // Read-only toggleTask & moveTask into read-only project are blocked
+        useTaskStore.getState().toggleTask(20);
+        expect(useTaskStore.getState().tasks.find((t) => t.id === 20)?.done).toBe(false);
+        useTaskStore.getState().moveTask(10, 2);
+        expect(useTaskStore.getState().tasks.find((t) => t.id === 10)?.project_id).toBe(1);
+
+        // Non-admin (max_permission: 1) deleteProject throws adminRequiredError
+        await expect(useTaskStore.getState().deleteProject(1)).rejects.toThrow(/Admin/i);
+
+        // Dirty-patch diffing: unchanged labels + unchanged fields enqueue nothing; changed title enqueues minimal patch
+        mockEnqueue.mockClear();
+        useTaskStore.getState().updateTaskDetails(10, {
+          title: 'Writable Task',
+          priority: 1,
+          labels: [{ id: 1, title: 'Tag' }],
+        });
+        expect(mockEnqueue).not.toHaveBeenCalled();
+
+        useTaskStore.getState().updateTaskDetails(10, {
+          title: 'Renamed Task',
+          priority: 1,
+          labels: [{ id: 1, title: 'Tag' }],
+        });
+        expect(mockEnqueue).toHaveBeenCalledTimes(1);
+        expect(mockEnqueue.mock.calls[0][0].payload.patch).toEqual({ title: 'Renamed Task' });
+
+        // Skipped migration task recording & one-tap recovery
+        useTaskStore.getState().recordSkippedMigrationTasks([
+          {
+            localTask: { id: -55, title: 'Skipped Local', done: false, priority: 3, project_id: 2 },
+            serverProjectId: 2,
+            errorMessage: 'Forbidden',
+            status: 403,
+          },
+        ]);
+        expect(useTaskStore.getState().syncFailures).toHaveLength(1);
+        const failId = useTaskStore.getState().syncFailures[0].id;
+        expect(useTaskStore.getState().recoverFailedTask(failId, 1)).toBe(true);
+        expect(useTaskStore.getState().syncFailures).toHaveLength(0);
+        expect(useTaskStore.getState().tasks.some((t) => t.title === 'Skipped Local')).toBe(true);
+
+        // Offline resetAndSyncFromServer fetches FIRST so local tasks & syncQueue are NEVER wiped!
+        const taskCountBefore = useTaskStore.getState().tasks.length;
+        await expect(useTaskStore.getState().resetAndSyncFromServer()).rejects.toThrow('Offline');
+        expect(useTaskStore.getState().tasks).toHaveLength(taskCountBefore);
+        expect(useTaskStore.getState().syncQueue?.clear).not.toHaveBeenCalled();
+      });
+
+      it('supports setProjectSortMode, consumeSelectedProjectFetch, concurrency-capped fetchAllTasks, and silent background syncAll', async () => {
+        let activeGets = 0;
+        let maxConcurrentGets = 0;
+        const mockClient = {
+          getLabels: jest.fn().mockResolvedValue([]),
+          getProjects: jest.fn().mockResolvedValue([
+            { id: 1, title: 'P1' },
+            { id: 2, title: 'P2' },
+            { id: 3, title: 'P3' },
+            { id: 4, title: 'P4' },
+            { id: 5, title: 'P5' },
+            { id: 6, title: 'Archived P6', is_archived: true },
+          ]),
+          getAllTasks: jest.fn().mockResolvedValue([]),
+          getTasks: jest.fn().mockImplementation(async () => {
+            activeGets += 1;
+            maxConcurrentGets = Math.max(maxConcurrentGets, activeGets);
+            await new Promise((r) => setTimeout(r, 10));
+            activeGets -= 1;
+            return [];
+          }),
+        };
+
+        useTaskStore.setState({
+          client: mockClient as any,
+          projects: [
+            { id: 1, title: 'P1' },
+            { id: 2, title: 'P2' },
+            { id: 3, title: 'P3' },
+            { id: 4, title: 'P4' },
+            { id: 5, title: 'P5' },
+            { id: 6, title: 'Archived P6', is_archived: true },
+          ],
+          tasks: [{ id: 600, title: 'Cached Archived Task', done: false, priority: 0, project_id: 6 }],
+          error: 'Keep Foreground Error',
+        });
+
+        useTaskStore.getState().setProjectSortMode('1', 'priority');
+        expect(useTaskStore.getState().sortModesByProject['1']).toBe('priority');
+
+        useTaskStore.getState().setSelectedProjectId(1);
+        expect(useTaskStore.getState().consumeSelectedProjectFetch(1)).toBe(true);
+        expect(useTaskStore.getState().consumeSelectedProjectFetch(1)).toBe(false);
+        await new Promise((r) => setTimeout(r, 20));
+
+        mockClient.getTasks.mockClear();
+        maxConcurrentGets = 0;
+        useTaskStore.setState({ error: 'Keep Foreground Error' });
+
+        let sawLoadingTrue = false;
+        const unsub = useTaskStore.subscribe((s) => {
+          if (s.isLoading) sawLoadingTrue = true;
+        });
+        await useTaskStore.getState().syncAll({ silent: true });
+        unsub();
+
+        expect(sawLoadingTrue).toBe(false);
+        expect(maxConcurrentGets).toBeLessThanOrEqual(3);
+        expect(mockClient.getTasks).not.toHaveBeenCalledWith(6);
+        expect(useTaskStore.getState().tasks.some((t) => t.id === 600)).toBe(true);
+        expect(useTaskStore.getState().error).toBe('Keep Foreground Error');
+        expect(useTaskStore.getState().isLoading).toBe(false);
+      });
+
+      it('covers Round 2 regressions: sort validation, no-op dirty patch & position reconciliation, embedded subtask & global reorder permissions, cross-list debounced reorder, and localDataVersion on reset', async () => {
+        jest.useFakeTimers();
+        try {
+          // 1. Sort validation falls back invalid options to 'default'
+          useTaskStore.getState().setProjectSortMode('proj:1', 'invalid_sort_option');
+          expect(useTaskStore.getState().sortModesByProject['proj:1']).toBe('default');
+
+          const mockQueue = {
+            enqueue: jest.fn(),
+            processQueue: jest.fn(),
+            hasPendingForTask: jest.fn((taskId: number, type?: string) => {
+              if (taskId === 101 && (!type || type === 'UPDATE_TASK')) return true;
+              return false;
+            }),
+            getPendingPatchForTask: jest.fn((taskId: number) =>
+              taskId === 101 ? { title: 'Locally Renamed' } : null
+            ),
+            clear: jest.fn().mockResolvedValue(undefined),
+          };
+
+          const mockClient = {
+            getTasks: jest.fn().mockResolvedValue([
+              {
+                id: 101,
+                title: 'Old Server Title',
+                done: false,
+                priority: 0,
+                project_id: 1,
+                position: 9000,
+              },
+            ]),
+            getProjectViews: jest.fn().mockResolvedValue([]),
+            getLabels: jest.fn().mockResolvedValue([]),
+            getProjects: jest.fn().mockResolvedValue([{ id: 1, title: 'Writable', max_permission: 2 }]),
+            getAllTasks: jest.fn().mockResolvedValue([]),
+            getCurrentUser: jest.fn().mockResolvedValue({ id: 1, username: 'tester' }),
+          };
+
+          useTaskStore.setState({
+            client: mockClient as any,
+            syncQueue: mockQueue as any,
+            isLocalMode: false,
+            projects: [
+              { id: 1, title: 'Writable P1', max_permission: 2, views: [{ id: 11, title: 'List', project_id: 1, view_kind: 'list' }] },
+              { id: 2, title: 'Writable P2', max_permission: 1, views: [{ id: 22, title: 'List', project_id: 2, view_kind: 'list' }] },
+              { id: 3, title: 'ReadOnly P3', max_permission: 0, views: [{ id: 33, title: 'List', project_id: 3, view_kind: 'list' }] },
+            ],
+            tasks: [
+              {
+                id: 101,
+                title: 'Locally Renamed',
+                done: false,
+                priority: 0,
+                project_id: 1,
+                position: 1000,
+                color: '',
+                hex_color: '',
+                repeat_after: 0,
+                percent_done: 0.333333,
+                related_tasks: {
+                  subtask: [
+                    { id: 301, title: 'ReadOnly Embedded Subtask', done: false, priority: 0, project_id: 3 },
+                  ],
+                },
+              },
+              { id: 102, title: 'P1 Second', done: false, priority: 0, project_id: 1, position: 2000 },
+              { id: 201, title: 'P2 First', done: false, priority: 0, project_id: 2, position: 1000 },
+              { id: 202, title: 'P2 Second', done: false, priority: 0, project_id: 2, position: 2000 },
+              { id: 302, title: 'ReadOnly Top Task', done: false, priority: 0, project_id: 3, position: 1000 },
+            ],
+            error: null,
+          });
+
+          // 2. computeDirtyTaskPatch ignores '000000' vs '', repeat_mode: 0 vs undefined, and 0.33 rounded percent_done
+          useTaskStore.getState().updateTaskDetails(101, {
+            color: '000000',
+            hex_color: '#000000',
+            repeat_mode: 0,
+            percent_done: 0.33,
+          });
+          expect(mockQueue.enqueue).not.toHaveBeenCalled();
+
+          // 3. Embedded subtask in read-only project 3 is blocked by findTaskIncludingSubtasks + canWriteTask
+          useTaskStore.getState().deleteTask(301);
+          expect(useTaskStore.getState().error).toMatch(/read-only/i);
+          expect(mockQueue.enqueue).not.toHaveBeenCalled();
+
+          // 4. Global reorderTasks(0, ...) excludes read-only task 302 and rejects if ONLY read-only tasks are ordered
+          useTaskStore.setState({ error: null });
+          useTaskStore.getState().reorderTasks(0, [302]);
+          expect(useTaskStore.getState().error).toMatch(/read-only/i);
+
+          // 5. Rapid cross-list debounced reorders within 400ms sync BOTH lists via pendingReorderBaseline.entries()
+          useTaskStore.setState({ error: null });
+          useTaskStore.getState().reorderTasks(1, [102, 101], false);
+          useTaskStore.getState().reorderTasks(2, [202, 201], false);
+          jest.advanceTimersByTime(450);
+          await Promise.resolve();
+          await Promise.resolve();
+
+          const reorderedTaskIds = mockQueue.enqueue.mock.calls
+            .filter((c: any[]) => c[0].type === 'REORDER_TASK')
+            .map((c: any[]) => c[0].payload.taskId);
+          expect(reorderedTaskIds.length).toBeGreaterThanOrEqual(2);
+          expect(
+            reorderedTaskIds.some((id: number) => id === 101 || id === 102) &&
+              reorderedTaskIds.some((id: number) => id === 201 || id === 202)
+          ).toBe(true);
+
+          // 6. resolvePosition accepts remote position (9000) when pending UPDATE_TASK only patched title
+          await useTaskStore.getState().fetchTasks(1);
+          const refreshed101 = useTaskStore.getState().tasks.find((t) => t.id === 101);
+          expect(refreshed101?.title).toBe('Locally Renamed');
+          expect(refreshed101?.position).toBe(9000);
+
+          // 7. resetAndSyncFromServer increments localDataVersion
+          const prevVersion = useTaskStore.getState().localDataVersion;
+          await useTaskStore.getState().resetAndSyncFromServer();
+          expect(useTaskStore.getState().localDataVersion).toBe(prevVersion + 1);
+        } finally {
+          jest.useRealTimers();
+        }
       });
     });
   });

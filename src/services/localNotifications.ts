@@ -22,6 +22,11 @@ export function buildTaskOccurrenceAnchor(task: Pick<Task, 'due_date' | 'start_d
 }
 
 let notifChain: Promise<void> = Promise.resolve();
+let lastSyncedFingerprint: string | null = null;
+
+export function __resetNotificationFingerprintForTesting(): void {
+  lastSyncedFingerprint = null;
+}
 
 function serializeNotificationOp<T>(fn: () => Promise<T>): Promise<T> {
   const next = notifChain.catch(() => {}).then(fn);
@@ -54,12 +59,12 @@ export async function initNotifications(): Promise<void> {
       {
         identifier: NOTIF_ACTION_MARK_DONE,
         buttonTitle: t('notifications.markComplete'),
-        options: { opensAppToForeground: false },
+        options: { opensAppToForeground: true },
       },
       {
         identifier: NOTIF_ACTION_SNOOZE_15M,
         buttonTitle: t('notifications.snooze15m'),
-        options: { opensAppToForeground: false },
+        options: { opensAppToForeground: true },
       },
     ]).catch(() => {});
   }
@@ -173,6 +178,7 @@ export async function scheduleTaskReminders(task: Task): Promise<void> {
   if (Platform.OS === 'web') return;
 
   return serializeNotificationOp(async () => {
+    lastSyncedFingerprint = null;
     // Always cancel existing scheduled & presented notifications for this task FIRST,
     // before checking `task.done` or empty `task.reminders`!
     await cancelTaskRemindersInternal(task.id);
@@ -221,12 +227,16 @@ export async function scheduleSnoozedReminder(task: Task, minutes = 15): Promise
 
 export async function cancelTaskReminders(taskId: number): Promise<void> {
   if (Platform.OS === 'web') return;
-  return serializeNotificationOp(() => cancelTaskRemindersInternal(taskId));
+  return serializeNotificationOp(async () => {
+    lastSyncedFingerprint = null;
+    await cancelTaskRemindersInternal(taskId);
+  });
 }
 
 export async function clearAllNotifications(): Promise<void> {
   if (Platform.OS === 'web') return;
   return serializeNotificationOp(async () => {
+    lastSyncedFingerprint = null;
     try {
       await Notifications.cancelAllScheduledNotificationsAsync();
     } catch (_) {}
@@ -238,12 +248,40 @@ export async function clearAllNotifications(): Promise<void> {
   });
 }
 
+function isFutureSnoozedNotification(
+  notif: any,
+  nowMs: number,
+  openTaskIds: Set<number>
+): boolean {
+  if (notif?.content?.data?.reminderIndex !== -1) return false;
+  const snoozeTaskId = notif?.content?.data?.taskId;
+  if (typeof snoozeTaskId !== 'number' || !openTaskIds.has(snoozeTaskId)) {
+    return false;
+  }
+  const rawTrigger = notif?.trigger;
+  if (rawTrigger && typeof rawTrigger === 'object') {
+    const rawDate = rawTrigger.date ?? rawTrigger.value;
+    if (rawDate !== undefined && rawDate !== null) {
+      const triggerMs =
+        rawDate instanceof Date
+          ? rawDate.getTime()
+          : typeof rawDate === 'number'
+          ? rawDate > 1e11
+            ? rawDate
+            : rawDate * 1000
+          : new Date(rawDate).getTime();
+      if (!isNaN(triggerMs) && triggerMs <= nowMs) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 export async function syncAllTaskReminders(tasks: Task[]): Promise<void> {
   if (Platform.OS === 'web') return;
   return serializeNotificationOp(async () => {
     try {
-      await Notifications.cancelAllScheduledNotificationsAsync();
-
       const nowMs = Date.now();
       const flatTriggers: {
         task: Task;
@@ -251,9 +289,14 @@ export async function syncAllTaskReminders(tasks: Task[]): Promise<void> {
         reminder: TaskReminder;
         triggerDate: Date;
       }[] = [];
+      const openTaskIds = new Set<number>();
 
       for (const task of tasks) {
-        if (!task.done && task.reminders && task.reminders.length > 0) {
+        if (!task || task.done) continue;
+        if (typeof task.id === 'number') {
+          openTaskIds.add(task.id);
+        }
+        if (task.reminders && task.reminders.length > 0) {
           const upcoming = collectFutureReminders(task, nowMs);
           for (const item of upcoming) {
             flatTriggers.push({
@@ -266,10 +309,12 @@ export async function syncAllTaskReminders(tasks: Task[]): Promise<void> {
         }
       }
 
-      if (flatTriggers.length === 0) return;
-
-      const granted = await requestNotificationPermissions();
-      if (!granted) return;
+      flatTriggers.sort((a, b) => {
+        const dt = a.triggerDate.getTime() - b.triggerDate.getTime();
+        if (dt !== 0) return dt;
+        if (a.task.id !== b.task.id) return a.task.id - b.task.id;
+        return a.index - b.index;
+      });
 
       const maxBudget =
         Platform.OS === 'ios'
@@ -277,15 +322,92 @@ export async function syncAllTaskReminders(tasks: Task[]): Promise<void> {
           : MAX_SCHEDULED_NOTIFICATIONS_ANDROID;
 
       const capped =
-        flatTriggers.length > maxBudget
-          ? [...flatTriggers]
-              .sort((a, b) => a.triggerDate.getTime() - b.triggerDate.getTime())
-              .slice(0, maxBudget)
-          : flatTriggers;
+        flatTriggers.length > maxBudget ? flatTriggers.slice(0, maxBudget) : flatTriggers;
+
+      const fingerprint =
+        capped.length === 0
+          ? 'empty'
+          : [
+              Platform.OS,
+              t('notifications.reminderBody', { description: '' }),
+              ...capped.map(({ task, index, reminder, triggerDate }) =>
+                JSON.stringify([
+                  task.id,
+                  index,
+                  triggerDate.getTime(),
+                  task.title,
+                  formatReminderDescription(reminder),
+                  normalizeVikunjaDate(task.due_date) ?? '',
+                  buildTaskOccurrenceAnchor(task) ?? '',
+                ])
+              ),
+            ].join('|');
+
+      const rawExisting = await Notifications.getAllScheduledNotificationsAsync();
+      const existingScheduled = Array.isArray(rawExisting) ? rawExisting : [];
+      const activeSnoozes: any[] = [];
+      const staleSnoozes: any[] = [];
+      const regularScheduled: any[] = [];
+
+      for (const notif of existingScheduled) {
+        if (notif?.content?.data?.reminderIndex === -1) {
+          if (isFutureSnoozedNotification(notif, nowMs, openTaskIds)) {
+            activeSnoozes.push(notif);
+          } else {
+            staleSnoozes.push(notif);
+          }
+        } else {
+          regularScheduled.push(notif);
+        }
+      }
+      const nonActiveScheduled = [...regularScheduled, ...staleSnoozes];
+
+      if (capped.length === 0) {
+        if (lastSyncedFingerprint === 'empty' && nonActiveScheduled.length === 0) {
+          return;
+        }
+        if (activeSnoozes.length === 0) {
+          await Notifications.cancelAllScheduledNotificationsAsync();
+        } else {
+          for (const notif of nonActiveScheduled) {
+            if (notif?.identifier) {
+              await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+            }
+          }
+        }
+        lastSyncedFingerprint = 'empty';
+        return;
+      }
+
+      if (fingerprint === lastSyncedFingerprint && regularScheduled.length > 0) {
+        for (const stale of staleSnoozes) {
+          if (stale?.identifier) {
+            await Notifications.cancelScheduledNotificationAsync(stale.identifier);
+          }
+        }
+        return;
+      }
+
+      if (activeSnoozes.length === 0) {
+        await Notifications.cancelAllScheduledNotificationsAsync();
+      } else {
+        for (const notif of nonActiveScheduled) {
+          if (notif?.identifier) {
+            await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+          }
+        }
+      }
+
+      const granted = await requestNotificationPermissions();
+      if (!granted) {
+        lastSyncedFingerprint = null;
+        return;
+      }
 
       for (const { task, index, reminder, triggerDate } of capped) {
         await scheduleUpcomingForTask(task, [{ index, reminder, triggerDate }]);
       }
+      lastSyncedFingerprint = fingerprint;
     } catch (_) {}
   });
 }

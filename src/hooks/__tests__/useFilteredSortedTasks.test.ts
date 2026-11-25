@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react-native';
+import { renderHook } from '@testing-library/react-native';
 import { useFilteredSortedTasks } from '../useFilteredSortedTasks';
 import { clearAICoreCache } from '../../utils/aiCore';
 import { Project, Task, Label } from '../../types/vikunja';
@@ -107,7 +107,7 @@ describe('useFilteredSortedTasks Hook', () => {
     expect(result.current.availableLabels.filter((l) => l.toLowerCase() === 'dairy')).toEqual(['Dairy']);
   });
 
-  it('sorts tasks by aiSmart cleanly without spurious act(...) warnings, and re-sorts if Prompt API updates categories', async () => {
+  it('sorts tasks by aiSmart cleanly using deterministic local heuristics without spurious act(...) warnings', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const { result } = renderHook(() =>
@@ -126,7 +126,7 @@ describe('useFilteredSortedTasks Hook', () => {
         })
       );
 
-      // Synchronous heuristic already sorted Dairy ('Milk') before Produce ('Apples')
+      // Synchronous heuristic sorts Dairy ('🥛 Dairy & Cold') before Produce ('🥦 Produce')
       expect(result.current.sortedTasks.map((t) => t.title)).toEqual(['Milk', 'Apples']);
 
       // Flush microtasks and verify zero React act(...) console errors
@@ -137,40 +137,6 @@ describe('useFilteredSortedTasks Hook', () => {
       expect(actWarnings).toHaveLength(0);
     } finally {
       errorSpy.mockRestore();
-    }
-
-    // Now test live Prompt API returning custom alphabetical categories ('Alpha' for Apples, 'Zeta' for Milk)
-    const originalAi = (globalThis as any).ai;
-    (globalThis as any).ai = {
-      languageModel: {
-        create: jest.fn().mockResolvedValue({
-          prompt: jest.fn().mockResolvedValue('Apples -> Alpha\nMilk -> Zeta'),
-          destroy: jest.fn(),
-        }),
-      },
-    };
-    try {
-      const { result } = renderHook(() =>
-        useFilteredSortedTasks({
-          projects: mockProjects,
-          tasks: [
-            { id: 31, title: 'Apples', done: false, priority: 1, project_id: 1 },
-            { id: 32, title: 'Milk', done: false, priority: 1, project_id: 1 },
-          ],
-          labels: mockLabels,
-          selectedProjectId: 1,
-          currentUser: null,
-          filter: 'active',
-          selectedLabel: null,
-          sortBy: 'aiSmart',
-        })
-      );
-
-      await waitFor(() => {
-        expect(result.current.sortedTasks.map((t) => t.title)).toEqual(['Apples', 'Milk']);
-      });
-    } finally {
-      (globalThis as any).ai = originalAi;
     }
   });
 

@@ -92,8 +92,8 @@ android {
         applicationId 'com.geodar.guanaco'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10601
-        versionName "1.6.1"
+        versionCode 10602
+        versionName "1.6.2"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -118,7 +118,8 @@ android {
             def candidateKeystores = [
                 file(keystorePath),
                 new File(projectRoot, keystorePath.toString()),
-                rootProject.file(keystorePath)
+                rootProject.file(keystorePath),
+                new File(System.getProperty("user.home"), ".config/guanaco/guanaco-release.keystore")
             ]
             def resolvedKeystore = candidateKeystores.find { it.exists() } ?: file(keystorePath)
             if (resolvedKeystore.exists() && keystorePassword && keyAliasName && keyPasswordVal) {

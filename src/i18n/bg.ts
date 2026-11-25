@@ -61,6 +61,27 @@ export const bg: Record<TranslationKey, string> = {
   'auth.migrationKeepUpload': 'Качи локалните задачи на сървъра',
   'auth.migrationStartFresh': 'Замени с данните от сървъра',
   'auth.migratingProgress': 'Качване на локалните задачи...',
+  'auth.unsyncedSwitchTitle': 'Несинхронизирани офлайн промени',
+  'auth.unsyncedDifferentUserMsg':
+    'Имате {count} несинхронизирани промени от предишния си профил. Входът с друг потребител ще ги изтрие безвъзвратно.',
+  'auth.unsyncedDifferentUrlMsg':
+    'Имате {count} несинхронизирани промени за {prevUrl}. Същият сървър Vikunja ли е {nextUrl} на нов адрес, или е различен сървър?',
+  'auth.keepAndSyncNewUrl': 'Същият сървър — Запази и синхронизирай',
+  'auth.discardAndConnect': 'Отхвърли промените',
+
+  // Permissions & Read-Only Shared Lists
+  'permissions.readOnlyBadge': 'Само четене',
+  'permissions.readOnlyPlaceholder': 'Споделен списък само за четене',
+  'permissions.readOnlyError': 'Този списък е само за четене.',
+  'permissions.adminRequiredError': 'Нужни са администраторски права за това действие.',
+
+  // Sync Failure & Skipped Migration Recovery
+  'syncFailure.bannerTitle': 'Неуспешно синхронизиране на {count} елемент(а)',
+  'syncFailure.migrationSkippedNote': 'Пропуснато при качване на сървъра: {title} ({reason})',
+  'syncFailure.itemNote': '{title}: {reason}',
+  'syncFailure.recoverBtn': 'Запази копие',
+  'syncFailure.dismissBtn': 'Скрий',
+  'syncFailure.dismissAllBtn': 'Скрий всички',
 
   // Standalone Local Mode
   'local.starterTasksList': 'Задачи',
@@ -114,6 +135,10 @@ export const bg: Record<TranslationKey, string> = {
   'drawer.deleteList': 'Изтрий списъка',
   'drawer.deleteListConfirm': 'Да се изтрие ли „{title}“ заедно с всички задачи в него?',
   'drawer.deleteListInlineConfirm': 'Изтриване на „{title}“ и всички задачи в него?',
+  'drawer.deleteListWithSublistsConfirm':
+    'Да се изтрие ли „{title}“, неговите {count} подсписък(а) и всички задачи в тях?',
+  'drawer.deleteListWithSublistsInlineConfirm':
+    'Изтриване на „{title}“, {count} подсписък(а) и всички задачи в тях?',
 
   // Project Editor Modal
   'listEditor.nameLabel': 'ИМЕ',
@@ -137,6 +162,10 @@ export const bg: Record<TranslationKey, string> = {
   'listEditor.deleteConfirmMessage':
     'Сигурни ли сте, че искате да изтриете „{title}“? Всички задачи в него ще бъдат изтрити.',
   'listEditor.deleteWebConfirm': 'Изтриване на „{title}“ и всички задачи в него?',
+  'listEditor.deleteConfirmWithSublists':
+    'Сигурни ли сте, че искате да изтриете „{title}“? Неговите {count} подсписък(а) и всички задачи в тях също ще бъдат изтрити.',
+  'listEditor.deleteWebConfirmWithSublists':
+    'Изтриване на „{title}“, неговите {count} подсписък(а) и всички задачи в тях?',
   'listEditor.networkRequiredError': 'Необходима е мрежова връзка за управление на списъци.',
 
   // Project Sharing Modal
@@ -540,6 +569,15 @@ export const bg: Record<TranslationKey, string> = {
     'Връзката прекъсна при подновяване на сесията. Офлайн промените са запазени.',
   'store.sessionExpiredPleaseSignIn':
     'Сесията е изтекла. Влезте отново, за да синхронизирате промените си.',
+  'store.failedFetchTasks': 'Неуспешно зареждане на задачите.',
+  'store.failedFetchProjects': 'Неуспешно зареждане на списъците.',
+  'tasks.syncOfflineNoCount': 'Офлайн',
+  'tasks.syncOfflineNoCountA11y': 'Офлайн. Докоснете за повторен опит',
+  'tasks.syncSignInNoCount': 'Вход',
+  'taskDetail.discardChangesTitle': 'Отхвърляне на промените?',
+  'taskDetail.discardChangesMessage': 'Имате незапазени промени по тази задача.',
+  'taskDetail.keepEditing': 'Продължи редакцията',
+  'taskDetail.discardBtn': 'Отхвърли',
 
   // In-App Update Prompt Modal
   'updates.restartToUpdate': 'Рестартиране за обновяване',

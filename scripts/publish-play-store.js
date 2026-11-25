@@ -8,14 +8,24 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { androidpublisher } = require('@googleapis/androidpublisher');
 const { GoogleAuth } = require('google-auth-library');
 
+const CONFIG_SERVICE_ACCOUNT_PATH = path.join(
+  os.homedir(),
+  '.config',
+  'guanaco',
+  'play-service-account.json'
+);
+const REPO_SERVICE_ACCOUNT_PATH = path.resolve(__dirname, '../play-service-account.json');
 const SERVICE_ACCOUNT_PATH = process.env.PLAY_SERVICE_ACCOUNT_PATH
   ? path.resolve(process.cwd(), process.env.PLAY_SERVICE_ACCOUNT_PATH)
-  : path.resolve(__dirname, '../play-service-account.json');
+  : fs.existsSync(CONFIG_SERVICE_ACCOUNT_PATH)
+    ? CONFIG_SERVICE_ACCOUNT_PATH
+    : REPO_SERVICE_ACCOUNT_PATH;
 const APP_JSON_PATH = path.resolve(__dirname, '../app.json');
 const ROOT_AAB_PATH = path.resolve(__dirname, '../guanaco-release.aab');
 const DEFAULT_AAB_PATH = fs.existsSync(ROOT_AAB_PATH)

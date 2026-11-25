@@ -8,6 +8,7 @@ import android.hardware.biometrics.BiometricManager
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
+import android.view.WindowManager
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import com.facebook.react.bridge.ActivityEventListener
@@ -527,6 +528,11 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun getBiometricSensorState(promise: Promise) {
         reactContext.runOnUiQueueThread {
+            val km = runCatching {
+                reactContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            }.getOrNull()
+            val isDeviceSecure = runCatching { km?.isDeviceSecure == true }.getOrDefault(false)
+
             try {
                 val elapsedSinceResume =
                     (SystemClock.elapsedRealtime() - lastActivityResumedAtMs).coerceAtLeast(0L)
@@ -554,12 +560,41 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                             else -> "unknown"
                         }
                     }
+                } else if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+                    val bm = reactContext.getSystemService(BiometricManager::class.java)
+                    if (bm != null) {
+                        @Suppress("DEPRECATION")
+                        status = when (bm.canAuthenticate()) {
+                            BiometricManager.BIOMETRIC_SUCCESS -> "ready"
+                            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "hw_unavailable"
+                            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "none_enrolled"
+                            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "no_hardware"
+                            else -> "unknown"
+                        }
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    val fm = runCatching {
+                        reactContext.getSystemService(Context.FINGERPRINT_SERVICE)
+                            as? android.hardware.fingerprint.FingerprintManager
+                    }.getOrNull()
+                    if (fm != null) {
+                        @Suppress("DEPRECATION")
+                        status = runCatching {
+                            when {
+                                !fm.isHardwareDetected -> "no_hardware"
+                                !fm.hasEnrolledFingerprints() -> "none_enrolled"
+                                else -> "ready"
+                            }
+                        }.getOrDefault("unknown")
+                    }
                 }
 
                 val map = Arguments.createMap().apply {
                     putString("status", status)
                     putDouble("msSinceResume", elapsedSinceResume.toDouble())
                     putBoolean("decorReady", decorReady)
+                    putBoolean("isDeviceSecure", isDeviceSecure)
                 }
                 promise.resolve(map)
             } catch (_: Exception) {
@@ -567,8 +602,38 @@ class InAppUpdateModule(private val reactContext: ReactApplicationContext) :
                     putString("status", "unknown")
                     putDouble("msSinceResume", 1000.0)
                     putBoolean("decorReady", true)
+                    putBoolean("isDeviceSecure", isDeviceSecure)
                 }
                 promise.resolve(fallback)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun setAppLockPrivacyEnabled(enabled: Boolean, promise: Promise) {
+        try {
+            reactContext
+                .getSharedPreferences("guanaco_security", Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("app_lock_enabled", enabled)
+                .apply()
+        } catch (_: Exception) {}
+
+        reactContext.runOnUiQueueThread {
+            try {
+                val act = reactContext.currentActivity
+                if (isActivityUsable(act) && act != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        act.setRecentsScreenshotEnabled(!enabled)
+                    } else if (enabled) {
+                        act.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    } else {
+                        act.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+                promise.resolve(true)
+            } catch (_: Exception) {
+                promise.resolve(false)
             }
         }
     }

@@ -1,8 +1,7 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo } from 'react';
 import { Project, Task, Label, User } from '../types/vikunja';
 import { SortOption, sortTasks } from '../utils/sorting';
 import { isShoppingList } from '../utils/smartClassifier';
-import { classifyTaskWithAI, classifyTasksWithAIAsync } from '../utils/aiCore';
 import { MY_TASKS_PROJECT_ID, MY_TASKS_PROJECT, isTaskAssignedToUser } from '../utils/taskFilters';
 import { htmlToPlainText } from '../utils/htmlDescription';
 import { isOverdue, normalizeVikunjaDate } from '../utils/dates';
@@ -239,47 +238,10 @@ export function useFilteredSortedTasks({
     });
   }, [projectTasks, filter, selectedLabel, minPriority, dueFilter, trimmedQuery]);
 
-  const [aiVersion, setAiVersion] = useState(0);
-  const filteredTasksRef = useRef(filteredTasks);
-  filteredTasksRef.current = filteredTasks;
-
-  const tasksSignature = useMemo(
-    () => filteredTasks.map((t) => `${t.id}:${t.title}`).join('|'),
-    [filteredTasks]
+  const sortedTasks = useMemo(
+    () => sortTasks(filteredTasks, sortBy, activeProject?.title),
+    [filteredTasks, sortBy, activeProject?.title, locale]
   );
-
-  useEffect(() => {
-    let isMounted = true;
-    const currentTasks = filteredTasksRef.current;
-
-    if (sortBy === 'aiSmart' && currentTasks.length > 0) {
-      const syncSnapshot: Record<number, string> = {};
-      for (const t of currentTasks) {
-        syncSnapshot[t.id] = classifyTaskWithAI(t, activeProject?.title);
-      }
-
-      classifyTasksWithAIAsync(currentTasks, activeProject?.title)
-        .then((cats) => {
-          if (!isMounted || !cats) return;
-          const changed = currentTasks.some(
-            (t) => Boolean(cats[t.id]) && cats[t.id] !== syncSnapshot[t.id]
-          );
-          if (changed) {
-            setAiVersion((v) => v + 1);
-          }
-        })
-        .catch(() => {});
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, [sortBy, tasksSignature, activeProject?.title]);
-
-  const sortedTasks = useMemo(() => {
-    void aiVersion;
-    return sortTasks(filteredTasks, sortBy, activeProject?.title);
-  }, [filteredTasks, sortBy, activeProject?.title, aiVersion]);
 
   const activeCount = useMemo(
     () => projectTasks.filter((t) => !t.done).length,

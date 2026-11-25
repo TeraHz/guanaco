@@ -32,6 +32,7 @@ jest.mock('expo-haptics', () => ({
 jest.mock('expo-local-authentication', () => ({
   hasHardwareAsync: jest.fn().mockResolvedValue(true),
   isEnrolledAsync: jest.fn().mockResolvedValue(true),
+  getEnrolledLevelAsync: jest.fn().mockResolvedValue(3),
   authenticateAsync: jest.fn().mockResolvedValue({ success: true }),
   cancelAuthenticate: jest.fn().mockResolvedValue(undefined),
   supportedAuthenticationTypesAsync: jest.fn().mockResolvedValue([1, 2]),
@@ -39,6 +40,12 @@ jest.mock('expo-local-authentication', () => ({
     FINGERPRINT: 1,
     FACIAL_RECOGNITION: 2,
     IRIS: 3,
+  },
+  SecurityLevel: {
+    NONE: 0,
+    SECRET: 1,
+    BIOMETRIC_WEAK: 2,
+    BIOMETRIC_STRONG: 3,
   },
 }));
 
@@ -175,6 +182,9 @@ jest.mock('expo-notifications', () => ({
   cancelAllScheduledNotificationsAsync: jest.fn().mockResolvedValue(undefined),
   getPresentedNotificationsAsync: jest.fn().mockResolvedValue([]),
   dismissNotificationAsync: jest.fn().mockResolvedValue(undefined),
+  dismissAllNotificationsAsync: jest.fn().mockResolvedValue(undefined),
+  getLastNotificationResponseAsync: jest.fn().mockResolvedValue(null),
+  clearLastNotificationResponseAsync: jest.fn().mockResolvedValue(undefined),
   setNotificationCategoryAsync: jest.fn().mockResolvedValue(undefined),
   setBadgeCountAsync: jest.fn().mockResolvedValue(true),
   addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
@@ -246,6 +256,7 @@ NativeModules.InAppUpdate = {
   openPlayStore: jest.fn().mockResolvedValue(true),
   isActivityReadyForBiometrics: jest.fn().mockResolvedValue(true),
   resetOrphanedBiometricFragment: jest.fn().mockResolvedValue(true),
+  setAppLockPrivacyEnabled: jest.fn().mockResolvedValue(true),
   getBiometricSensorState: jest.fn().mockResolvedValue({
     status: 'ready',
     msSinceResume: 5000,

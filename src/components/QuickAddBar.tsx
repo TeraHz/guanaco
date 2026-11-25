@@ -30,12 +30,14 @@ import { getFormattingLocale, TranslationKey, useTranslation } from '../i18n';
 interface QuickAddBarProps {
   activeProjectId: number;
   availableProjects?: { id: number; title: string; hex_color?: string }[];
+  allProjects?: { id: number; title: string; hex_color?: string; max_permission?: number }[];
   doneTasks?: Task[];
   historyTasks?: Task[];
   availableLabels?: string[];
   availableUsers?: User[];
   hideAssignees?: boolean;
   reenableStaples?: boolean;
+  disabled?: boolean;
   onAddTask: (input: CreateTaskInput) => void;
   onReenableTask?: (taskId: number) => void;
   placeholder?: string;
@@ -71,12 +73,14 @@ function getPriorityControlMeta(
 export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   activeProjectId,
   availableProjects = [],
+  allProjects = [],
   doneTasks = [],
   historyTasks = [],
   availableLabels = [],
   availableUsers = [],
   hideAssignees = false,
   reenableStaples = true,
+  disabled = false,
   onAddTask,
   onReenableTask,
   placeholder,
@@ -84,7 +88,9 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
 }) => {
   const theme = useAppTheme();
   const { t, locale } = useTranslation();
-  const resolvedPlaceholder = placeholder ?? t('quickAdd.placeholder');
+  const resolvedPlaceholder = disabled
+    ? t('permissions.readOnlyPlaceholder')
+    : (placeholder ?? t('quickAdd.placeholder'));
   const [rawText, setRawText] = useState('');
   const [manualPriority, setManualPriority] = useState<number>(0);
   const [lastUsedLabel, setLastUsedLabel] = useState<string>('');
@@ -120,18 +126,41 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   const effectivePriority =
     parsed.priority !== undefined ? parsed.priority : manualPriority;
 
-  // Resolve target project if specified with +Project
-  const { targetProjectId, targetProjectTitle } = useMemo(() => {
-    if (parsed.projectName && availableProjects.length > 0) {
-      const matched = availableProjects.find(
-        (p) => p.title.toLowerCase() === parsed.projectName!.toLowerCase()
-      );
-      if (matched) {
-        return { targetProjectId: matched.id, targetProjectTitle: matched.title };
+  // Resolve target project if specified with +Project (flagging +ReadOnlyList so it never misroutes)
+  const { targetProjectId, targetProjectTitle, isTargetProjectReadOnly } = useMemo(() => {
+    if (parsed.projectName) {
+      const targetLower = parsed.projectName.toLowerCase();
+      if (availableProjects.length > 0) {
+        const matched = availableProjects.find(
+          (p) => p.title.toLowerCase() === targetLower
+        );
+        if (matched) {
+          return {
+            targetProjectId: matched.id,
+            targetProjectTitle: matched.title,
+            isTargetProjectReadOnly: false,
+          };
+        }
+      }
+      if (allProjects.length > 0) {
+        const matchedReadOnly = allProjects.find(
+          (p) => p.title.toLowerCase() === targetLower
+        );
+        if (matchedReadOnly) {
+          return {
+            targetProjectId: activeProjectId,
+            targetProjectTitle: matchedReadOnly.title,
+            isTargetProjectReadOnly: true,
+          };
+        }
       }
     }
-    return { targetProjectId: activeProjectId, targetProjectTitle: undefined };
-  }, [parsed.projectName, availableProjects, activeProjectId]);
+    return {
+      targetProjectId: activeProjectId,
+      targetProjectTitle: undefined,
+      isTargetProjectReadOnly: false,
+    };
+  }, [parsed.projectName, availableProjects, allProjects, activeProjectId]);
 
   // Assignee Suggestions (when typing @user)
   const userSuggestions = useMemo(() => {
@@ -191,12 +220,13 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
 
   // Cycle through ALL priority levels 0 -> 1 -> 2 -> 3 -> 4 -> 5 (Critical) -> 0
   const handleCyclePriority = () => {
+    if (disabled) return;
     setManualPriority((prev) => (prev >= 5 ? 0 : prev + 1));
     safeHaptics.selection();
   };
 
   const handleSubmit = () => {
-    if (!rawText.trim() || !parsed.title.trim()) return;
+    if (disabled || isTargetProjectReadOnly || !rawText.trim() || !parsed.title.trim()) return;
 
     const seenLabels = new Set<string>();
     const formattedLabels: Label[] = [];
@@ -247,15 +277,17 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   };
 
   const curPriority = getPriorityControlMeta(effectivePriority, theme, t);
-  const canSubmit = Boolean(parsed.title.trim());
+  const canSubmit = !disabled && !isTargetProjectReadOnly && Boolean(parsed.title.trim());
+  const canDetailedAdd = !disabled || availableProjects.length > 0;
   const hasRepeat = Boolean(parsed.repeatAfter && parsed.repeatAfter > 0);
   const hasMagicAttributes =
-    parsed.labels.length > 0 ||
-    parsed.assignees.length > 0 ||
-    Boolean(parsed.dueDate) ||
-    Boolean(targetProjectTitle) ||
-    parsed.priority !== undefined ||
-    hasRepeat;
+    !disabled &&
+    (parsed.labels.length > 0 ||
+      parsed.assignees.length > 0 ||
+      Boolean(parsed.dueDate) ||
+      Boolean(targetProjectTitle) ||
+      parsed.priority !== undefined ||
+      hasRepeat);
 
   const chipSurface = {
     backgroundColor: theme.colors.surfaceSecondary,
@@ -265,7 +297,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
   return (
     <View style={styles.container}>
       {/* Suggestions Row: User Suggestions, Label Suggestions, or Done Task Suggestions */}
-      {userSuggestions.length > 0 && (
+      {!disabled && userSuggestions.length > 0 && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -289,7 +321,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         </ScrollView>
       )}
 
-      {labelSuggestions.length > 0 && (
+      {!disabled && labelSuggestions.length > 0 && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -312,7 +344,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         </ScrollView>
       )}
 
-      {(taskSuggestions.length > 0 || historicalStoreSuggestion) && (
+      {!disabled && (taskSuggestions.length > 0 || historicalStoreSuggestion) && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -364,10 +396,27 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           {targetProjectTitle && (
             <View
               testID="magic-project-badge"
-              style={[styles.magicBadge, chipSurface]}
+              style={[
+                styles.magicBadge,
+                isTargetProjectReadOnly
+                  ? {
+                      backgroundColor: theme.isDark
+                        ? 'rgba(255, 69, 58, 0.16)'
+                        : 'rgba(215, 0, 21, 0.1)',
+                      borderColor: theme.colors.danger,
+                    }
+                  : chipSurface,
+              ]}
             >
-              <Text style={[styles.magicBadgeText, { color: theme.colors.accent }]}>
-                +{targetProjectTitle}
+              <Text
+                style={[
+                  styles.magicBadgeText,
+                  { color: isTargetProjectReadOnly ? theme.colors.danger : theme.colors.accent },
+                ]}
+              >
+                {isTargetProjectReadOnly
+                  ? `+${targetProjectTitle} (${t('permissions.readOnlyBadge')})`
+                  : `+${targetProjectTitle}`}
               </Text>
             </View>
           )}
@@ -442,8 +491,13 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
         {onDetailedAdd && (
           <TouchableOpacity
             testID="green-add-task-fab"
-            style={[styles.detailedAddBtn, { backgroundColor: theme.colors.accent }]}
-            onPress={onDetailedAdd}
+            style={[
+              styles.detailedAddBtn,
+              { backgroundColor: theme.colors.accent },
+              !canDetailedAdd && styles.controlDisabled,
+            ]}
+            onPress={canDetailedAdd ? onDetailedAdd : undefined}
+            disabled={!canDetailedAdd}
             accessibilityRole="button"
             accessibilityLabel={t('quickAdd.createDetailedA11y')}
             activeOpacity={0.8}
@@ -456,6 +510,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           style={[
             styles.inputCard,
             { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.borderStrong },
+            disabled && styles.inputCardDisabled,
           ]}
         >
           <TextInput
@@ -464,9 +519,10 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
             style={[styles.input, { color: theme.colors.text }]}
             placeholder={resolvedPlaceholder}
             placeholderTextColor={theme.colors.placeholder}
-            value={rawText}
-            onChangeText={setRawText}
+            value={disabled ? '' : rawText}
+            onChangeText={disabled ? undefined : setRawText}
             onSubmitEditing={handleSubmit}
+            editable={!disabled}
             returnKeyType="done"
             blurOnSubmit={false}
           />
@@ -474,8 +530,13 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({
           <View style={styles.actionsRow}>
             <TouchableOpacity
               testID="quick-add-priority"
-              style={[styles.priorityBadge, { borderColor: curPriority.color }]}
+              style={[
+                styles.priorityBadge,
+                { borderColor: curPriority.color },
+                disabled && styles.controlDisabled,
+              ]}
               onPress={handleCyclePriority}
+              disabled={disabled ? true : undefined}
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel={t('quickAdd.priorityCycleA11y', { label: curPriority.label })}
@@ -665,5 +726,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     lineHeight: 18,
+  },
+  inputCardDisabled: {
+    opacity: 0.65,
+  },
+  controlDisabled: {
+    opacity: 0.45,
   },
 });

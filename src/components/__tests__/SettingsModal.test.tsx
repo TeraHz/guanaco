@@ -306,16 +306,17 @@ describe('SettingsModal', () => {
   });
 
   describe('Smart Grouping Section — Honest Engine Reporting & Neutral Secondary Button', () => {
-    it('reports On-Device Heuristics when Prompt API is absent and clears category cache cleanly', async () => {
+    it('always reports On-Device Heuristics when Smart Grouping is supported and clears category cache cleanly', async () => {
       __setMockAICoreSupportedForTesting(true);
       const origAi = (globalThis as any).ai;
-      delete (globalThis as any).ai;
+      (globalThis as any).ai = { languageModel: { create: jest.fn() } };
 
       try {
         const { getByTestId, getByText, queryByText } = await renderSettings();
 
         expect(getByTestId('settings-aicore-section')).toBeTruthy();
         expect(getByText('On-Device Heuristics')).toBeTruthy();
+        expect(queryByText('Gemini Nano (On-Device)')).toBeNull();
         expect(queryByText(/Zero data is shared/i)).toBeNull();
 
         const clearBtnStyle = StyleSheet.flatten(
@@ -332,24 +333,35 @@ describe('SettingsModal', () => {
       }
     });
 
-    it('reports Gemini Nano only when live Prompt API is present', async () => {
-      __setMockAICoreSupportedForTesting(true);
-      const origAi = (globalThis as any).ai;
-      (globalThis as any).ai = { languageModel: { create: jest.fn() } };
-
-      try {
-        const { getByText } = await renderSettings();
-        expect(getByText('Gemini Nano (On-Device)')).toBeTruthy();
-      } finally {
-        (globalThis as any).ai = origAi;
-      }
-    });
-
-    it('does NOT render smart grouping section when device does not support it', async () => {
+    it('does NOT render smart grouping section when device explicitly disables AICore', async () => {
       __setMockAICoreSupportedForTesting(false);
       const { queryByTestId } = await renderSettings();
       expect(queryByTestId('settings-aicore-section')).toBeNull();
     });
+  });
+
+  it('keeps Biometric Lock toggle visible when enabled even if OS biometrics were removed, falling back to device credentials to turn it off', async () => {
+    await AsyncStorage.setItem('@vikunja_biometric_enabled', 'true');
+    jest.spyOn(biometricsModule, 'checkBiometricAvailable').mockResolvedValue(false);
+    const deviceCredSpy = jest
+      .spyOn(biometricsModule, 'authenticateWithDeviceCredentials')
+      .mockResolvedValueOnce(true);
+
+    const utils = render(
+      <SettingsModal visible={true} onClose={mockOnClose} onLogout={mockOnLogout} />
+    );
+
+    await waitFor(() => {
+      expect(utils.getByTestId('settings-biometric-switch').props.value).toBe(true);
+    });
+
+    await act(async () => {
+      fireEvent(utils.getByTestId('settings-biometric-switch'), 'valueChange', false);
+    });
+
+    expect(deviceCredSpy).toHaveBeenCalledTimes(1);
+    expect(utils.queryByTestId('settings-biometric-switch')).toBeNull();
+    expect(await AsyncStorage.getItem('@vikunja_biometric_enabled')).toBe('false');
   });
 
   it('allows configuring Appearance (System/Light/Dark/OLED), Week Start (Mon/Sun), and App Icon Badge', async () => {
@@ -392,5 +404,54 @@ describe('SettingsModal', () => {
     });
     expect(getByText('Settings')).toBeTruthy();
     expect(await AsyncStorage.getItem('@vikunja_language')).toBe('en');
+  });
+
+  it('includes unrecovered syncFailures in confirmation warnings before Overwrite & Sync and Log Out even when pendingSyncCount is 0', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert');
+    const mockReset = jest.fn().mockResolvedValue(undefined);
+    useTaskStore.setState({
+      pendingSyncCount: 0,
+      resetAndSyncFromServer: mockReset,
+      syncFailures: [
+        {
+          id: 'fail-1',
+          timestamp: Date.now(),
+          source: 'sync',
+          mutationType: 'CREATE_TASK',
+          message: 'Forbidden',
+          taskTitle: 'Important Draft',
+          taskSnapshot: { title: 'Important Draft' },
+        },
+        {
+          id: 'fail-2',
+          timestamp: Date.now(),
+          source: 'migration',
+          mutationType: 'MIGRATE_TASK',
+          message: 'Skipped',
+          taskTitle: 'Local Note',
+          taskSnapshot: { title: 'Local Note' },
+        },
+      ],
+    } as any);
+
+    const { getByTestId } = await renderSettings();
+
+    // 1. Overwrite & Sync warns about 2 unsynced items instead of clean overwrite prompt
+    fireEvent.press(getByTestId('settings-reset-sync-btn'));
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Overwrite & Sync from Server',
+      expect.stringContaining('2 unsynced offline change(s)'),
+      expect.any(Array)
+    );
+
+    // 2. Log Out warns and requires confirmation instead of logging out immediately
+    alertSpy.mockClear();
+    fireEvent.press(getByTestId('settings-logout-btn'));
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Unsynced Changes',
+      expect.stringContaining('2 unsynced offline change(s)'),
+      expect.any(Array)
+    );
+    expect(mockOnLogout).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,7 @@ import { Project, ProjectUserShare, ProjectTeamShare, Team, Permission } from '.
 import { useTaskStore } from '../store/taskStore';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
+import { canAdminProject } from '../utils/permissions';
 import { useTranslation, TranslationKey } from '../i18n';
 
 export interface ProjectSharingModalProps {
@@ -40,7 +41,7 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
 }) => {
   const theme = useAppTheme();
   const { t } = useTranslation();
-  const { client } = useTaskStore();
+  const client = useTaskStore((s) => s.client);
 
   const getPermissionLabel = (perm: Permission): string =>
     Object.prototype.hasOwnProperty.call(PERMISSION_KEYS, perm)
@@ -136,6 +137,10 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
   };
 
   const handleAddUser = async () => {
+    if (project && !canAdminProject(project)) {
+      setErrorMessage(t('permissions.adminRequiredError'));
+      return;
+    }
     const trimmed = usernameInput.trim().replace(/^@/, '');
     if (!trimmed || !project || !client) return;
 
@@ -158,6 +163,10 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
   };
 
   const handleCycleUserPermission = async (share: ProjectUserShare) => {
+    if (project && !canAdminProject(project)) {
+      setErrorMessage(t('permissions.adminRequiredError'));
+      return;
+    }
     if (!project || !client) return;
     const nextPerm: Permission = share.permission === 0 ? 1 : share.permission === 1 ? 2 : 0;
     const userId = share.user?.id ?? share.id;
@@ -177,6 +186,10 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
   };
 
   const handleRemoveUser = async (share: ProjectUserShare) => {
+    if (project && !canAdminProject(project)) {
+      setErrorMessage(t('permissions.adminRequiredError'));
+      return;
+    }
     if (!project || !client) return;
     const userId = share.user?.id ?? share.id;
     setErrorMessage(null);
@@ -191,6 +204,10 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
   };
 
   const handleAddTeam = async () => {
+    if (project && !canAdminProject(project)) {
+      setErrorMessage(t('permissions.adminRequiredError'));
+      return;
+    }
     if (!selectedTeamId || !project || !client) return;
 
     setIsSubmitting(true);
@@ -212,6 +229,10 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
   };
 
   const handleCycleTeamPermission = async (share: ProjectTeamShare) => {
+    if (project && !canAdminProject(project)) {
+      setErrorMessage(t('permissions.adminRequiredError'));
+      return;
+    }
     if (!project || !client) return;
     const nextPerm: Permission = share.permission === 0 ? 1 : share.permission === 1 ? 2 : 0;
     const teamId = share.team?.id ?? share.id;
@@ -233,6 +254,10 @@ export const ProjectSharingModal: React.FC<ProjectSharingModalProps> = ({
   };
 
   const handleRemoveTeam = async (share: ProjectTeamShare) => {
+    if (project && !canAdminProject(project)) {
+      setErrorMessage(t('permissions.adminRequiredError'));
+      return;
+    }
     if (!project || !client) return;
     const teamId = share.team?.id ?? share.id;
     setErrorMessage(null);

@@ -2,6 +2,8 @@ import {
   VikunjaClient,
   VikunjaApiError,
   parseAndValidateServerUrl,
+  parseHttpUrl,
+  resolveHttpRedirectUrl,
   isTotpRequiredError,
   getJwtExpirationMs,
   extractRefreshTokenFromHeaders,
@@ -84,6 +86,51 @@ describe('VikunjaClient & URL Security', () => {
       expect(() => parseAndValidateServerUrl('http://999.999.999.999:3456')).toThrow(
         /IPv4|Invalid server URL/i
       );
+    });
+
+    it('parses case-insensitive schemes, uppercase hostnames, bracketed IPv6 literals, default ports, and @ in paths without new URL()', () => {
+      expect(parseAndValidateServerUrl('Https://Vikunja.Example.COM:443/api/v1/')).toEqual({
+        serverUrl: 'https://vikunja.example.com',
+        apiBaseUrl: 'https://vikunja.example.com/api/v1',
+        isInsecureHttp: false,
+      });
+
+      expect(parseAndValidateServerUrl('HTTP://Localhost:80/')).toEqual({
+        serverUrl: 'http://localhost',
+        apiBaseUrl: 'http://localhost/api/v1',
+        isInsecureHttp: true,
+      });
+
+      expect(parseAndValidateServerUrl('http://[::1]:3456')).toEqual({
+        serverUrl: 'http://[::1]:3456',
+        apiBaseUrl: 'http://[::1]:3456/api/v1',
+        isInsecureHttp: true,
+      });
+
+      expect(parseHttpUrl('https://[2001:DB8::1]:443/api/v1')).toMatchObject({
+        protocol: 'https:',
+        hostname: '[2001:db8::1]',
+        port: '',
+        host: '[2001:db8::1]',
+        origin: 'https://[2001:db8::1]',
+        pathname: '/api/v1',
+      });
+
+      // `@` in pathname/query/hash must NEVER trigger embeddedCredentials
+      expect(parseAndValidateServerUrl('https://example.com/@user/vikunja')).toEqual({
+        serverUrl: 'https://example.com/@user/vikunja',
+        apiBaseUrl: 'https://example.com/@user/vikunja/api/v1',
+        isInsecureHttp: false,
+      });
+
+      // Invalid IPv6 and ports are rejected
+      expect(() => parseHttpUrl('http://[2001:db8::gggg]:3456')).toThrow();
+      expect(() => parseHttpUrl('http://[::1::2]:3456')).toThrow();
+      expect(() => parseHttpUrl('http://example.com:70000')).toThrow();
+
+      expect(
+        resolveHttpRedirectUrl('../tasks?page=1', 'https://try.vikunja.io/api/v1/projects/1')
+      ).toBe('https://try.vikunja.io/api/v1/tasks?page=1');
     });
   });
 
@@ -183,6 +230,27 @@ describe('VikunjaClient & URL Security', () => {
 
       await expect(client.getCurrentUser()).rejects.toThrow(/cross-origin|redirect/i);
       expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      // Malicious @-path confusion redirect `https://evil.com/@try.vikunja.io` and credential-bearing authority redirect
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'location' ? 'https://evil.com/@try.vikunja.io/api/v1/user' : null,
+        },
+      } as unknown as Response);
+      await expect(client.getCurrentUser()).rejects.toThrow(/cross-origin|redirect/i);
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'location' ? 'https://try.vikunja.io@evil.com/api/v1/user' : null,
+        },
+      } as unknown as Response);
+      await expect(client.getCurrentUser()).rejects.toThrow(/cross-origin|redirect/i);
 
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: false,
@@ -290,14 +358,17 @@ describe('VikunjaClient & URL Security', () => {
       const projects = await client.getProjects();
       expect(projects).toEqual(mockProjects);
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/projects',
+        'https://try.vikunja.io/api/v1/projects?page=1&per_page=50',
         expect.anything()
       );
     });
 
-    it('paginates getProjects() automatically when multiple pages exist', async () => {
+    it('paginates getProjects() automatically when multiple pages exist and deduplicates cross-page IDs', async () => {
       const page1 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, title: `List ${i + 1}` }));
-      const page2 = [{ id: 51, title: 'List 51' }];
+      const page2 = [
+        { id: 50, title: 'List 50 Updated' },
+        { id: 51, title: 'List 51' },
+      ];
 
       global.fetch = jest
         .fn()
@@ -306,6 +377,8 @@ describe('VikunjaClient & URL Security', () => {
 
       const projects = await client.getProjects();
       expect(projects).toHaveLength(51);
+      expect(projects[49]).toEqual({ id: 50, title: 'List 50 Updated' });
+      expect(projects[50]).toEqual({ id: 51, title: 'List 51' });
       expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
@@ -446,7 +519,7 @@ describe('VikunjaClient & URL Security', () => {
       const archived = await client.getProjects({ is_archived: true });
       expect(archived).toHaveLength(1);
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/projects?is_archived=true',
+        'https://try.vikunja.io/api/v1/projects?is_archived=true&page=1&per_page=50',
         expect.anything()
       );
     });
@@ -657,7 +730,7 @@ describe('VikunjaClient & URL Security', () => {
       const tasks = await client.getTasks(1);
       expect(tasks).toEqual(mockTasks);
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/projects/1/tasks',
+        'https://try.vikunja.io/api/v1/projects/1/tasks?page=1&per_page=50',
         expect.anything()
       );
 
@@ -833,38 +906,67 @@ describe('VikunjaClient & URL Security', () => {
       );
     });
 
-    it('should toggle task completion with task snapshot to prevent field wiping', async () => {
-      const snapshot = {
+    it('should toggle task completion via fetch-then-merge patchTask, preserving server fields and relational slices', async () => {
+      const remoteFresh = {
+        id: 10,
         title: 'Buy groceries',
-        description: 'Apples and milk',
+        description: 'Remote updated notes',
+        done: false,
         priority: 2,
         project_id: 1,
         due_date: '2026-10-10T12:00:00Z',
+        labels: [{ id: 3, title: 'Grocery' }],
         assignees: [{ id: 101, username: 'terahz' }],
       };
 
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ id: 10, done: true, ...snapshot }),
-      } as Response);
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => remoteFresh,
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ...remoteFresh,
+            done: true,
+            labels: null,
+            assignees: null,
+          }),
+        } as Response);
 
-      const updated = await client.toggleTaskDone(10, true, snapshot);
+      const updated = await client.toggleTaskDone(10, true);
       expect(updated.done).toBe(true);
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(updated.description).toBe('Remote updated notes');
+      expect(updated.labels).toEqual([{ id: 3, title: 'Grocery' }]);
+      expect(updated.assignees).toEqual([{ id: 101, username: 'terahz' }]);
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        1,
+        'https://try.vikunja.io/api/v1/tasks/10',
+        expect.objectContaining({ method: 'GET' })
+      );
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
         'https://try.vikunja.io/api/v1/tasks/10',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
-            ...snapshot,
+            ...remoteFresh,
             done: true,
           }),
         })
       );
+
+      // Never swallows getTask() failure into empty `{}`!
+      global.fetch = jest.fn().mockRejectedValueOnce(new Error('Network offline'));
+      await expect(client.patchTask(10, { done: true })).rejects.toThrow('Network offline');
     });
 
-    it('should move task with task snapshot to prevent field wiping', async () => {
-      const snapshot = {
+    it('should move task via fetch-then-merge patchTask to prevent field wiping', async () => {
+      const remoteFresh = {
+        id: 10,
         title: 'Buy groceries',
         description: 'Apples and milk',
         done: false,
@@ -872,20 +974,28 @@ describe('VikunjaClient & URL Security', () => {
         project_id: 1,
       };
 
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ id: 10, ...snapshot, project_id: 5 }),
-      } as Response);
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => remoteFresh,
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ ...remoteFresh, project_id: 5 }),
+        } as Response);
 
-      const moved = await client.moveTask(10, 5, snapshot);
+      const moved = await client.moveTask(10, 5);
       expect(moved.project_id).toBe(5);
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
         'https://try.vikunja.io/api/v1/tasks/10',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
-            ...snapshot,
+            ...remoteFresh,
             project_id: 5,
           }),
         })
@@ -998,7 +1108,7 @@ describe('VikunjaClient & URL Security', () => {
       const labels = await client.getLabels();
       expect(labels).toEqual(mockLabels);
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/labels',
+        'https://try.vikunja.io/api/v1/labels?page=1&per_page=50',
         expect.anything()
       );
     });
@@ -1905,7 +2015,7 @@ describe('VikunjaClient & URL Security', () => {
       });
       expect(tasksFromView).toHaveLength(1);
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://try.vikunja.io/api/v1/projects/-2/views/19/tasks',
+        'https://try.vikunja.io/api/v1/projects/-2/views/19/tasks?page=1&per_page=50',
         expect.objectContaining({ method: 'GET' })
       );
 
@@ -1935,9 +2045,139 @@ describe('VikunjaClient & URL Security', () => {
       expect(fallbackTasks).toHaveLength(1);
       expect(global.fetch).toHaveBeenNthCalledWith(
         2,
-        'https://try.vikunja.io/api/v1/projects/-1/tasks',
+        'https://try.vikunja.io/api/v1/projects/-1/tasks?page=1&per_page=50',
         expect.objectContaining({ method: 'GET' })
       );
+    });
+  });
+
+  describe('Round 2 Adversarial Audit Regressions (RFC 5952 IPv6, Octal/Hex Hosts, Zero-ID Dedup & Reorder Fallback)', () => {
+    it('canonicalizes IPv6 literals per RFC 5952 and treats non-canonical vs canonical XHR response.url as same-origin', async () => {
+      const { parseHttpUrl } = jest.requireActual('../client');
+
+      const expanded = parseHttpUrl('https://[2001:0db8:0000:0000:0000:0000:0000:0001]:443/api/v1');
+      expect(expanded.hostname).toBe('[2001:db8::1]');
+      expect(expanded.origin).toBe('https://[2001:db8::1]');
+      expect(expanded.port).toBe('');
+
+      const tieBreak = parseHttpUrl('http://[2001:db8:0:0:1:0:0:1]:3456');
+      expect(tieBreak.hostname).toBe('[2001:db8::1:0:0:1]');
+      expect(tieBreak.host).toBe('[2001:db8::1:0:0:1]:3456');
+
+      const singleZero = parseHttpUrl('http://[2001:db8:0:1:1:1:1:1]');
+      expect(singleZero.hostname).toBe('[2001:db8:0:1:1:1:1:1]');
+
+      const mapped = parseHttpUrl('http://[::ffff:192.168.1.50]:8080');
+      expect(mapped.hostname).toBe('[::ffff:c0a8:132]');
+
+      const v6Client = new VikunjaClient({
+        baseUrl: 'http://[2001:0db8:0000:0000:0000:0000:0000:0001]:3456/api/v1',
+        token: 'jwt-v6',
+      });
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'http://[2001:db8::1]:3456/api/v1/projects?page=1&per_page=50',
+        headers: { get: () => null } as any,
+        json: async () => [{ id: 1, title: 'IPv6 Project' }],
+      } as Response);
+
+      const projects = await v6Client.getProjects();
+      expect(projects).toHaveLength(1);
+      expect(projects[0].title).toBe('IPv6 Project');
+    });
+
+    it('rejects octal IPv4 octets, numeric/hex TLDs, and backslashes in redirect Location headers', () => {
+      const { parseHttpUrl, resolveHttpRedirectUrl } = jest.requireActual('../client');
+
+      expect(() => parseHttpUrl('http://010.0.0.1')).toThrow();
+      expect(() => parseHttpUrl('http://192.168.01.1')).toThrow();
+      expect(() => parseHttpUrl('http://0x7f000001')).toThrow();
+      expect(() => parseHttpUrl('http://example.123')).toThrow();
+      expect(() => parseHttpUrl('http://sub.0xff')).toThrow();
+
+      expect(() =>
+        resolveHttpRedirectUrl(
+          'https://try.vikunja.io\\@evil.com/steal',
+          'https://try.vikunja.io/api/v1'
+        )
+      ).toThrow();
+      expect(() =>
+        resolveHttpRedirectUrl('\\\\evil.com/path', 'https://try.vikunja.io/api/v1')
+      ).toThrow();
+    });
+
+    it('never collapses Go zero-value id: 0 items during pagination and fetches fresh task on reorderTask 404 fallback', async () => {
+      const client = new VikunjaClient({
+        baseUrl: 'https://try.vikunja.io/api/v1',
+        token: 'jwt-test',
+      });
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => null } as any,
+        json: async () => [
+          { id: 0, title: 'Zero Item A' },
+          { id: 0, title: 'Zero Item B' },
+        ],
+      } as Response);
+
+      const zeroItems = await client.getProjects();
+      expect(zeroItems).toHaveLength(2);
+
+      // reorderTask 404 fallback should call getTask(42) via patchTask rather than trusting stale taskSnapshot
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          headers: { get: () => 'application/json' } as any,
+          json: async () => ({ message: 'No position endpoint' }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' } as any,
+          json: async () => ({
+            id: 42,
+            title: 'Fresh Server Title',
+            done: false,
+            priority: 4,
+            project_id: 1,
+            labels: [{ id: 9, title: 'KeepMe' }],
+          }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' } as any,
+          json: async () => ({
+            id: 42,
+            title: 'Fresh Server Title',
+            done: false,
+            priority: 4,
+            project_id: 1,
+            position: 2500,
+            labels: null,
+          }),
+        } as Response);
+
+      const reordered = await client.reorderTask(42, 2500, 10, {
+        id: 42,
+        title: 'Stale Snapshot Title',
+        done: false,
+        priority: 1,
+        project_id: 1,
+      });
+
+      expect(reordered.title).toBe('Fresh Server Title');
+      expect(reordered.position).toBe(2500);
+      expect(reordered.labels).toEqual([{ id: 9, title: 'KeepMe' }]);
+      const updateBody = JSON.parse((global.fetch as jest.Mock).mock.calls[2][1].body);
+      expect(updateBody.title).toBe('Fresh Server Title');
+      expect(updateBody.position).toBe(2500);
     });
   });
 });

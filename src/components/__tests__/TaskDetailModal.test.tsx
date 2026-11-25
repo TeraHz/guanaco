@@ -548,4 +548,214 @@ describe('TaskDetailModal (CUJ 2)', () => {
     expect(mockOnDuplicateTask).toHaveBeenCalledWith(10);
     expect(mockOnClose).toHaveBeenCalled();
   });
+
+  it('closes immediately when clean, prompts confirmation before discarding unsaved edits on native & web, and preserves snapshot across -tempId -> positiveId remap', () => {
+    const alertSpy = jest.spyOn(Alert, 'alert');
+    const { act } = require('@testing-library/react-native');
+
+    const optimisticTask: Task = { ...mockTask, id: -501 };
+    const { getByTestId, queryByTestId, rerender } = render(
+      <TaskDetailModal
+        visible={true}
+        task={optimisticTask}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+      />
+    );
+
+    // 1. Clean close calls onClose immediately without Alert
+    fireEvent.press(getByTestId('task-detail-close-btn'));
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+    mockOnClose.mockClear();
+
+    // 2. Edit title while optimistic, then remap -501 -> 901 -> still dirty on Cancel!
+    fireEvent.changeText(getByTestId('task-detail-title-input'), 'Grocery Run Edited');
+    rerender(
+      <TaskDetailModal
+        visible={true}
+        task={{ ...optimisticTask, id: 901 }}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+      />
+    );
+
+    fireEvent.press(getByTestId('task-detail-close-btn'));
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Discard Changes?',
+      'You have unsaved changes to this task.',
+      expect.any(Array)
+    );
+    expect(mockOnClose).not.toHaveBeenCalled();
+
+    const buttons = alertSpy.mock.calls[0][2] as any[];
+    expect(buttons.find((b) => b.text === 'Keep Editing')).toBeTruthy();
+    act(() => {
+      buttons.find((b) => b.text === 'Discard').onPress();
+    });
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+
+    // 3. Web inline fallback when window.confirm is absent
+    mockOnClose.mockClear();
+    Platform.OS = 'web';
+    const origWindow = (global as any).window;
+    (global as any).window = undefined;
+    try {
+      rerender(
+        <TaskDetailModal
+          visible={false}
+          task={null}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+          onDelete={mockOnDelete}
+        />
+      );
+      rerender(
+        <TaskDetailModal
+          visible={true}
+          task={null}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+          onDelete={mockOnDelete}
+        />
+      );
+
+      fireEvent.changeText(getByTestId('task-detail-title-input'), 'Unsaved web draft');
+      fireEvent.press(getByTestId('task-detail-close-btn'));
+      expect(getByTestId('task-web-discard-confirm')).toBeTruthy();
+      expect(mockOnClose).not.toHaveBeenCalled();
+
+      fireEvent.press(getByTestId('task-discard-cancel-btn'));
+      expect(queryByTestId('task-web-discard-confirm')).toBeNull();
+
+      fireEvent.press(getByTestId('task-detail-close-btn'));
+      fireEvent.press(getByTestId('task-discard-confirm-btn'));
+      expect(mockOnClose).toHaveBeenCalledTimes(1);
+    } finally {
+      (global as any).window = origWindow;
+    }
+  });
+
+  it('renders read-only pill, hides Save/Delete/Duplicate, sets inputs editable=false, and disables mutation controls when readOnly=true', () => {
+    const mockOnDuplicate = jest.fn();
+    const mockOnToggleSubtask = jest.fn();
+    const mockOnDeleteSubtask = jest.fn();
+
+    const taskWithSub: Task = {
+      ...mockTask,
+      related_tasks: {
+        subtask: [{ id: 301, title: 'Read-only step', done: false, priority: 0, project_id: 1 }],
+      },
+    };
+
+    const { getByTestId, queryByTestId, getByText } = render(
+      <TaskDetailModal
+        visible={true}
+        task={taskWithSub}
+        readOnly={true}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onDelete={mockOnDelete}
+        onDuplicateTask={mockOnDuplicate}
+        onToggleSubtask={mockOnToggleSubtask}
+        onDeleteSubtask={mockOnDeleteSubtask}
+      />
+    );
+
+    expect(getByTestId('task-detail-readonly-badge')).toBeTruthy();
+    expect(getByText('Read-only')).toBeTruthy();
+    expect(queryByTestId('task-detail-save-btn')).toBeNull();
+    expect(queryByTestId('task-detail-delete-btn')).toBeNull();
+    expect(queryByTestId('task-detail-duplicate-btn')).toBeNull();
+
+    expect(getByTestId('task-detail-title-input').props.editable).toBe(false);
+    expect(getByTestId('task-detail-description-input').props.editable).toBe(false);
+
+    fireEvent.press(getByTestId('task-detail-done-toggle'));
+    fireEvent.press(getByTestId('subtask-checkbox-301'));
+    expect(mockOnToggleSubtask).not.toHaveBeenCalled();
+    expect(queryByTestId('delete-subtask-301')).toBeNull();
+    expect(queryByTestId('add-subtask-btn')).toBeNull();
+    expect(queryByTestId('remove-assignee-alex')).toBeNull();
+    expect(queryByTestId('remove-label-Costco')).toBeNull();
+
+    // Header Close button closes cleanly without prompt
+    fireEvent.press(getByTestId('task-detail-close-btn'));
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('avoids false-positive Discard prompt when toggling repeat to Daily and back to Never on legacy repeat_mode=2 task, saves Monthly -> Never via onSaveDirty, and locks cross-project read-only subtasks', () => {
+    const alertSpy = jest.spyOn(Alert, 'alert');
+    const mockOnSaveDirty = jest.fn();
+    const mockOnToggleSubtask = jest.fn();
+    const mockOnDeleteSubtask = jest.fn();
+
+    const legacyRepeatTask: Task = {
+      ...mockTask,
+      repeat_after: 0,
+      repeat_mode: 2,
+      related_tasks: {
+        subtask: [
+          { id: 401, title: 'Writable Sub', done: false, priority: 0, project_id: 1 },
+          { id: 402, title: 'ReadOnly Cross-List Sub', done: false, priority: 0, project_id: 9 },
+        ],
+      },
+    };
+
+    const { getByTestId, queryByTestId, rerender } = render(
+      <TaskDetailModal
+        visible={true}
+        task={legacyRepeatTask}
+        allProjects={[
+          { id: 1, title: 'Writable', max_permission: 2 },
+          { id: 9, title: 'Shared RO', max_permission: 0 },
+        ]}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onSaveDirty={mockOnSaveDirty}
+        onDelete={mockOnDelete}
+        onToggleSubtask={mockOnToggleSubtask}
+        onDeleteSubtask={mockOnDeleteSubtask}
+      />
+    );
+
+    // Cross-project read-only subtask 402 cannot be toggled or deleted, while 401 remains writable
+    expect(getByTestId('delete-subtask-401')).toBeTruthy();
+    expect(queryByTestId('delete-subtask-402')).toBeNull();
+    fireEvent.press(getByTestId('subtask-checkbox-402'));
+    expect(mockOnToggleSubtask).not.toHaveBeenCalled();
+    fireEvent.press(getByTestId('subtask-checkbox-401'));
+    expect(mockOnToggleSubtask).toHaveBeenCalledWith(401);
+
+    // Toggle repeat Daily -> back to Never: repeatAfter is 0 again, so closing does NOT prompt Discard!
+    fireEvent.press(getByTestId('repeat-preset-daily'));
+    fireEvent.press(getByTestId('repeat-preset-never'));
+    fireEvent.press(getByTestId('task-detail-close-btn'));
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+
+    // Edit ONLY priority and tap Save -> onSaveDirty receives ONLY { priority: 5 }
+    fireEvent.press(getByTestId('priority-option-5'));
+    fireEvent.press(getByTestId('task-detail-save-btn'));
+    expect(mockOnSaveDirty).toHaveBeenCalledWith(10, { priority: 5 });
+    expect(mockOnSave).not.toHaveBeenCalled();
+
+    // Turning OFF an active Vikunja Monthly repeat (`repeat_mode: 1, repeat_after: 0` -> Never) MUST emit repeat_mode: 0!
+    mockOnSaveDirty.mockClear();
+    rerender(
+      <TaskDetailModal
+        visible={true}
+        task={{ ...mockTask, id: 77, repeat_after: 0, repeat_mode: 1 }}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        onSaveDirty={mockOnSaveDirty}
+        onDelete={mockOnDelete}
+      />
+    );
+    fireEvent.press(getByTestId('repeat-preset-never'));
+    fireEvent.press(getByTestId('task-detail-save-btn'));
+    expect(mockOnSaveDirty).toHaveBeenCalledWith(77, { repeat_after: 0, repeat_mode: 0 });
+  });
 });

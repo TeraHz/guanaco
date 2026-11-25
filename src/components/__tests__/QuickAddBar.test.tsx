@@ -430,4 +430,70 @@ describe('QuickAddBar', () => {
     expect(getByText('#Costco')).toBeTruthy();
     expect(queryByText(/🏷️/)).toBeNull();
   });
+
+  it('disables input, priority, and submit when disabled=true and gates (+) detailed button on writable availableProjects', () => {
+    const mockDetailedAdd = jest.fn();
+    const { getByTestId, getByPlaceholderText, rerender } = render(
+      <QuickAddBar
+        activeProjectId={0}
+        availableProjects={[]}
+        disabled={true}
+        onAddTask={mockOnAddTask}
+        onDetailedAdd={mockDetailedAdd}
+      />
+    );
+
+    const input = getByPlaceholderText('Read-only shared list');
+    expect(input.props.editable).toBe(false);
+
+    fireEvent.press(getByTestId('quick-add-priority'));
+    expect(getByTestId('quick-add-priority').props.accessibilityLabel).toContain('None');
+
+    fireEvent.press(getByTestId('quick-add-submit'));
+    expect(mockOnAddTask).not.toHaveBeenCalled();
+
+    // No writable projects -> (+) button is disabled
+    fireEvent.press(getByTestId('green-add-task-fab'));
+    expect(mockDetailedAdd).not.toHaveBeenCalled();
+
+    // At least one writable project -> (+) button is enabled so user can add to writable list
+    rerender(
+      <QuickAddBar
+        activeProjectId={2}
+        availableProjects={[{ id: 2, title: 'Personal' }]}
+        disabled={true}
+        onAddTask={mockOnAddTask}
+        onDetailedAdd={mockDetailedAdd}
+      />
+    );
+    fireEvent.press(getByTestId('green-add-task-fab'));
+    expect(mockDetailedAdd).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks submission and shows danger Read-only chip when +Project targets a read-only list in allProjects', () => {
+    const { getByTestId, getByText } = render(
+      <QuickAddBar
+        activeProjectId={1}
+        availableProjects={[{ id: 1, title: 'Inbox' }]}
+        allProjects={[
+          { id: 1, title: 'Inbox', max_permission: 2 },
+          { id: 3, title: 'Announcements', max_permission: 0 },
+        ]}
+        onAddTask={mockOnAddTask}
+      />
+    );
+
+    const input = getByTestId('quick-add-input');
+    fireEvent.changeText(input, 'Post update +Announcements');
+
+    expect(getByText('+Announcements (Read-only)')).toBeTruthy();
+    expect(
+      getByTestId('quick-add-submit').props.accessibilityState?.disabled ??
+        getByTestId('quick-add-submit').props.disabled
+    ).toBeTruthy();
+
+    fireEvent.press(getByTestId('quick-add-submit'));
+    fireEvent(input, 'submitEditing');
+    expect(mockOnAddTask).not.toHaveBeenCalled();
+  });
 });

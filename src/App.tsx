@@ -14,8 +14,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useTaskStore, CACHE_KEY_LOCAL_MODE } from './store/taskStore';
-import { SYNC_QUEUE_STORAGE_KEY } from './store/syncQueue';
+import { useShallow } from 'zustand/react/shallow';
+import {
+  useTaskStore,
+  CACHE_KEY_LOCAL_MODE,
+  CACHE_KEY_SYNC_FAILURES,
+} from './store/taskStore';
+import { countDistinctPendingChanges, SYNC_QUEUE_STORAGE_KEY } from './store/syncQueue';
 import {
   clearMigrationCheckpoint,
   isUntouchedEmptyStarterProject,
@@ -35,11 +40,11 @@ import {
   clearStoredAuth,
   clearStoredCredentialsOnly,
   clearNativeCookies,
-  checkBiometricAvailable,
+  getAppLockCapability,
   isBiometricEnabled,
   getCachedBiometricEnabled,
   setBiometricEnabled,
-  authenticateWithBiometrics,
+  unlockWithBestAvailableMethod,
   authenticateWithDeviceCredentials,
   cancelBiometricPrompt,
   isAndroidActivityReadyForBiometrics,
@@ -62,6 +67,19 @@ import { loadStoredLanguagePreference, t as translate, useTranslation } from './
 /** Grace period in milliseconds in background before requiring biometric re-unlock on resume. */
 export const BIOMETRIC_LOCK_GRACE_MS = 15_000;
 
+interface PendingNotificationAction {
+  actionId: string;
+  notifId: string;
+  taskId: number;
+  data: {
+    taskId?: number;
+    taskDueDate?: string | null;
+    occurrenceAnchor?: string | null;
+  };
+}
+
+type UnsyncedSwitchDecision = 'cancel' | 'discard' | 'keep_and_sync';
+
 export default function App() {
   const theme = useAppTheme();
   const { t } = useTranslation();
@@ -70,6 +88,11 @@ export default function App() {
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [isIosInactive, setIsIosInactive] = useState(
+    () =>
+      Platform.OS === 'ios' &&
+      (AppState.currentState === 'inactive' || AppState.currentState === 'background')
+  );
   const [lockError, setLockError] = useState<string | null>(null);
   const [pendingLockLogoutCount, setPendingLockLogoutCount] = useState<number | null>(null);
   const [pendingLockEraseLocal, setPendingLockEraseLocal] = useState(false);
@@ -84,6 +107,13 @@ export default function App() {
     refreshToken: string | null;
     username: string | null;
   } | null>(null);
+  const [pendingNotifActionCount, setPendingNotifActionCount] = useState(0);
+  const [webUnsyncedSwitchPrompt, setWebUnsyncedSwitchPrompt] = useState<{
+    title: string;
+    message: string;
+    allowKeepAndSync: boolean;
+    resolve: (decision: UnsyncedSwitchDecision) => void;
+  } | null>(null);
 
   const backgroundedAtRef = useRef<number | null>(null);
   const biometricPromptInFlightRef = useRef(false);
@@ -92,8 +122,11 @@ export default function App() {
   const isConnectingRef = useRef(false);
   const logoutEpochRef = useRef(0);
   const handledNotifKeysRef = useRef<Set<string>>(new Set());
+  const pendingNotifActionsRef = useRef<PendingNotificationAction[]>([]);
   const isLockedRef = useRef(isLocked);
   isLockedRef.current = isLocked;
+  const isAuthenticatedRef = useRef(isAuthenticated);
+  isAuthenticatedRef.current = isAuthenticated;
 
   const {
     initialize,
@@ -102,9 +135,41 @@ export default function App() {
     authRequired,
     pendingSyncCount,
     isLocalMode,
-    projects,
-    tasks,
-  } = useTaskStore();
+    hasClient,
+    isLoading,
+    isSyncingAll,
+  } = useTaskStore(
+    useShallow((state) => ({
+      initialize: state.initialize,
+      initializeLocalMode: state.initializeLocalMode,
+      syncAll: state.syncAll,
+      authRequired: state.authRequired,
+      pendingSyncCount: state.pendingSyncCount,
+      isLocalMode: state.isLocalMode,
+      hasClient: Boolean(state.client),
+      isLoading: pendingNotifActionCount > 0 ? state.isLoading : false,
+      isSyncingAll: pendingNotifActionCount > 0 ? Boolean(state.isSyncingAll) : false,
+    }))
+  );
+
+  const localMigrationStats = useTaskStore(
+    useShallow((state) => {
+      if (!showConnectServerFromLocal || !state.isLocalMode) {
+        return undefined;
+      }
+      const safeProjs = Array.isArray(state.projects)
+        ? state.projects.filter((p) => p && p.id > 0 && !p.is_saved_filter)
+        : [];
+      const safeTasks = Array.isArray(state.tasks) ? state.tasks.filter(Boolean) : [];
+      const nonEmptyOrCustomLists = safeProjs.filter(
+        (p) => !isUntouchedEmptyStarterProject(p, safeProjs, safeTasks)
+      ).length;
+      return {
+        lists: nonEmptyOrCustomLists,
+        tasks: safeTasks.length,
+      };
+    })
+  );
 
   useEffect(() => {
     const unsub = useTaskStore.subscribe((state, prev) => {
@@ -114,12 +179,15 @@ export default function App() {
         !state.isLocalMode &&
         !isConnectingRef.current
       ) {
+        pendingNotifActionsRef.current = [];
+        setPendingNotifActionCount(0);
         setIsDrawerOpen(false);
         setShowReauthLogin(false);
         setShowConnectServerFromLocal(false);
         setLockError(null);
         setPendingLockLogoutCount(null);
         setPendingLockEraseLocal(false);
+        isLockedRef.current = false;
         setIsLocked(false);
         setIsAuthenticated(false);
       }
@@ -152,11 +220,6 @@ export default function App() {
       if (!response) return;
       const actionId = response?.actionIdentifier || 'DEFAULT';
       const notifId = response?.notification?.request?.identifier || '';
-      const dedupeKey = notifId ? `${notifId}:${actionId}` : '';
-      if (dedupeKey && handledNotifKeysRef.current.has(dedupeKey)) {
-        return;
-      }
-
       const data = (response?.notification?.request?.content?.data || {}) as {
         taskId?: number;
         taskDueDate?: string | null;
@@ -165,46 +228,62 @@ export default function App() {
       const taskId = typeof data.taskId === 'number' ? data.taskId : null;
       if (taskId === null) return;
 
-      const isBgPastLockGrace =
-        backgroundedAtRef.current !== null &&
-        Date.now() - backgroundedAtRef.current >= BIOMETRIC_LOCK_GRACE_MS &&
-        getCachedBiometricEnabled();
-
-      if (actionId === NOTIF_ACTION_MARK_DONE) {
-        const store = useTaskStore.getState();
-        // Never dismiss or mutate while locked or uninitialized so user never loses the tray notification
-        if (isLockedRef.current || isBgPastLockGrace || (!store.client && !store.isLocalMode)) {
-          return;
-        }
-        if (dedupeKey) handledNotifKeysRef.current.add(dedupeKey);
-        if (notifId && typeof Notifications.dismissNotificationAsync === 'function') {
-          Notifications.dismissNotificationAsync(notifId).catch(() => {});
-        }
-        const target = (store.tasks || []).find((t) => t.id === taskId);
-        if (shouldCompleteTaskFromNotification(target, data)) {
-          store.toggleTask(taskId);
-        }
+      const dedupeKey = notifId
+        ? `${notifId}:${actionId}`
+        : `${actionId}:${taskId}:${data.taskDueDate ?? ''}:${data.occurrenceAnchor ?? ''}`;
+      if (dedupeKey && handledNotifKeysRef.current.has(dedupeKey)) {
         return;
       }
 
-      if (actionId === NOTIF_ACTION_SNOOZE_15M) {
+      const isBgPastLockGrace = Boolean(
+        backgroundedAtRef.current !== null &&
+          Date.now() - backgroundedAtRef.current >= BIOMETRIC_LOCK_GRACE_MS &&
+          getCachedBiometricEnabled()
+      );
+
+      if (isBgPastLockGrace && !isSystemFileDialogRecentlyActive()) {
+        isLockedRef.current = true;
+        setLockError(null);
+        setPendingLockLogoutCount(null);
+        setPendingLockEraseLocal(false);
+        setIsLocked(true);
+        setIsDrawerOpen(false);
+      }
+
+      if (actionId === NOTIF_ACTION_MARK_DONE || actionId === NOTIF_ACTION_SNOOZE_15M) {
+        if (dedupeKey) handledNotifKeysRef.current.add(dedupeKey);
+        (Notifications as any).clearLastNotificationResponseAsync?.().catch(() => {});
         const store = useTaskStore.getState();
-        if (isLockedRef.current || isBgPastLockGrace || (!store.client && !store.isLocalMode)) {
+        const target = (store.tasks || []).find((t) => t.id === taskId);
+        const shouldQueue =
+          isLockedRef.current ||
+          isBgPastLockGrace ||
+          !isAuthenticatedRef.current ||
+          (!store.client && !store.isLocalMode) ||
+          (!target && (Boolean(store.isLoading) || Boolean(store.isSyncingAll)));
+
+        if (shouldQueue) {
+          pendingNotifActionsRef.current.push({ actionId, notifId, taskId, data });
+          setPendingNotifActionCount((c) => c + 1);
           return;
         }
-        if (dedupeKey) handledNotifKeysRef.current.add(dedupeKey);
+
         if (notifId && typeof Notifications.dismissNotificationAsync === 'function') {
           Notifications.dismissNotificationAsync(notifId).catch(() => {});
         }
-        const target = (store.tasks || []).find((t) => t.id === taskId);
-        if (shouldCompleteTaskFromNotification(target, data) && target) {
-          scheduleSnoozedReminder(target, 15).catch(() => {});
+        if (shouldCompleteTaskFromNotification(target, data)) {
+          if (actionId === NOTIF_ACTION_MARK_DONE) {
+            store.toggleTask(taskId);
+          } else if (target) {
+            scheduleSnoozedReminder(target, 15).catch(() => {});
+          }
         }
         return;
       }
 
       // Default notification tap: stage taskId and close any open overlays so ProjectTasksScreen opens it cleanly
       if (dedupeKey) handledNotifKeysRef.current.add(dedupeKey);
+      (Notifications as any).clearLastNotificationResponseAsync?.().catch(() => {});
       setIsDrawerOpen(false);
       if (!isConnectingRef.current) {
         setShowReauthLogin(false);
@@ -219,15 +298,7 @@ export default function App() {
       Notifications.getLastNotificationResponseAsync()
         .then((lastResp) => {
           if (!lastResp) return;
-          const actionId = lastResp?.actionIdentifier;
-          // Only replay default tap-to-open from cold launch so action buttons aren't re-triggered later
-          if (
-            !actionId ||
-            actionId === (Notifications as any).DEFAULT_ACTION_IDENTIFIER ||
-            actionId === 'expo.modules.notifications.actions.DEFAULT'
-          ) {
-            handleNotificationResponse(lastResp);
-          }
+          handleNotificationResponse(lastResp);
         })
         .catch(() => {});
     }
@@ -236,6 +307,62 @@ export default function App() {
       sub?.remove?.();
     };
   }, []);
+
+  // Flush queued cold-start or locked notification actions as soon as session is unlocked and hydrated
+  useEffect(() => {
+    const isBgPastLockGraceNow = Boolean(
+      backgroundedAtRef.current !== null &&
+        Date.now() - backgroundedAtRef.current >= BIOMETRIC_LOCK_GRACE_MS &&
+        getCachedBiometricEnabled() &&
+        !isSystemFileDialogRecentlyActive()
+    );
+    if (
+      pendingNotifActionsRef.current.length === 0 ||
+      !isAuthenticated ||
+      isLocked ||
+      isLockedRef.current ||
+      isBgPastLockGraceNow ||
+      (!hasClient && !isLocalMode)
+    ) {
+      return;
+    }
+
+    const queued = [...pendingNotifActionsRef.current];
+    const remaining: PendingNotificationAction[] = [];
+
+    for (const item of queued) {
+      const store = useTaskStore.getState();
+      const target = (store.tasks || []).find((t) => t.id === item.taskId);
+      if (!target && (store.isLoading || store.isSyncingAll)) {
+        remaining.push(item);
+        continue;
+      }
+
+      if (item.notifId && typeof Notifications.dismissNotificationAsync === 'function') {
+        Notifications.dismissNotificationAsync(item.notifId).catch(() => {});
+      }
+      if (shouldCompleteTaskFromNotification(target, item.data)) {
+        if (item.actionId === NOTIF_ACTION_MARK_DONE) {
+          store.toggleTask(item.taskId);
+        } else if (item.actionId === NOTIF_ACTION_SNOOZE_15M && target) {
+          scheduleSnoozedReminder(target, 15).catch(() => {});
+        }
+      }
+    }
+
+    pendingNotifActionsRef.current = remaining;
+    if (remaining.length !== pendingNotifActionCount) {
+      setPendingNotifActionCount(remaining.length);
+    }
+  }, [
+    hasClient,
+    isAuthenticated,
+    isLoading,
+    isLocalMode,
+    isLocked,
+    isSyncingAll,
+    pendingNotifActionCount,
+  ]);
 
   const promptBiometricUnlock = useCallback(
     async (options?: { forceReset?: boolean }): Promise<boolean> => {
@@ -246,9 +373,10 @@ export default function App() {
       const seq = ++biometricAttemptSeqRef.current;
       biometricPromptInFlightRef.current = true;
       try {
-        return await authenticateWithBiometrics(translate('lock.unlockGuanaco'), {
+        const result = await unlockWithBestAvailableMethod(translate('lock.unlockGuanaco'), {
           forceReset: Boolean(options?.forceReset || hadInFlight),
         });
+        return result.passed;
       } finally {
         if (biometricAttemptSeqRef.current === seq) {
           biometricPromptInFlightRef.current = false;
@@ -328,11 +456,17 @@ export default function App() {
         );
         if (!mounted || isConnectingRef.current || storedLocalMode !== 'true') return;
 
-        const biometricActive =
-          (await isBiometricEnabled()) && (await checkBiometricAvailable());
+        const bioEnabled = await isBiometricEnabled();
+        const lockCap = bioEnabled
+          ? await getAppLockCapability()
+          : { enforceable: false, biometricAvailable: false };
         if (!mounted || isConnectingRef.current) return;
 
-        if (biometricActive) {
+        if (bioEnabled && !lockCap.enforceable) {
+          await setBiometricEnabled(false).catch(() => {});
+        }
+
+        if (bioEnabled && lockCap.enforceable) {
           setPendingLocalSession(true);
           setLockError(null);
           isLockedRef.current = true;
@@ -367,11 +501,17 @@ export default function App() {
         return;
       }
 
-      const biometricActive =
-        (await isBiometricEnabled()) && (await checkBiometricAvailable());
+      const bioEnabled = await isBiometricEnabled();
+      const lockCap = bioEnabled
+        ? await getAppLockCapability()
+        : { enforceable: false, biometricAvailable: false };
       if (!mounted || isConnectingRef.current) return;
 
-      if (biometricActive) {
+      if (bioEnabled && !lockCap.enforceable) {
+        await setBiometricEnabled(false).catch(() => {});
+      }
+
+      if (bioEnabled && lockCap.enforceable) {
         const sessionData = {
           serverUrl: stored.serverUrl,
           token: stored.token,
@@ -446,10 +586,8 @@ export default function App() {
     };
   }, [promptBiometricUnlock, unlockOfflineSession]);
 
-  // Resume-aware biometric lock (grace period) + bi-directional foreground sync
+  // Resume-aware biometric lock (grace period), iOS switcher privacy curtain & bi-directional foreground sync
   useEffect(() => {
-    if (!isAuthenticated) return;
-
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     const refreshForegroundState = () => {
@@ -457,7 +595,7 @@ export default function App() {
       if (st.isLocalMode && !st.client) {
         syncAppBadgeCount(st.tasks || [], st.appBadgeMode).catch(() => {});
       } else {
-        syncAll().catch(() => {});
+        (syncAll as any)({ silent: true }).catch(() => {});
       }
     };
 
@@ -467,7 +605,7 @@ export default function App() {
         if (AppState.currentState === 'active' && !isLockedRef.current) {
           refreshForegroundState();
         }
-      }, 60000);
+      }, 120000);
     };
 
     const stopPolling = () => {
@@ -477,11 +615,25 @@ export default function App() {
       }
     };
 
-    if (AppState.currentState === 'active' && !isLockedRef.current) {
+    if (Platform.OS === 'ios') {
+      setIsIosInactive(
+        AppState.currentState === 'inactive' || AppState.currentState === 'background'
+      );
+    }
+
+    if (isAuthenticated && AppState.currentState === 'active' && !isLockedRef.current) {
       startPolling();
     }
 
     const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (Platform.OS === 'ios') {
+        setIsIosInactive(nextAppState === 'inactive' || nextAppState === 'background');
+      }
+
+      if (!isAuthenticated) {
+        return;
+      }
+
       if (nextAppState === 'background') {
         if (backgroundedAtRef.current === null) {
           backgroundedAtRef.current = Date.now();
@@ -521,9 +673,11 @@ export default function App() {
 
         (async () => {
           if (!skipLockForSystemDialog && bgAt !== null && elapsedMs >= BIOMETRIC_LOCK_GRACE_MS) {
-            const bioActive =
-              (await isBiometricEnabled()) && (await checkBiometricAvailable());
-            if (bioActive) {
+            const bioEnabled = await isBiometricEnabled();
+            const lockCap = bioEnabled
+              ? await getAppLockCapability()
+              : { enforceable: false, biometricAvailable: false };
+            if (bioEnabled && lockCap.enforceable) {
               isLockedRef.current = true;
               setLockError(null);
               setPendingLockLogoutCount(null);
@@ -545,10 +699,15 @@ export default function App() {
               }
               isLockedRef.current = false;
               setIsLocked(false);
-            } else if (isLockedRef.current) {
-              // Biometric enrollment was removed at OS level while backgrounded
-              isLockedRef.current = false;
-              setIsLocked(false);
+            } else {
+              if (bioEnabled && !lockCap.enforceable) {
+                await setBiometricEnabled(false).catch(() => {});
+              }
+              if (isLockedRef.current) {
+                // Zero biometric AND zero OS PIN configured while backgrounded
+                isLockedRef.current = false;
+                setIsLocked(false);
+              }
             }
           }
 
@@ -563,7 +722,12 @@ export default function App() {
 
     let handleFocus: (() => void) | null = null;
     let handleBlur: (() => void) | null = null;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    if (
+      isAuthenticated &&
+      Platform.OS === 'web' &&
+      typeof window !== 'undefined' &&
+      typeof window.addEventListener === 'function'
+    ) {
       handleFocus = () => {
         if (!isLockedRef.current) {
           refreshForegroundState();
@@ -580,10 +744,10 @@ export default function App() {
     return () => {
       subscription?.remove?.();
       stopPolling();
-      if (handleFocus && typeof window !== 'undefined') {
+      if (handleFocus && typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
         window.removeEventListener('focus', handleFocus);
       }
-      if (handleBlur && typeof window !== 'undefined') {
+      if (handleBlur && typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
         window.removeEventListener('blur', handleBlur);
       }
     };
@@ -594,17 +758,22 @@ export default function App() {
     isConnectingRef.current = true;
     setIsConnecting(true);
     try {
-      // Never allow tapping "Use Offline" during cold-start microtasks to bypass an existing biometric-protected session
-      const [stored, storedLocalFlag, bioEnabled, bioAvail] = await Promise.all([
+      // Never allow tapping "Use Offline" during cold-start microtasks to bypass an existing lock-protected session
+      const [stored, storedLocalFlag, bioEnabled] = await Promise.all([
         getStoredAuth().catch(() => null),
         AsyncStorage.getItem(CACHE_KEY_LOCAL_MODE).catch(() => null),
         isBiometricEnabled().catch(() => false),
-        checkBiometricAvailable().catch(() => false),
       ]);
+      const lockCap = bioEnabled
+        ? await getAppLockCapability().catch(() => ({
+            enforceable: true,
+            biometricAvailable: false,
+          }))
+        : { enforceable: false, biometricAvailable: false };
 
       const hasProtectedExistingSession =
         bioEnabled &&
-        bioAvail &&
+        lockCap.enforceable &&
         ((stored && stored.serverUrl && stored.token) || storedLocalFlag === 'true');
 
       if (hasProtectedExistingSession) {
@@ -635,6 +804,8 @@ export default function App() {
       }
 
       // Starting fresh Local Mode: wipe any leftover server tokens/sessions cleanly
+      pendingNotifActionsRef.current = [];
+      setPendingNotifActionCount(0);
       await Promise.all([
         clearStoredAuth(),
         useTaskStore.getState().clearSession(),
@@ -656,12 +827,78 @@ export default function App() {
     }
   };
 
+  const computeUnsyncedChangesCount = async (
+    extraPendingSyncCount = 0
+  ): Promise<number> => {
+    const liveSnap = useTaskStore.getState();
+    const liveQueuePending =
+      typeof liveSnap.syncQueue?.getPendingCount === 'function'
+        ? liveSnap.syncQueue.getPendingCount()
+        : 0;
+
+    let storedQueuePending = 0;
+    try {
+      const rawQueue = await AsyncStorage.getItem(SYNC_QUEUE_STORAGE_KEY);
+      if (rawQueue) {
+        const parsedQueue = JSON.parse(rawQueue);
+        if (Array.isArray(parsedQueue)) {
+          storedQueuePending = countDistinctPendingChanges(parsedQueue);
+        }
+      }
+    } catch (_) {}
+
+    const memNegTaskCount = Array.isArray(liveSnap.tasks)
+      ? liveSnap.tasks.filter((item) => item && typeof item.id === 'number' && item.id < 0).length
+      : 0;
+    let cachedNegTaskCount = 0;
+    if (memNegTaskCount === 0 && liveQueuePending === 0 && storedQueuePending === 0) {
+      try {
+        const rawTasks = await AsyncStorage.getItem('@vikunja_cached_tasks');
+        if (rawTasks) {
+          const parsedTasks = JSON.parse(rawTasks);
+          if (Array.isArray(parsedTasks)) {
+            cachedNegTaskCount = parsedTasks.filter(
+              (item: any) => item && typeof item.id === 'number' && item.id < 0
+            ).length;
+          }
+        }
+      } catch (_) {}
+    }
+
+    const pendingQueueChanges = Math.max(
+      Number(liveSnap.pendingSyncCount || 0),
+      Number(extraPendingSyncCount || 0),
+      liveQueuePending,
+      storedQueuePending,
+      memNegTaskCount,
+      cachedNegTaskCount
+    );
+
+    const memFailuresCount = Array.isArray((liveSnap as any).syncFailures)
+      ? (liveSnap as any).syncFailures.length
+      : 0;
+    let storedFailuresCount = 0;
+    if (memFailuresCount === 0) {
+      try {
+        const rawFailures = await AsyncStorage.getItem(CACHE_KEY_SYNC_FAILURES);
+        if (rawFailures) {
+          const parsedFailures = JSON.parse(rawFailures);
+          if (Array.isArray(parsedFailures)) {
+            storedFailuresCount = parsedFailures.length;
+          }
+        }
+      } catch (_) {}
+    }
+
+    return pendingQueueChanges + (memFailuresCount || storedFailuresCount);
+  };
+
   const handleConnect = async (
     rawServerUrl: string,
     username: string,
     secret: string,
     options?: LoginConnectOptions
-  ) => {
+  ): Promise<void | { cancelled?: boolean }> => {
     const parsedUrl = parseAndValidateServerUrl(rawServerUrl);
     if (parsedUrl.isInsecureHttp && !options?.allowInsecureHttp) {
       throw new Error(t('auth.insecureHttpError'));
@@ -679,8 +916,9 @@ export default function App() {
       const initialStoreSnap = useTaskStore.getState();
       const wasLocalMode = Boolean(initialStoreSnap.isLocalMode);
 
-      // Clear any stale native refresh cookies BEFORE authenticating if coming from Local Mode or Token Mode
-      if (wasLocalMode || isTokenAuth) {
+      // Only clear native cookies up-front when coming from standalone Local Mode;
+      // in Server Mode, defer clearNativeCookies() until after user confirms any unsynced switch!
+      if (wasLocalMode) {
         await clearNativeCookies();
       }
 
@@ -688,6 +926,7 @@ export default function App() {
       let activeRefreshToken: string | null = null;
       let resolvedUsername = username.trim();
       let authUser: User | null = null;
+      let passwordAuthClient: VikunjaClient | null = null;
 
       if (isTokenAuth) {
         const candidateToken = secret.trim();
@@ -707,6 +946,7 @@ export default function App() {
         }
       } else {
         const tempClient = new VikunjaClient({ baseUrl: normalizedUrl });
+        passwordAuthClient = tempClient;
         const auth = await tempClient.login(
           resolvedUsername,
           secret,
@@ -726,6 +966,8 @@ export default function App() {
         const migMode = options?.migrationMode ?? 'merge';
 
         if (migMode === 'replace') {
+          pendingNotifActionsRef.current = [];
+          setPendingNotifActionCount(0);
           await clearMigrationCheckpoint();
           await useTaskStore.getState().clearSession();
           if (isTokenAuth) {
@@ -794,6 +1036,15 @@ export default function App() {
           });
 
           if (
+            Array.isArray((migResult as any).skippedTasks) &&
+            (migResult as any).skippedTasks.length > 0
+          ) {
+            (useTaskStore.getState() as any).recordSkippedMigrationTasks?.(
+              (migResult as any).skippedTasks
+            );
+          }
+
+          if (
             migResult.deferredTasks.length > 0 ||
             migResult.deferredRelations.length > 0 ||
             migResult.deferredFollowUps.length > 0
@@ -809,9 +1060,30 @@ export default function App() {
         }
       } else {
         const prevStored = await getStoredAuth();
-        const prevCurrentUser = initialStoreSnap.currentUser;
+        let prevCurrentUser: User | null = initialStoreSnap.currentUser;
+        if (!prevCurrentUser) {
+          try {
+            const rawPrevUser = await AsyncStorage.getItem('@vikunja_current_user');
+            if (rawPrevUser) {
+              const parsedPrevUser = JSON.parse(rawPrevUser);
+              if (parsedPrevUser && typeof parsedPrevUser === 'object') {
+                prevCurrentUser = parsedPrevUser as User;
+              }
+            }
+          } catch (_) {}
+        }
+
+        let canonicalPrevUrl: string | null = null;
+        if (prevStored.serverUrl) {
+          try {
+            canonicalPrevUrl = parseAndValidateServerUrl(prevStored.serverUrl).serverUrl;
+          } catch (_) {
+            canonicalPrevUrl = prevStored.serverUrl.trim().replace(/\/+$/, '');
+          }
+        }
+
         const isDifferentServer =
-          Boolean(prevStored.serverUrl) && prevStored.serverUrl !== normalizedUrl;
+          Boolean(canonicalPrevUrl) && canonicalPrevUrl !== normalizedUrl;
 
         const hadPreviousUser = Boolean(
           prevStored.username || prevCurrentUser?.username || (prevCurrentUser && prevCurrentUser.id > 0)
@@ -845,9 +1117,111 @@ export default function App() {
             (nextIdentifiers.length === 0 || !nextIdentifiers.some((id) => prevIdentifiers.has(id)));
         }
 
-        if (isDifferentServer || isDifferentUser) {
+        const unsyncedCount = await computeUnsyncedChangesCount(
+          initialStoreSnap.pendingSyncCount || 0
+        );
+
+        let switchDecision: UnsyncedSwitchDecision = 'discard';
+
+        if (unsyncedCount > 0 && (isDifferentServer || isDifferentUser)) {
+          const title = t('auth.unsyncedSwitchTitle');
+          setIsConnecting(false);
+          if (isDifferentUser) {
+            const message = t('auth.unsyncedDifferentUserMsg', { count: unsyncedCount });
+            if (Platform.OS === 'web') {
+              switchDecision = await new Promise<UnsyncedSwitchDecision>((resolve) => {
+                setWebUnsyncedSwitchPrompt({
+                  title,
+                  message,
+                  allowKeepAndSync: false,
+                  resolve: (decision) => {
+                    setWebUnsyncedSwitchPrompt(null);
+                    resolve(decision);
+                  },
+                });
+              });
+            } else {
+              switchDecision = await new Promise<UnsyncedSwitchDecision>((resolve) => {
+                Alert.alert(
+                  title,
+                  message,
+                  [
+                    {
+                      text: t('common.cancel'),
+                      style: 'cancel',
+                      onPress: () => resolve('cancel'),
+                    },
+                    {
+                      text: t('auth.discardAndConnect'),
+                      style: 'destructive',
+                      onPress: () => resolve('discard'),
+                    },
+                  ],
+                  { cancelable: true, onDismiss: () => resolve('cancel') }
+                );
+              });
+            }
+          } else {
+            const message = t('auth.unsyncedDifferentUrlMsg', {
+              count: unsyncedCount,
+              prevUrl: canonicalPrevUrl || prevStored.serverUrl || '',
+              nextUrl: normalizedUrl,
+            });
+            if (Platform.OS === 'web') {
+              switchDecision = await new Promise<UnsyncedSwitchDecision>((resolve) => {
+                setWebUnsyncedSwitchPrompt({
+                  title,
+                  message,
+                  allowKeepAndSync: true,
+                  resolve: (decision) => {
+                    setWebUnsyncedSwitchPrompt(null);
+                    resolve(decision);
+                  },
+                });
+              });
+            } else {
+              switchDecision = await new Promise<UnsyncedSwitchDecision>((resolve) => {
+                Alert.alert(
+                  title,
+                  message,
+                  [
+                    {
+                      text: t('auth.keepAndSyncNewUrl'),
+                      onPress: () => resolve('keep_and_sync'),
+                    },
+                    {
+                      text: t('auth.discardAndConnect'),
+                      style: 'destructive',
+                      onPress: () => resolve('discard'),
+                    },
+                    {
+                      text: t('common.cancel'),
+                      style: 'cancel',
+                      onPress: () => resolve('cancel'),
+                    },
+                  ],
+                  { cancelable: true, onDismiss: () => resolve('cancel') }
+                );
+              });
+            }
+          }
+
+          if (switchDecision === 'cancel') {
+            if (passwordAuthClient) {
+              await passwordAuthClient.logoutServer().catch(() => {});
+            }
+            return { cancelled: true };
+          }
+          setIsConnecting(true);
+        }
+
+        if ((isDifferentServer || isDifferentUser) && switchDecision === 'discard') {
+          pendingNotifActionsRef.current = [];
+          setPendingNotifActionCount(0);
           await useTaskStore.getState().clearSession();
-          await setBiometricEnabled(false);
+          if (isDifferentUser || unsyncedCount > 0) {
+            await setBiometricEnabled(false);
+          }
         }
         if (isDifferentServer || isDifferentUser || isTokenAuth) {
           // Only clear native cookies after login if token auth, or if switching users without fresh cookie refresh
@@ -908,6 +1282,12 @@ export default function App() {
 
     const clearCredsPromise = clearStoredCredentialsOnly();
     const clearPromise = useTaskStore.getState().clearSession();
+    setWebUnsyncedSwitchPrompt((prev) => {
+      if (prev) prev.resolve('cancel');
+      return null;
+    });
+    pendingNotifActionsRef.current = [];
+    setPendingNotifActionCount(0);
     setIsDrawerOpen(false);
     setShowReauthLogin(false);
     setShowConnectServerFromLocal(false);
@@ -958,18 +1338,7 @@ export default function App() {
       return;
     }
 
-    let unsyncedCount = pendingSyncCount;
-    if (unsyncedCount <= 0) {
-      try {
-        const rawQueue = await AsyncStorage.getItem(SYNC_QUEUE_STORAGE_KEY);
-        if (rawQueue) {
-          const parsed = JSON.parse(rawQueue);
-          if (Array.isArray(parsed)) {
-            unsyncedCount = parsed.length;
-          }
-        }
-      } catch (_) {}
-    }
+    const unsyncedCount = await computeUnsyncedChangesCount(pendingSyncCount);
 
     if (unsyncedCount <= 0) {
       await handleLogout();
@@ -1033,21 +1402,6 @@ export default function App() {
   const showLoginOverlay = showReauthLogin || showConnectServerFromLocal;
   const showAppShell = isAuthenticated && !isLocked && !showLoginOverlay;
   const isLockedInLocalMode = pendingLocalSession || Boolean(isLocalMode);
-
-  const localMigrationStats = React.useMemo(() => {
-    if (!showConnectServerFromLocal || !isLocalMode) return undefined;
-    const safeProjs = Array.isArray(projects)
-      ? projects.filter((p) => p && p.id > 0 && !p.is_saved_filter)
-      : [];
-    const safeTasks = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
-    const nonEmptyOrCustomLists = safeProjs.filter(
-      (p) => !isUntouchedEmptyStarterProject(p, safeProjs, safeTasks)
-    ).length;
-    return {
-      lists: nonEmptyOrCustomLists,
-      tasks: safeTasks.length,
-    };
-  }, [showConnectServerFromLocal, isLocalMode, projects, tasks]);
 
   return (
     <SafeAreaProvider style={{ flex: 1 }}>
@@ -1348,6 +1702,111 @@ export default function App() {
         )}
 
         {showAppShell && <AppUpdatePromptModal />}
+
+        {webUnsyncedSwitchPrompt && (
+          <View
+            testID="web-unsynced-switch-modal"
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+            style={styles.webConfirmOverlay}
+          >
+            <View
+              style={[
+                styles.lockCard,
+                {
+                  backgroundColor: theme.colors.cardBackground,
+                  borderColor: theme.colors.cardBorder,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.lockTitle,
+                  { color: theme.colors.text, fontSize: 18, marginBottom: 10 },
+                ]}
+              >
+                {webUnsyncedSwitchPrompt.title}
+              </Text>
+              <Text
+                style={[
+                  styles.lockErrorText,
+                  { color: theme.colors.textSecondary, marginBottom: 18 },
+                ]}
+              >
+                {webUnsyncedSwitchPrompt.message}
+              </Text>
+              <View style={styles.webConfirmActionsCol}>
+                {webUnsyncedSwitchPrompt.allowKeepAndSync && (
+                  <TouchableOpacity
+                    testID="web-unsynced-keep-sync-btn"
+                    accessibilityRole="button"
+                    style={[
+                      styles.unlockButton,
+                      { backgroundColor: theme.colors.accent, marginBottom: 8 },
+                    ]}
+                    onPress={() => webUnsyncedSwitchPrompt.resolve('keep_and_sync')}
+                  >
+                    <Text style={styles.unlockButtonText}>
+                      {t('auth.keepAndSyncNewUrl')}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  testID="web-unsynced-discard-btn"
+                  accessibilityRole="button"
+                  style={[
+                    styles.unlockButton,
+                    { backgroundColor: theme.colors.danger, marginBottom: 8 },
+                  ]}
+                  onPress={() => webUnsyncedSwitchPrompt.resolve('discard')}
+                >
+                  <Text style={styles.unlockButtonText}>
+                    {t('auth.discardAndConnect')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  testID="web-unsynced-cancel-btn"
+                  accessibilityRole="button"
+                  style={[
+                    styles.lockConfirmCancelBtn,
+                    {
+                      width: '100%',
+                      alignItems: 'center',
+                      paddingVertical: 12,
+                      backgroundColor: theme.colors.surfaceSecondary,
+                      borderColor: theme.colors.borderStrong,
+                    },
+                  ]}
+                  onPress={() => webUnsyncedSwitchPrompt.resolve('cancel')}
+                >
+                  <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
+                    {t('common.cancel')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {Platform.OS === 'ios' && isIosInactive && Boolean(getCachedBiometricEnabled()) && (
+          <View
+            testID="ios-privacy-curtain"
+            pointerEvents="none"
+            style={[
+              styles.privacyCurtain,
+              { backgroundColor: theme.colors.background },
+            ]}
+          >
+            <Image
+              source={require('../assets/icon.png')}
+              style={styles.lockLogo}
+              resizeMode="cover"
+            />
+            <Text style={[styles.lockTitle, { color: theme.colors.text }]}>
+              Guanaco
+            </Text>
+          </View>
+        )}
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );
@@ -1356,6 +1815,33 @@ export default function App() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+  },
+  webConfirmOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    zIndex: 99998,
+    elevation: 99998,
+  },
+  webConfirmActionsCol: {
+    width: '100%',
+  },
+  privacyCurtain: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 99999,
+    elevation: 99999,
   },
   content: {
     flex: 1,

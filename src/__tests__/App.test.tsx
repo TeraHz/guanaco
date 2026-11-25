@@ -3,18 +3,22 @@ import { Alert, AppState, AppStateStatus } from 'react-native';
 import { render, fireEvent, waitFor, act, cleanup } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import App, { BIOMETRIC_LOCK_GRACE_MS } from '../App';
 import { useTaskStore } from '../store/taskStore';
 import { useUpdateStore } from '../store/updateStore';
 import {
+  getStoredAuth,
   setStoredAuth,
   setBiometricEnabled,
+  isBiometricEnabled,
   SECURE_KEY_AUTH_TOKEN,
   SECURE_KEY_REFRESH_TOKEN,
   SECURE_KEY_USERNAME,
   SECURE_KEY_PASSWORD,
 } from '../utils/biometrics';
+import * as localMigrationModule from '../services/localMigration';
 
 function makeAppTestJwt(expSec: number): string {
   const b64 = (o: any) =>
@@ -37,6 +41,7 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
     await SecureStore.deleteItemAsync(SECURE_KEY_REFRESH_TOKEN);
     await SecureStore.deleteItemAsync(SECURE_KEY_USERNAME);
     await SecureStore.deleteItemAsync(SECURE_KEY_PASSWORD);
+    await setBiometricEnabled(false);
 
     useTaskStore.setState({
       client: null,
@@ -56,7 +61,11 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
     });
     useUpdateStore.setState({ isPromptVisible: false, updateInfo: null });
 
+    (LocalAuthentication.hasHardwareAsync as jest.Mock).mockResolvedValue(true);
+    (LocalAuthentication.isEnrolledAsync as jest.Mock).mockResolvedValue(true);
+    (LocalAuthentication.getEnrolledLevelAsync as jest.Mock).mockResolvedValue(3);
     (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValue({ success: true });
+    (Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue(null);
     jest.clearAllMocks();
 
     if (jest.isMockFunction(AppState.addEventListener)) {
@@ -280,8 +289,9 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
       (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({
         success: true,
       });
+      const unlockBtn = await findByTestId('login-biometric-btn');
       await act(async () => {
-        fireEvent.press(await findByTestId('login-biometric-btn'));
+        fireEvent.press(unlockBtn);
       });
 
       await waitFor(() => {
@@ -776,8 +786,9 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
 
       // Case B: User taps "Unlock" while previous prompt promise hung -> cancels hung prompt, triggers fresh biometric dialog, and unlocks!
       (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+      const unlockBtn = await findByTestId('login-biometric-btn');
       await act(async () => {
-        fireEvent.press(await findByTestId('login-biometric-btn'));
+        fireEvent.press(unlockBtn);
       });
 
       await waitFor(() => {
@@ -942,5 +953,487 @@ describe('App Root Integration, Offline Biometric Gate & Session Security', () =
 
     expect(await findByText('Top Secret Offline Note')).toBeTruthy();
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('queues cold-start MARK_DONE notification action while locked and flushes it after biometric unlock', async () => {
+    await AsyncStorage.setItem(
+      '@vikunja_cached_projects',
+      JSON.stringify([{ id: 1, title: 'Main Project', hex_color: '#3498db' }])
+    );
+    await AsyncStorage.setItem(
+      '@vikunja_cached_tasks',
+      JSON.stringify([
+        { id: 301, title: 'Cold Start Reminder Task', done: false, priority: 1, project_id: 1 },
+      ])
+    );
+    await setStoredAuth('stored-valid-token', 'https://try.vikunja.io', 'alice');
+    await setBiometricEnabled(true);
+
+    global.fetch = jest.fn().mockRejectedValue(new Error('Offline'));
+
+    // Cold launch triggered by tapping "Mark Complete" on tray notification while app was killed
+    (Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValueOnce({
+      actionIdentifier: 'MARK_DONE',
+      notification: {
+        request: {
+          identifier: 'cold-notif-301',
+          content: {
+            data: { taskId: 301 },
+          },
+        },
+      },
+    });
+
+    // Initial biometric prompt cancelled -> app stays locked; action MUST stay queued and tray notification NOT dismissed yet
+    (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: false });
+
+    const { findByTestId } = render(<App />);
+    expect(await findByTestId('biometric-lock-screen')).toBeTruthy();
+    expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1);
+    expect(Notifications.dismissNotificationAsync).not.toHaveBeenCalled();
+
+    // User unlocks -> queued MARK_DONE flushes, marks task 301 done, and dismisses tray notification!
+    (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+    fireEvent.press(await findByTestId('login-biometric-btn'));
+
+    await waitFor(() => {
+      const target = useTaskStore.getState().tasks.find((t) => t.id === 301);
+      expect(target?.done).toBe(true);
+    });
+    expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('cold-notif-301');
+  });
+
+  it('clears last notification response on live MARK_DONE tap so a remount cannot replay the toggle', async () => {
+    let responseListener: ((resp: any) => void) | null = null;
+    (Notifications.addNotificationResponseReceivedListener as jest.Mock).mockImplementationOnce(
+      (cb: any) => {
+        responseListener = cb;
+        return { remove: jest.fn() };
+      }
+    );
+    (Notifications.clearLastNotificationResponseAsync as jest.Mock).mockClear();
+
+    await AsyncStorage.setItem(
+      '@vikunja_cached_projects',
+      JSON.stringify([{ id: 1, title: 'Main Project', hex_color: '#3498db' }])
+    );
+    await AsyncStorage.setItem(
+      '@vikunja_cached_tasks',
+      JSON.stringify([
+        { id: 707, title: 'Take meds', done: false, priority: 1, project_id: 1 },
+      ])
+    );
+    await setStoredAuth('valid-jwt', 'https://vikunja.example.com', 'alice');
+    global.fetch = jest.fn().mockRejectedValue(new Error('Offline'));
+
+    const { findByText, unmount } = render(<App />);
+    expect(await findByText('Main Project')).toBeTruthy();
+
+    await act(async () => {
+      responseListener?.({
+        actionIdentifier: 'MARK_DONE',
+        notification: {
+          request: {
+            identifier: 'notif-live-707',
+            content: { data: { taskId: 707 } },
+          },
+        },
+      });
+    });
+
+    expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1);
+    expect(useTaskStore.getState().tasks.find((t) => t.id === 707)?.done).toBe(true);
+    unmount();
+  });
+
+  it('enforces App Lock via device PIN fallback when fingerprints are deleted, and renders iOS privacy curtain on inactive AppState', async () => {
+    const { Platform } = require('react-native');
+    const origOS = Platform.OS;
+    (Platform as any).OS = 'ios';
+
+    let appStateHandler: ((state: AppStateStatus) => void) | null = null;
+    const origImpl = (AppState.addEventListener as jest.Mock)?.getMockImplementation?.();
+    const addListenerSpy = jest
+      .spyOn(AppState, 'addEventListener')
+      .mockImplementation((_type: any, listener: any) => {
+        appStateHandler = listener;
+        return { remove: jest.fn() } as any;
+      });
+
+    try {
+      await setStoredAuth('stored-valid-token', 'https://try.vikunja.io', 'alice');
+      await setBiometricEnabled(true);
+
+      // Biometrics deleted (`isEnrolledAsync = false`), but device Passcode is still set (`getEnrolledLevelAsync = 1`)
+      (LocalAuthentication.isEnrolledAsync as jest.Mock).mockResolvedValue(false);
+      (LocalAuthentication.getEnrolledLevelAsync as jest.Mock).mockResolvedValue(1);
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({
+        success: false,
+      });
+
+      const { findByTestId, findByText, queryByTestId } = render(<App />);
+      // Must NOT silently bypass App Lock!
+      expect(await findByTestId('biometric-lock-screen')).toBeTruthy();
+
+      // Unlock succeeds via device Passcode fallback (`disableDeviceFallback: false`)
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValueOnce({ success: true });
+      fireEvent.press(await findByTestId('login-biometric-btn'));
+      expect(await findByText('Main Project')).toBeTruthy();
+
+      // Entering iOS App Switcher (`inactive`) immediately mounts opaque privacy curtain with pointerEvents="none"
+      await act(async () => {
+        appStateHandler?.('inactive');
+      });
+      const curtain = await findByTestId('ios-privacy-curtain');
+      expect(curtain).toBeTruthy();
+      expect(curtain.props.pointerEvents).toBe('none');
+
+      // Returning to `active` hides privacy curtain
+      await act(async () => {
+        appStateHandler?.('active');
+      });
+      expect(queryByTestId('ios-privacy-curtain')).toBeNull();
+    } finally {
+      (Platform as any).OS = origOS;
+      addListenerSpy.mockRestore();
+      if (origImpl && jest.isMockFunction(AppState.addEventListener)) {
+        (AppState.addEventListener as jest.Mock).mockImplementation(origImpl);
+      }
+    }
+  });
+
+  it('prompts before discarding unsynced changes on user/URL switch: supports Cancel (abort) and Same Server — Keep & Sync (LAN -> WAN)', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    try {
+      await AsyncStorage.setItem(
+        '@vikunja_cached_projects',
+        JSON.stringify([{ id: 1, title: 'Main Project' }])
+      );
+      await AsyncStorage.setItem(
+        '@vikunja_cached_tasks',
+        JSON.stringify([
+          { id: -88, title: 'Homelab Offline Task', done: false, priority: 1, project_id: 1 },
+        ])
+      );
+      await AsyncStorage.setItem(
+        '@vikunja_current_user',
+        JSON.stringify({ id: 1, username: 'alice', email: 'alice@example.com' })
+      );
+      await AsyncStorage.setItem(
+        '@vikunja_sync_queue',
+        JSON.stringify([
+          {
+            id: 'create--88',
+            type: 'CREATE_TASK',
+            payload: {
+              tempId: -88,
+              projectId: 1,
+              taskData: { title: 'Homelab Offline Task', project_id: 1 },
+            },
+            timestamp: 1000,
+          },
+        ])
+      );
+      await setStoredAuth('expired-lan-jwt', 'https://lan.vikunja.home/', 'alice');
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ message: 'Expired' }),
+      } as Response);
+
+      const { findByTestId, findByText, findByDisplayValue, getByTestId, getByPlaceholderText } =
+        render(<App />);
+      expect(await findByTestId('auth-required-banner')).toBeTruthy();
+      expect(await findByText('Homelab Offline Task')).toBeTruthy();
+
+      // Part 1: Attempting to sign in as a DIFFERENT user (id: 2, bob) via password login prompts Cancel vs Discard;
+      // Cancel revokes the temporary password session via POST /user/logout and never overwrites Alice's URL or queue!
+      let cancelledLogoutCalled = false;
+      global.fetch = jest.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith('/login')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              get: (k: string) =>
+                k.toLowerCase() === 'set-cookie'
+                  ? 'vikunja_refresh_token=rt_bob_temp; Path=/api/v1/user/token; HttpOnly'
+                  : 'application/json',
+            },
+            json: async () => ({ token: 'bob-temp-jwt' }),
+          } as unknown as Response;
+        }
+        if (url.endsWith('/user/logout')) {
+          cancelledLogoutCalled = true;
+          return { ok: true, status: 200, json: async () => ({ message: 'ok' }) } as Response;
+        }
+        if (url.endsWith('/user')) {
+          return { ok: true, status: 200, json: async () => ({ id: 2, username: 'bob' }) } as Response;
+        }
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      });
+
+      fireEvent.press(getByTestId('auth-required-signin-btn'));
+      expect(await findByDisplayValue('https://lan.vikunja.home/')).toBeTruthy();
+      fireEvent.changeText(
+        getByPlaceholderText('https://vikunja.example.com'),
+        'https://other.vikunja.org'
+      );
+      fireEvent.changeText(getByPlaceholderText('Username'), 'bob');
+      fireEvent.changeText(getByPlaceholderText('Password'), 'bob-pass');
+      fireEvent.press(getByTestId('login-submit-btn'));
+
+      await waitFor(() => {
+        expect(alertSpy).toHaveBeenCalledWith(
+          'Unsynced Offline Changes',
+          expect.stringContaining('previous account'),
+          expect.any(Array),
+          expect.any(Object)
+        );
+      });
+
+      const diffUserButtons = alertSpy.mock.calls[0][2] as any[];
+      const cancelBtn = diffUserButtons.find((b) => b.style === 'cancel');
+      await act(async () => {
+        cancelBtn.onPress();
+      });
+      expect(await findByText('Connect')).toBeTruthy();
+
+      expect(cancelledLogoutCalled).toBe(true);
+      expect((await getStoredAuth()).serverUrl).toBe('https://lan.vikunja.home/');
+      expect((await getStoredAuth()).username).toBe('alice');
+      expect(await AsyncStorage.getItem('@vikunja_sync_queue')).not.toBeNull();
+
+      // Switch to API token mode for Part 2
+      fireEvent.press(await findByTestId('login-mode-token-btn'));
+
+      // Part 2: Same user (id: 1, alice) switching from LAN URL to WAN URL (`https://wan.vikunja.example.com`) -> "Same Server — Keep & Sync"
+      alertSpy.mockClear();
+      const wanSyncedTitles: string[] = [];
+      global.fetch = jest.fn().mockImplementation(async (url: string, opts?: any) => {
+        if (url.endsWith('/user')) {
+          return { ok: true, status: 200, json: async () => ({ id: 1, username: 'alice' }) } as Response;
+        }
+        if (url.includes('wan.vikunja.example.com') && url.endsWith('/projects/1/tasks') && opts?.method === 'PUT') {
+          const body = JSON.parse(opts.body);
+          wanSyncedTitles.push(body.title);
+          return {
+            ok: true,
+            status: 201,
+            json: async () => ({
+              id: 901,
+              title: body.title,
+              done: false,
+              priority: 1,
+              project_id: 1,
+            }),
+          } as Response;
+        }
+        if (url.includes('/tasks')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () =>
+              wanSyncedTitles.map((title) => ({
+                id: 901,
+                title,
+                done: false,
+                priority: 1,
+                project_id: 1,
+              })),
+          } as Response;
+        }
+        if (url.includes('/projects')) {
+          return { ok: true, status: 200, json: async () => [{ id: 1, title: 'Main Project' }] } as Response;
+        }
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      });
+
+      fireEvent.changeText(
+        getByPlaceholderText('https://vikunja.example.com'),
+        'https://wan.vikunja.example.com'
+      );
+      fireEvent.changeText(getByPlaceholderText('tk_...'), 'tk_alice_wan_token');
+      fireEvent.press(getByTestId('login-submit-btn'));
+
+      await waitFor(() => {
+        expect(alertSpy).toHaveBeenCalledWith(
+          'Unsynced Offline Changes',
+          expect.stringContaining('https://lan.vikunja.home'),
+          expect.any(Array),
+          expect.any(Object)
+        );
+      });
+
+      const urlSwitchButtons = alertSpy.mock.calls[0][2] as any[];
+      const keepAndSyncBtn = urlSwitchButtons.find((b) =>
+        String(b.text).includes('Keep & Sync')
+      );
+      await act(async () => {
+        keepAndSyncBtn.onPress();
+      });
+
+      expect(await findByText('Homelab Offline Task')).toBeTruthy();
+      await waitFor(() => {
+        expect(wanSyncedTitles).toContain('Homelab Offline Task');
+      });
+      expect((await getStoredAuth()).serverUrl).toBe('https://wan.vikunja.example.com');
+    } finally {
+      alertSpy.mockRestore();
+    }
+  });
+
+  it('records skipped migration tasks onto useTaskStore during Local Mode -> Server merge', async () => {
+    const recordSkippedSpy = jest.fn();
+    useTaskStore.setState({ recordSkippedMigrationTasks: recordSkippedSpy } as any);
+
+    const migrateSpy = jest
+      .spyOn(localMigrationModule, 'migrateLocalDataToServer')
+      .mockResolvedValueOnce({
+        mergedProjects: [{ id: 10, title: 'Tasks', hex_color: '#0A84FF' }],
+        mergedLabels: [],
+        uploadedServerTasks: [],
+        mappedSelectedProjectId: 10,
+        deferredTasks: [],
+        deferredRelations: [],
+        deferredFollowUps: [],
+        skippedTasks: [
+          {
+            title: 'Read-Only Rejected Task',
+            projectTitle: 'Shared List',
+            reason: '403 Forbidden',
+          },
+        ],
+      } as any);
+
+    try {
+      await AsyncStorage.setItem('@vikunja_local_mode', 'true');
+      await AsyncStorage.setItem(
+        '@vikunja_cached_projects',
+        JSON.stringify([{ id: 1, title: 'Tasks', hex_color: '#0A84FF' }])
+      );
+      await AsyncStorage.setItem(
+        '@vikunja_cached_tasks',
+        JSON.stringify([
+          { id: -77, title: 'Read-Only Rejected Task', done: false, priority: 0, project_id: 1 },
+        ])
+      );
+
+      const { findByText, getByTestId, findByTestId, getByPlaceholderText } = render(<App />);
+      expect(await findByText('Read-Only Rejected Task')).toBeTruthy();
+
+      fireEvent.press(getByTestId('drawer-toggle-btn'));
+      fireEvent.press(getByTestId('drawer-settings-btn'));
+      fireEvent.press(await findByTestId('settings-connect-server-btn'));
+
+      fireEvent.changeText(
+        getByPlaceholderText('https://vikunja.example.com'),
+        'https://try.vikunja.io'
+      );
+      fireEvent.changeText(getByPlaceholderText('Username'), 'alice');
+      fireEvent.changeText(getByPlaceholderText('Password'), 'strongpass');
+      fireEvent.press(getByTestId('login-submit-btn'));
+
+      await waitFor(() => {
+        expect(recordSkippedSpy).toHaveBeenCalledWith([
+          expect.objectContaining({
+            title: 'Read-Only Rejected Task',
+            reason: '403 Forbidden',
+          }),
+        ]);
+      });
+    } finally {
+      migrateSpy.mockRestore();
+    }
+  });
+
+  it('renders 3-choice web-unsynced-switch-modal on web URL switch and preserves Biometric Lock on clean 0-unsynced same-user URL switch', async () => {
+    const { Platform } = require('react-native');
+    const origOS = Platform.OS;
+    try {
+      // A. Clean same-user LAN -> WAN switch with 0 unsynced changes keeps Biometric Lock enabled!
+      await setStoredAuth('stored-lan-token', 'https://lan.vikunja.home', 'alice');
+      await setBiometricEnabled(true);
+      (LocalAuthentication.authenticateAsync as jest.Mock).mockResolvedValue({ success: true });
+
+      const {
+        findByText,
+        findByDisplayValue,
+        getByTestId,
+        findByTestId,
+        getByPlaceholderText,
+        unmount,
+      } = render(<App />);
+      expect(await findByText('Main Project')).toBeTruthy();
+
+      await act(async () => {
+        useTaskStore.setState({ authRequired: true });
+      });
+      fireEvent.press(await findByTestId('auth-required-signin-btn'));
+      expect(await findByDisplayValue('https://lan.vikunja.home')).toBeTruthy();
+      fireEvent.press(await findByTestId('login-mode-token-btn'));
+      fireEvent.changeText(
+        getByPlaceholderText('https://vikunja.example.com'),
+        'https://wan.vikunja.example.com'
+      );
+      fireEvent.changeText(getByPlaceholderText('tk_...'), 'tk_alice_clean_wan');
+      fireEvent.press(getByTestId('login-submit-btn'));
+
+      expect(await findByText('Main Project')).toBeTruthy();
+      expect((await getStoredAuth()).serverUrl).toBe('https://wan.vikunja.example.com');
+      expect(await isBiometricEnabled()).toBe(true);
+      unmount();
+
+      // B. Web 3-choice modal (`web-unsynced-switch-modal`) allows Discard Changes on same-user URL switch with unrecovered syncFailures!
+      (Platform as any).OS = 'web';
+      await useTaskStore.getState().clearSession();
+      await AsyncStorage.setItem(
+        '@vikunja_current_user',
+        JSON.stringify({ id: 1, username: 'alice' })
+      );
+      await AsyncStorage.setItem(
+        '@vikunja_sync_failures',
+        JSON.stringify([
+          {
+            id: 'fail-1',
+            type: 'CREATE_TASK',
+            title: 'Failed Offline Item',
+            reason: '403 Forbidden',
+            timestamp: 1000,
+          },
+        ])
+      );
+      await setStoredAuth('expired-web-jwt', 'https://lan.vikunja.home', 'alice');
+
+      const webRender = render(<App />);
+      expect(await webRender.findByText('Main Project')).toBeTruthy();
+
+      await act(async () => {
+        useTaskStore.setState({ authRequired: true });
+      });
+      fireEvent.press(await webRender.findByTestId('auth-required-signin-btn'));
+      expect(await webRender.findByDisplayValue('https://lan.vikunja.home')).toBeTruthy();
+      fireEvent.press(await webRender.findByTestId('login-mode-token-btn'));
+      fireEvent.changeText(
+        webRender.getByPlaceholderText('https://vikunja.example.com'),
+        'https://other-instance.vikunja.org'
+      );
+      fireEvent.changeText(webRender.getByPlaceholderText('tk_...'), 'tk_alice_other_server');
+      fireEvent.press(webRender.getByTestId('login-submit-btn'));
+
+      expect(await webRender.findByTestId('web-unsynced-switch-modal')).toBeTruthy();
+      expect(await webRender.findByTestId('web-unsynced-keep-sync-btn')).toBeTruthy();
+      expect(await webRender.findByTestId('web-unsynced-cancel-btn')).toBeTruthy();
+
+      fireEvent.press(await webRender.findByTestId('web-unsynced-discard-btn'));
+      expect(await webRender.findByText('Main Project')).toBeTruthy();
+      expect((await getStoredAuth()).serverUrl).toBe('https://other-instance.vikunja.org');
+      expect(await AsyncStorage.getItem('@vikunja_sync_failures')).toBeNull();
+      webRender.unmount();
+    } finally {
+      (Platform as any).OS = origOS;
+    }
   });
 });

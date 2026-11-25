@@ -1,8 +1,10 @@
 package com.geodar.guanaco
 
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
@@ -21,6 +23,16 @@ class MainActivity : ReactActivity() {
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
     super.onCreate(null)
+
+    val appLockEnabled = getSharedPreferences("guanaco_security", Context.MODE_PRIVATE)
+      .getBoolean("app_lock_enabled", false)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      setRecentsScreenshotEnabled(!appLockEnabled)
+    } else if (appLockEnabled) {
+      window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    } else {
+      window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
 
     val contentView = findViewById<View>(android.R.id.content)
     if (contentView != null) {

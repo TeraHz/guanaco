@@ -262,4 +262,75 @@ describe('ProjectDrawer', () => {
     expect(mockSelect).toHaveBeenCalledWith(-2);
     expect(mockOnClose).toHaveBeenCalled();
   });
+
+  it('shows Read-only badge on max_permission=0 lists and gates action sheet options by write vs admin permission', () => {
+    useTaskStore.setState({
+      isLocalMode: false,
+      projects: [
+        { id: 1, title: 'Owned Admin List', hex_color: '#3498db', max_permission: 2 },
+        { id: 2, title: 'Shared Write List', hex_color: '#e74c3c', max_permission: 1 },
+        { id: 3, title: 'Shared ReadOnly List', hex_color: '#2ecc71', max_permission: 0 },
+      ],
+    });
+
+    const { getByTestId, queryByTestId, getByText } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    expect(getByTestId('drawer-readonly-badge-3')).toBeTruthy();
+    expect(queryByTestId('drawer-readonly-badge-1')).toBeNull();
+    expect(queryByTestId('drawer-readonly-badge-2')).toBeNull();
+
+    // Write-only list (max_permission: 1) allows Edit/Favorite/Archive, hides Share/Delete
+    fireEvent.press(getByTestId('drawer-project-options-2'));
+    expect(getByTestId('drawer-option-edit')).toBeTruthy();
+    expect(getByTestId('drawer-option-favorite')).toBeTruthy();
+    expect(getByTestId('drawer-option-archive')).toBeTruthy();
+    expect(queryByTestId('drawer-option-share')).toBeNull();
+    expect(queryByTestId('drawer-option-delete')).toBeNull();
+    fireEvent.press(getByText('Cancel'));
+
+    // Read-only list (max_permission: 0) hides write/admin options, shows read-only notice, and still allows personal Favorite
+    fireEvent.press(getByTestId('drawer-project-options-3'));
+    expect(getByTestId('drawer-action-readonly-note')).toBeTruthy();
+    expect(queryByTestId('drawer-option-edit')).toBeNull();
+    expect(queryByTestId('drawer-option-share')).toBeNull();
+    expect(getByTestId('drawer-option-favorite')).toBeTruthy();
+    expect(queryByTestId('drawer-option-archive')).toBeNull();
+    expect(queryByTestId('drawer-option-delete')).toBeNull();
+  });
+
+  it('warns when deleting a parent list with sub-lists and surfaces deleteProject errors via Alert instead of swallowing', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const mockDelete = jest.fn().mockRejectedValueOnce(new Error('Server refused delete'));
+
+    useTaskStore.setState({
+      deleteProject: mockDelete,
+      projects: [
+        { id: 1, title: 'Parent List', hex_color: '#3498db' },
+        { id: 2, title: 'Child A', parent_project_id: 1 },
+        { id: 3, title: 'Child B', parent_project_id: 1 },
+      ],
+    });
+
+    const { getByTestId } = render(
+      <ProjectDrawer visible={true} onClose={mockOnClose} />
+    );
+
+    fireEvent.press(getByTestId('drawer-project-options-1'));
+    fireEvent.press(getByTestId('drawer-option-delete'));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Delete List',
+      expect.stringContaining('2 sub-list(s)'),
+      expect.any(Array)
+    );
+
+    const buttons = alertSpy.mock.calls[0][2] as any[];
+    await act(async () => {
+      await buttons.find((b) => b.style === 'destructive').onPress();
+    });
+
+    expect(alertSpy).toHaveBeenCalledWith('Delete List', 'Server refused delete');
+  });
 });

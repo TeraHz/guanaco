@@ -514,7 +514,7 @@ export function parseAndValidateBackup(rawJson: string): ValidatedBackupData {
   if (projects.length === 0 && container.tasks.length > 0) {
     projects.push({
       id: 1,
-      title: 'Tasks',
+      title: t('local.starterTasksList'),
       hex_color: '#0A84FF',
       is_archived: false,
       is_favorite: false,

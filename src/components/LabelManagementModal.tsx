@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import { useShallow } from 'zustand/react/shallow';
 import { useTaskStore } from '../store/taskStore';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
@@ -36,13 +37,22 @@ const PRESET_COLORS = [
   '#FFD60A', // Yellow
 ];
 
+const EMPTY_LABELS: Label[] = [];
+
 export const LabelManagementModal: React.FC<LabelManagementModalProps> = ({
   visible,
   onClose,
 }) => {
   const theme = useAppTheme();
   const { t } = useTranslation();
-  const { labels, createGlobalLabel, updateGlobalLabel, deleteGlobalLabel } = useTaskStore();
+  const { labels, createGlobalLabel, updateGlobalLabel, deleteGlobalLabel } = useTaskStore(
+    useShallow((s) => ({
+      labels: visible ? s.labels : EMPTY_LABELS,
+      createGlobalLabel: s.createGlobalLabel,
+      updateGlobalLabel: s.updateGlobalLabel,
+      deleteGlobalLabel: s.deleteGlobalLabel,
+    }))
+  );
 
   const [newTitle, setNewTitle] = useState('');
   const [newColor, setNewColor] = useState(PRESET_COLORS[0]);

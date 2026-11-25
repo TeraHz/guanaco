@@ -3,17 +3,25 @@ import {
   initNotifications,
   requestNotificationPermissions,
   scheduleTaskReminders,
+  scheduleSnoozedReminder,
   cancelTaskReminders,
+  clearAllNotifications,
   syncAllTaskReminders,
   shouldCompleteTaskFromNotification,
   syncAppBadgeCount,
   TASK_REMINDER_CATEGORY,
+  NOTIF_ACTION_MARK_DONE,
+  NOTIF_ACTION_SNOOZE_15M,
+  __resetNotificationFingerprintForTesting,
 } from '../localNotifications';
 import { Task, ReminderRelativeTo, RepeatMode } from '../../types/vikunja';
+import { setActiveLanguagePreference } from '../../i18n';
 
 describe('Local Notifications Service (Zero-Telemetry On-Device Reminders)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    __resetNotificationFingerprintForTesting();
+    setActiveLanguagePreference('en');
     (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({
       status: 'granted',
       granted: true,
@@ -25,9 +33,22 @@ describe('Local Notifications Service (Zero-Telemetry On-Device Reminders)', () 
     (Notifications.getAllScheduledNotificationsAsync as jest.Mock).mockResolvedValue([]);
   });
 
-  it('initializes notification channel and foreground handler', async () => {
+  it('initializes notification channel, foreground handler, and opensAppToForeground category actions', async () => {
     await initNotifications();
     expect(Notifications.setNotificationHandler).toHaveBeenCalled();
+    expect(Notifications.setNotificationCategoryAsync).toHaveBeenCalledWith(
+      TASK_REMINDER_CATEGORY,
+      [
+        expect.objectContaining({
+          identifier: NOTIF_ACTION_MARK_DONE,
+          options: { opensAppToForeground: true },
+        }),
+        expect.objectContaining({
+          identifier: NOTIF_ACTION_SNOOZE_15M,
+          options: { opensAppToForeground: true },
+        }),
+      ]
+    );
   });
 
   it('cancels existing reminders FIRST and requests permissions before scheduling future reminders', async () => {
@@ -317,5 +338,105 @@ describe('Local Notifications Service (Zero-Telemetry On-Device Reminders)', () 
 
     await syncAppBadgeCount(tasks, 'due_today', now);
     expect(Notifications.setBadgeCountAsync).toHaveBeenLastCalledWith(2);
+  });
+
+  it('skips native cancel/schedule churn when reminder fingerprint is unchanged, invalidates on language switch, and preserves active snoozes', async () => {
+    const activeScheduled: { identifier: string; content: any; trigger?: any }[] = [];
+    let nextId = 1;
+
+    (Notifications.getAllScheduledNotificationsAsync as jest.Mock).mockImplementation(async () => [
+      ...activeScheduled,
+    ]);
+    (Notifications.cancelAllScheduledNotificationsAsync as jest.Mock).mockImplementation(
+      async () => {
+        activeScheduled.length = 0;
+      }
+    );
+    (Notifications.cancelScheduledNotificationAsync as jest.Mock).mockImplementation(
+      async (id: string) => {
+        const idx = activeScheduled.findIndex((n) => n.identifier === id);
+        if (idx !== -1) activeScheduled.splice(idx, 1);
+      }
+    );
+    (Notifications.scheduleNotificationAsync as jest.Mock).mockImplementation(async (req: any) => {
+      const identifier = `sched-${nextId++}`;
+      activeScheduled.push({ identifier, content: req.content, trigger: req.trigger });
+      return identifier;
+    });
+
+    const futureDate = new Date(Date.now() + 1000 * 60 * 60 * 24);
+    const tasks: Task[] = [
+      {
+        id: 101,
+        project_id: 1,
+        priority: 0,
+        title: 'Water Plants',
+        done: false,
+        due_date: futureDate.toISOString(),
+        reminders: [{ relative_to: ReminderRelativeTo.DueDate, relative_period: -900 }],
+      },
+    ];
+
+    // 1. Initial sync schedules 1 notification
+    await syncAllTaskReminders(tasks);
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(activeScheduled).toHaveLength(1);
+
+    // 2. Repeated background sync with identical tasks performs 0 cancel/schedule calls!
+    jest.clearAllMocks();
+    await syncAllTaskReminders(tasks);
+    expect(Notifications.cancelAllScheduledNotificationsAsync).not.toHaveBeenCalled();
+    expect(Notifications.cancelScheduledNotificationAsync).not.toHaveBeenCalled();
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+
+    // 3. User snoozes an open task (`reminderIndex: -1`); subsequent task rename preserves the snooze while updating regular reminders!
+    const snoozedOpenTask: Task = {
+      id: 202,
+      project_id: 1,
+      priority: 0,
+      title: 'Snoozed Call',
+      done: false,
+    };
+    await scheduleSnoozedReminder(snoozedOpenTask);
+    expect(activeScheduled.some((n) => n.content?.data?.reminderIndex === -1)).toBe(true);
+
+    jest.clearAllMocks();
+    const renamedTasks: Task[] = [
+      { ...tasks[0], title: 'Water Indoor Plants' },
+      snoozedOpenTask,
+    ];
+    await syncAllTaskReminders(renamedTasks);
+    expect(Notifications.cancelAllScheduledNotificationsAsync).not.toHaveBeenCalled();
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(activeScheduled.some((n) => n.content?.data?.reminderIndex === -1)).toBe(true);
+    expect(activeScheduled.some((n) => n.content?.title === 'Water Indoor Plants')).toBe(true);
+
+    // 3b. When task 202 is DELETED on server (even while task 101's regular reminder fingerprint is unchanged!),
+    // syncAllTaskReminders cancels the stale deleted-task snooze without rescheduling task 101!
+    jest.clearAllMocks();
+    await syncAllTaskReminders([{ ...tasks[0], title: 'Water Indoor Plants' }]);
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(activeScheduled.some((n) => n.content?.data?.taskId === 202)).toBe(false);
+    expect(activeScheduled).toHaveLength(1);
+
+    // 4. Switching UI language invalidates fingerprint and re-schedules localized notification bodies!
+    jest.clearAllMocks();
+    setActiveLanguagePreference('es');
+    await syncAllTaskReminders([{ ...tasks[0], title: 'Water Indoor Plants' }]);
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(
+      activeScheduled.find((n) => n.content?.data?.taskId === 101)?.content?.body
+    ).toContain('Recordatorio');
+
+    // 5. Empty syncs do not repeatedly call cancelAllScheduledNotificationsAsync once empty
+    await clearAllNotifications();
+    jest.clearAllMocks();
+    await syncAllTaskReminders([]);
+    expect(Notifications.cancelAllScheduledNotificationsAsync).toHaveBeenCalledTimes(1);
+    jest.clearAllMocks();
+    await syncAllTaskReminders([]);
+    expect(Notifications.cancelAllScheduledNotificationsAsync).not.toHaveBeenCalled();
   });
 });

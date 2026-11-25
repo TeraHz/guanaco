@@ -15,8 +15,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import { useShallow } from 'zustand/react/shallow';
 import { useTaskStore } from '../store/taskStore';
-import { AppBadgeMode, LanguagePreference, ThemeMode, WeekStartDay } from '../types/vikunja';
+import {
+  AppBadgeMode,
+  LanguagePreference,
+  SyncFailureRecord,
+  ThemeMode,
+  WeekStartDay,
+} from '../types/vikunja';
 import { useAppTheme } from '../utils/theme';
 import { safeHaptics } from '../utils/haptics';
 import { useTranslation } from '../i18n';
@@ -32,6 +39,7 @@ import {
   isBiometricEnabled,
   setBiometricEnabled,
   authenticateWithBiometrics,
+  authenticateWithDeviceCredentials,
   getStoredAuth,
 } from '../utils/biometrics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -47,6 +55,8 @@ interface SettingsModalProps {
   onConnectServer?: () => void;
   onOpenLabelManagement?: () => void;
 }
+
+const EMPTY_SYNC_FAILURES: SyncFailureRecord[] = [];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   visible,
@@ -87,7 +97,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     importLocalBackup,
     syncStatus,
     pendingSyncCount,
-  } = useTaskStore();
+    syncFailures = EMPTY_SYNC_FAILURES,
+  } = useTaskStore(
+    useShallow((s) => {
+      const ext = s as typeof s & { syncFailures?: SyncFailureRecord[] };
+      return {
+        client: s.client,
+        isLocalMode: s.isLocalMode ?? false,
+        currentUser: s.currentUser,
+        cachedUsers: s.cachedUsers,
+        reenableStaples: s.reenableStaples,
+        setReenableStaples: s.setReenableStaples,
+        largeTaskItems: s.largeTaskItems,
+        setLargeTaskItems: s.setLargeTaskItems,
+        taskItemScale: s.taskItemScale ?? 100,
+        setTaskItemScale: s.setTaskItemScale,
+        taskItemTextScale: s.taskItemTextScale ?? 100,
+        setTaskItemTextScale: s.setTaskItemTextScale,
+        themeMode: s.themeMode ?? 'system',
+        setThemeMode: s.setThemeMode,
+        languagePreference: s.languagePreference,
+        setLanguagePreference: s.setLanguagePreference,
+        weekStartDay: s.weekStartDay ?? 1,
+        setWeekStartDay: s.setWeekStartDay,
+        appBadgeMode: s.appBadgeMode ?? 'off',
+        setAppBadgeMode: s.setAppBadgeMode,
+        resetAndSyncFromServer: s.resetAndSyncFromServer,
+        exportBackupJson: s.exportBackupJson,
+        importLocalBackup: s.importLocalBackup,
+        syncStatus: s.syncStatus,
+        pendingSyncCount: s.pendingSyncCount,
+        syncFailures: ext.syncFailures ?? EMPTY_SYNC_FAILURES,
+      };
+    })
+  );
+  const effectiveUnsyncedCount =
+    (pendingSyncCount || 0) + (Array.isArray(syncFailures) ? syncFailures.length : 0);
   const effectiveLanguagePref: LanguagePreference =
     storeLanguagePreference ?? activeLangPref ?? 'system';
 
@@ -120,13 +165,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     (cachedUsers && cachedUsers.length > 0 ? cachedUsers[0].username : null);
 
   const hasAICore = aiCoreModule.isAICoreSupported();
-  const hasLivePromptApi =
-    typeof (aiCoreModule as any).isPromptAPIAvailable === 'function'
-      ? Boolean((aiCoreModule as any).isPromptAPIAvailable())
-      : Boolean(
-          (globalThis as any).ai?.languageModel ||
-            (typeof window !== 'undefined' && (window as any).ai?.languageModel)
-        );
 
   const nativeUpdatesSupported = isNativeUpdateSupported();
 
@@ -183,7 +221,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (!mounted) return;
 
       setBiometricAvailable((prev) => (prev === avail ? prev : avail));
-      const nextBioActive = avail ? enabled : false;
+      const nextBioActive = Boolean(enabled);
       setBiometricActive((prev) => (prev === nextBioActive ? prev : nextBioActive));
 
       const legacySaved = legacyValues.find(([k]) => k === '@vikunja_saved_username')?.[1] || null;
@@ -213,7 +251,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       ? t('lock.enableBiometricReason')
       : t('lock.disableBiometricReason');
     try {
-      const passed = await authenticateWithBiometrics(promptReason);
+      const passed =
+        !biometricAvailable && !value
+          ? await authenticateWithDeviceCredentials(promptReason)
+          : await authenticateWithBiometrics(promptReason);
       if (!passed) {
         safeHaptics.notification(Haptics.NotificationFeedbackType.Error);
         return;
@@ -250,8 +291,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleRequestResetAndSync = () => {
     if (isResetting) return;
     const message =
-      pendingSyncCount > 0
-        ? t('settings.overwriteConfirmPending', { count: pendingSyncCount })
+      effectiveUnsyncedCount > 0
+        ? t('settings.overwriteConfirmPending', { count: effectiveUnsyncedCount })
         : t('settings.overwriteConfirmClean');
 
     if (Platform.OS === 'web') {
@@ -449,8 +490,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       return;
     }
 
-    if (pendingSyncCount > 0) {
-      const message = t('settings.logoutConfirmPending', { count: pendingSyncCount });
+    if (effectiveUnsyncedCount > 0) {
+      const message = t('settings.logoutConfirmPending', { count: effectiveUnsyncedCount });
       if (Platform.OS === 'web') {
         if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
           if (window.confirm(`${t('lock.unsyncedTitle')}\n\n${message}`)) {
@@ -566,7 +607,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   ? t('settings.eraseLocalBannerConfirm')
                   : pendingConfirmAction === 'import_replace'
                   ? t('settings.importReplaceBannerConfirm')
-                  : t('settings.logoutBannerConfirm', { count: pendingSyncCount })}
+                  : t('settings.logoutBannerConfirm', { count: effectiveUnsyncedCount })}
               </Text>
               <View style={styles.confirmBannerActions}>
                 <TouchableOpacity
@@ -1259,7 +1300,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </View>
               )}
 
-              {biometricAvailable && (
+              {(biometricAvailable || biometricActive) && (
                 <View
                   style={[
                     styles.settingRow,
@@ -1344,9 +1385,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     testID="settings-aicore-engine-label"
                     style={[styles.infoValue, { color: theme.colors.textSecondary }]}
                   >
-                    {hasLivePromptApi
-                      ? t('settings.geminiNano')
-                      : t('settings.onDeviceHeuristics')}
+                    {t('settings.onDeviceHeuristics')}
                   </Text>
                 </View>
                 <TouchableOpacity

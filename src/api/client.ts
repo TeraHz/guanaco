@@ -35,7 +35,12 @@ export interface VikunjaClientConfig {
 }
 
 export class VikunjaApiError extends Error {
-  constructor(public status: number, message: string, public data?: any) {
+  constructor(
+    public status: number,
+    message: string,
+    public data?: any,
+    public isProxyError?: boolean
+  ) {
     super(message);
     this.name = 'VikunjaApiError';
   }
@@ -47,94 +52,420 @@ export interface ParsedServerUrl {
   isInsecureHttp: boolean;
 }
 
+export interface ParsedHttpUrl {
+  protocol: 'http:' | 'https:';
+  hostname: string;
+  port: string;
+  host: string;
+  pathname: string;
+  search: string;
+  hash: string;
+  origin: string;
+  href: string;
+}
+
+function isValidIpv4Address(addr: string): boolean {
+  const octets = addr.split('.');
+  if (octets.length !== 4) return false;
+  return octets.every((o) => {
+    if (!/^(?:0|[1-9]\d{0,2})$/.test(o)) return false;
+    const n = Number(o);
+    return Number.isInteger(n) && n >= 0 && n <= 255;
+  });
+}
+
 /**
- * Validates and normalizes a user-supplied Vikunja server URL:
- * - Defaults missing scheme to `https://`
- * - Rejects non-HTTP(S) schemes, embedded credentials (`user:pass@`), malformed hosts, and invalid IPv4 octets
- * - Strips hash fragments (`/#/login`), query strings, and trailing `/login` or `/api/v1` suffixes
- * - Flags cleartext `http://` URLs via `isInsecureHttp`
+ * Pure RFC 4291 IPv6 parser + RFC 5952 canonical serializer.
+ * Parses 8x 16-bit words (including IPv4-mapped tails) and formats lowercase hex without leading zeros,
+ * compressing the longest run of >= 2 zero words to `::` (leftmost on tie).
  */
-export function parseAndValidateServerUrl(rawUrl: string): ParsedServerUrl {
-  const trimmed = (rawUrl || '').trim();
+function parseAndCanonicalizeIpv6(addr: string): string | null {
+  if (!addr || /[^0-9a-fA-F:.]/.test(addr)) return null;
+  if (
+    (addr.startsWith(':') && !addr.startsWith('::')) ||
+    (addr.endsWith(':') && !addr.endsWith('::'))
+  ) {
+    return null;
+  }
+
+  const doubleColonParts = addr.split('::');
+  if (doubleColonParts.length > 2) return null;
+
+  const hasCompression = doubleColonParts.length === 2;
+  const leftRaw = doubleColonParts[0] ? doubleColonParts[0].split(':') : [];
+  const rightRaw = hasCompression && doubleColonParts[1] ? doubleColonParts[1].split(':') : [];
+
+  let ipv4Words: number[] = [];
+  const tailSegments = hasCompression ? rightRaw : leftRaw;
+  if (tailSegments.length > 0 && tailSegments[tailSegments.length - 1].includes('.')) {
+    const ipv4Tail = tailSegments.pop()!;
+    if (!isValidIpv4Address(ipv4Tail)) return null;
+    const octs = ipv4Tail.split('.').map((o) => Number(o));
+    ipv4Words = [((octs[0] << 8) | octs[1]) & 0xffff, ((octs[2] << 8) | octs[3]) & 0xffff];
+  }
+
+  const isHexGroup = (g: string) => /^[0-9a-fA-F]{1,4}$/.test(g);
+  if (!leftRaw.every(isHexGroup) || !rightRaw.every(isHexGroup)) {
+    return null;
+  }
+
+  const leftWords = leftRaw.map((g) => parseInt(g, 16));
+  const rightWords = [
+    ...rightRaw.map((g) => parseInt(g, 16)),
+    ...(hasCompression ? ipv4Words : []),
+  ];
+  const uncompressedLeftWords = hasCompression ? leftWords : [...leftWords, ...ipv4Words];
+
+  let words: number[];
+  if (hasCompression) {
+    const provided = leftWords.length + rightWords.length;
+    if (provided > 7) return null;
+    const zeroPad = new Array<number>(8 - provided).fill(0);
+    words = [...leftWords, ...zeroPad, ...rightWords];
+  } else {
+    if (uncompressedLeftWords.length !== 8) return null;
+    words = uncompressedLeftWords;
+  }
+
+  // RFC 5952 §4.2: compress longest run of >= 2 consecutive 0 words (leftmost on tie)
+  let bestStart = -1;
+  let bestLen = 0;
+  let curStart = -1;
+  let curLen = 0;
+  for (let i = 0; i < 8; i++) {
+    if (words[i] === 0) {
+      if (curStart === -1) {
+        curStart = i;
+        curLen = 1;
+      } else {
+        curLen += 1;
+      }
+      if (curLen >= 2 && curLen > bestLen) {
+        bestStart = curStart;
+        bestLen = curLen;
+      }
+    } else {
+      curStart = -1;
+      curLen = 0;
+    }
+  }
+
+  if (bestStart !== -1 && bestLen >= 2) {
+    const leftHex = words
+      .slice(0, bestStart)
+      .map((w) => w.toString(16))
+      .join(':');
+    const rightHex = words
+      .slice(bestStart + bestLen)
+      .map((w) => w.toString(16))
+      .join(':');
+    return `${leftHex}::${rightHex}`;
+  }
+
+  return words.map((w) => w.toString(16)).join(':');
+}
+
+/**
+ * RFC 3986 §5.2.4 dot-segment path normalization.
+ */
+function normalizeUrlPath(rawPath: string): string {
+  if (!rawPath) return '/';
+  const withLeadingSlash = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+  const hasTrailingSlash = withLeadingSlash.length > 1 && withLeadingSlash.endsWith('/');
+  const segments = withLeadingSlash.split('/');
+  const out: string[] = [];
+  let endedOnDotSegment = false;
+
+  for (let i = 1; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg === '.') {
+      endedOnDotSegment = true;
+    } else if (seg === '..') {
+      out.pop();
+      endedOnDotSegment = true;
+    } else {
+      if (seg === '' && i === segments.length - 1) {
+        continue;
+      }
+      out.push(seg);
+      endedOnDotSegment = false;
+    }
+  }
+
+  const joined = `/${out.join('/')}`;
+  if ((hasTrailingSlash || endedOnDotSegment) && !joined.endsWith('/')) {
+    return `${joined}/`;
+  }
+  return joined;
+}
+
+/**
+ * Pure RFC 3986 HTTP(S) URL parser & validator with zero reliance on React Native's `Libraries/Blob/URL.js` polyfill.
+ * - Case-insensitive `http://` / `https://` scheme handling
+ * - Splits authority strictly before the first `/`, `?`, or `#` so `@` in path/query/hash is permitted
+ *   while `user@host` in authority is rejected with `urlError.embeddedCredentials`
+ * - Supports bracketed RFC 4291 IPv6 literals (`[::1]:3456`), IPv4 octet validation, DNS label normalization,
+ *   port `1..65535` validation, and default port stripping (`:80` on `http:`, `:443` on `https:`)
+ */
+export function parseHttpUrl(
+  rawInput: string,
+  options?: { defaultHttpsIfMissingScheme?: boolean }
+): ParsedHttpUrl {
+  const trimmed = typeof rawInput === 'string' ? rawInput.trim() : '';
   if (!trimmed) {
     throw new Error(t('urlError.required'));
   }
 
-  // Reject scheme-relative (`://...` or `//...`) and dangerous non-http(s) schemes
   if (trimmed.startsWith('//') || trimmed.startsWith('://')) {
     throw new Error(t('urlError.invalid'));
   }
 
+  if (/[\u0000-\u0020\u007f]/.test(trimmed)) {
+    throw new Error(t('urlError.invalidFormat'));
+  }
+
   const explicitSchemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//);
+  let protocol: 'http:' | 'https:';
+  let rest: string;
+
   if (explicitSchemeMatch) {
     const proto = explicitSchemeMatch[1].toLowerCase();
     if (proto !== 'http' && proto !== 'https') {
       throw new Error(t('urlError.unsupportedScheme', { proto }));
     }
-  } else if (/^(javascript|data|vbscript|file|mailto|about|blob):/i.test(trimmed)) {
-    throw new Error(t('urlError.invalidScheme'));
+    protocol = `${proto}:` as 'http:' | 'https:';
+    rest = trimmed.slice(explicitSchemeMatch[0].length);
+  } else {
+    if (/^(javascript|data|vbscript|file|mailto|about|blob):/i.test(trimmed)) {
+      throw new Error(t('urlError.invalidScheme'));
+    }
+    if (!options?.defaultHttpsIfMissingScheme) {
+      const bareScheme = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+      if (bareScheme) {
+        const proto = bareScheme[1].toLowerCase();
+        if (proto !== 'http' && proto !== 'https') {
+          throw new Error(t('urlError.unsupportedScheme', { proto }));
+        }
+      }
+      throw new Error(t('urlError.invalidScheme'));
+    }
+    // Reject non-authority schemes like `ftp:foo` while permitting `localhost:3456` or `example.com:8080`
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d+(?:[/?#]|$))/.test(trimmed)) {
+      throw new Error(t('urlError.invalidScheme'));
+    }
+    protocol = 'https:';
+    rest = trimmed;
   }
 
-  const candidate = explicitSchemeMatch ? trimmed : `https://${trimmed}`;
+  let boundaryIdx = rest.length;
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest[i];
+    if (ch === '/' || ch === '?' || ch === '#') {
+      boundaryIdx = i;
+      break;
+    }
+  }
 
-  let parsed: URL;
-  try {
-    parsed = new URL(candidate);
-  } catch (_) {
+  const authority = rest.slice(0, boundaryIdx);
+  const tail = rest.slice(boundaryIdx);
+
+  if (!authority) {
     throw new Error(t('urlError.invalidFormat'));
   }
 
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(t('urlError.unsupportedProtocol'));
-  }
-
-  if (parsed.username || parsed.password) {
+  if (authority.includes('@')) {
     throw new Error(t('urlError.embeddedCredentials'));
   }
 
-  const hostname = parsed.hostname.trim();
-  if (!hostname || hostname.includes('..') || hostname.startsWith('.') || hostname.endsWith('.')) {
+  if (authority.includes('\\')) {
     throw new Error(t('urlError.invalidHostname'));
   }
 
-  // Validate IPv4 octets if hostname is numeric IPv4
-  if (/^\d+(\.\d+)*$/.test(hostname)) {
-    const octets = hostname.split('.');
-    if (
-      octets.length !== 4 ||
-      octets.some((o) => {
-        const n = Number(o);
-        return !Number.isInteger(n) || n < 0 || n > 255;
-      })
-    ) {
-      throw new Error(t('urlError.invalidIpv4'));
-    }
-  } else if (!hostname.startsWith('[')) {
-    // Standard DNS hostname validation
-    const labels = hostname.split('.');
-    const validLabels = labels.every(
-      (lbl) =>
-        lbl.length > 0 &&
-        lbl.length <= 63 &&
-        /^[a-zA-Z0-9-]+$/.test(lbl) &&
-        !lbl.startsWith('-') &&
-        !lbl.endsWith('-')
-    );
-    if (!validLabels) {
+  let hostname = '';
+  let rawPort = '';
+  let hasExplicitPort = false;
+
+  if (authority.startsWith('[')) {
+    const closeIdx = authority.indexOf(']');
+    if (closeIdx === -1) {
       throw new Error(t('urlError.invalidHostname'));
     }
-    // Require a dot, `localhost`, or explicit port so bare words like "invalid-url" are rejected
-    if (labels.length < 2 && hostname.toLowerCase() !== 'localhost' && !parsed.port) {
-      throw new Error(t('urlError.enterValidDomain'));
+    const ipv6Inner = authority.slice(1, closeIdx);
+    const afterBracket = authority.slice(closeIdx + 1);
+    const canonicalIpv6 = parseAndCanonicalizeIpv6(ipv6Inner);
+    if (!canonicalIpv6) {
+      throw new Error(t('urlError.invalidHostname'));
     }
+    if (afterBracket) {
+      if (!afterBracket.startsWith(':')) {
+        throw new Error(t('urlError.invalidFormat'));
+      }
+      rawPort = afterBracket.slice(1);
+      if (!rawPort) {
+        throw new Error(t('urlError.invalidPort'));
+      }
+      hasExplicitPort = true;
+    }
+    hostname = `[${canonicalIpv6}]`;
+  } else {
+    if (authority.includes('[') || authority.includes(']')) {
+      throw new Error(t('urlError.invalidHostname'));
+    }
+    const firstColon = authority.indexOf(':');
+    if (firstColon !== -1 && authority.indexOf(':', firstColon + 1) !== -1) {
+      // Unbracketed IPv6 or multiple colons in authority
+      throw new Error(t('urlError.invalidFormat'));
+    }
+
+    const rawHost = firstColon === -1 ? authority : authority.slice(0, firstColon);
+    if (firstColon !== -1) {
+      rawPort = authority.slice(firstColon + 1);
+      if (!rawPort) {
+        throw new Error(t('urlError.invalidPort'));
+      }
+      hasExplicitPort = true;
+    }
+
+    const lowerHost = rawHost.trim().toLowerCase();
+    if (
+      !lowerHost ||
+      lowerHost.includes('..') ||
+      lowerHost.startsWith('.') ||
+      lowerHost.endsWith('.')
+    ) {
+      throw new Error(t('urlError.invalidHostname'));
+    }
+
+    if (/^\d+(\.\d+)*$/.test(lowerHost)) {
+      if (!isValidIpv4Address(lowerHost)) {
+        throw new Error(t('urlError.invalidIpv4'));
+      }
+    } else {
+      const labels = lowerHost.split('.');
+      const validLabels = labels.every(
+        (lbl) =>
+          lbl.length > 0 &&
+          lbl.length <= 63 &&
+          /^[a-z0-9-]+$/.test(lbl) &&
+          !lbl.startsWith('-') &&
+          !lbl.endsWith('-')
+      );
+      if (!validLabels) {
+        throw new Error(t('urlError.invalidHostname'));
+      }
+      if (/^(?:\d+|0x[0-9a-f]+)$/i.test(labels[labels.length - 1])) {
+        throw new Error(t('urlError.invalidHostname'));
+      }
+      if (labels.length < 2 && lowerHost !== 'localhost' && !hasExplicitPort) {
+        throw new Error(t('urlError.enterValidDomain'));
+      }
+    }
+    hostname = lowerHost;
   }
 
-  if (parsed.port) {
-    const portNum = Number(parsed.port);
+  let port = '';
+  if (hasExplicitPort) {
+    if (!/^\d+$/.test(rawPort)) {
+      throw new Error(t('urlError.invalidPort'));
+    }
+    const portNum = Number(rawPort);
     if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
       throw new Error(t('urlError.invalidPort'));
     }
+    const isDefaultPort =
+      (protocol === 'http:' && portNum === 80) || (protocol === 'https:' && portNum === 443);
+    port = isDefaultPort ? '' : String(portNum);
   }
+
+  const host = port ? `${hostname}:${port}` : hostname;
+  const origin = `${protocol}//${host}`;
+
+  const hashIdx = tail.indexOf('#');
+  const beforeHash = hashIdx === -1 ? tail : tail.slice(0, hashIdx);
+  const hash = hashIdx === -1 ? '' : tail.slice(hashIdx);
+  const queryIdx = beforeHash.indexOf('?');
+  const rawPathname = queryIdx === -1 ? beforeHash : beforeHash.slice(0, queryIdx);
+  const search = queryIdx === -1 ? '' : beforeHash.slice(queryIdx);
+  const pathname = rawPathname ? normalizeUrlPath(rawPathname) : '/';
+  const href = `${origin}${pathname}${search}${hash}`;
+
+  return {
+    protocol,
+    hostname,
+    port,
+    host,
+    pathname,
+    search,
+    hash,
+    origin,
+    href,
+  };
+}
+
+/**
+ * Resolves an HTTP redirect `Location` header against `baseUrlStr` using RFC 3986 reference resolution.
+ */
+export function resolveHttpRedirectUrl(location: string, baseUrlStr: string): string {
+  const base = parseHttpUrl(baseUrlStr, { defaultHttpsIfMissingScheme: false });
+  const trimmedLoc = typeof location === 'string' ? location.trim() : '';
+  if (!trimmedLoc) {
+    return base.href;
+  }
+
+  if (trimmedLoc.split(/[?#]/)[0].includes('\\')) {
+    throw new Error(t('urlError.invalidFormat'));
+  }
+
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmedLoc)) {
+    return parseHttpUrl(trimmedLoc, { defaultHttpsIfMissingScheme: false }).href;
+  }
+
+  if (trimmedLoc.startsWith('//')) {
+    return parseHttpUrl(`${base.protocol}${trimmedLoc}`, { defaultHttpsIfMissingScheme: false }).href;
+  }
+
+  if (trimmedLoc.startsWith('#')) {
+    return parseHttpUrl(`${base.origin}${base.pathname}${base.search}${trimmedLoc}`, {
+      defaultHttpsIfMissingScheme: false,
+    }).href;
+  }
+
+  if (trimmedLoc.startsWith('?')) {
+    return parseHttpUrl(`${base.origin}${base.pathname}${trimmedLoc}`, {
+      defaultHttpsIfMissingScheme: false,
+    }).href;
+  }
+
+  const hashIdx = trimmedLoc.indexOf('#');
+  const beforeHash = hashIdx === -1 ? trimmedLoc : trimmedLoc.slice(0, hashIdx);
+  const relHash = hashIdx === -1 ? '' : trimmedLoc.slice(hashIdx);
+  const queryIdx = beforeHash.indexOf('?');
+  const relPath = queryIdx === -1 ? beforeHash : beforeHash.slice(0, queryIdx);
+  const relSearch = queryIdx === -1 ? '' : beforeHash.slice(queryIdx);
+
+  let mergedPath: string;
+  if (relPath.startsWith('/')) {
+    mergedPath = normalizeUrlPath(relPath);
+  } else {
+    const lastSlash = base.pathname.lastIndexOf('/');
+    const baseDir = lastSlash >= 0 ? base.pathname.slice(0, lastSlash + 1) : '/';
+    mergedPath = normalizeUrlPath(`${baseDir}${relPath}`);
+  }
+
+  return parseHttpUrl(`${base.origin}${mergedPath}${relSearch}${relHash}`, {
+    defaultHttpsIfMissingScheme: false,
+  }).href;
+}
+
+/**
+ * Validates and normalizes a user-supplied Vikunja server URL:
+ * - Defaults missing scheme to `https://`
+ * - Rejects non-HTTP(S) schemes, embedded credentials (`user:pass@`), malformed hosts, and invalid IPv4/IPv6 literals
+ * - Strips hash fragments (`/#/login`), query strings, and trailing `/login` or `/api/v1` suffixes
+ * - Flags cleartext `http://` URLs via `isInsecureHttp`
+ */
+export function parseAndValidateServerUrl(rawUrl: string): ParsedServerUrl {
+  const parsed = parseHttpUrl(rawUrl, { defaultHttpsIfMissingScheme: true });
 
   // Strip Vue hash router paths (e.g. `/#/login`), query strings, trailing slashes, and `/login` or `/api/v1`
   let pathname = (parsed.pathname || '').replace(/\/+$/, '');
@@ -142,7 +473,7 @@ export function parseAndValidateServerUrl(rawUrl: string): ParsedServerUrl {
     pathname = pathname.replace(/\/(api\/v1\/login|api\/v1|login)$/i, '').replace(/\/+$/, '');
   }
 
-  const serverUrl = `${parsed.protocol}//${parsed.host}${pathname}`;
+  const serverUrl = `${parsed.origin}${pathname}`;
   const apiBaseUrl = `${serverUrl}/api/v1`;
 
   return {
@@ -362,11 +693,12 @@ interface InternalRequestOptions extends RequestInit {
 interface ResponseWithMeta<T> {
   data: T;
   totalPages: number | null;
+  paginationLimit: number | null;
 }
 
 export class VikunjaClient {
   private baseApiUrl: string;
-  private baseOriginUrl: URL;
+  private baseOrigin: ParsedHttpUrl;
   private token: string | null = null;
   private refreshToken: string | null = null;
   private timeoutMs: number;
@@ -383,7 +715,7 @@ export class VikunjaClient {
 
   constructor(config: VikunjaClientConfig) {
     this.baseApiUrl = this.normalizeUrl(config.baseUrl);
-    this.baseOriginUrl = new URL(this.baseApiUrl);
+    this.baseOrigin = parseHttpUrl(this.baseApiUrl, { defaultHttpsIfMissingScheme: false });
     if (config.token) {
       this.token = config.token;
     }
@@ -472,12 +804,12 @@ export class VikunjaClient {
 
   private isSafeSameOriginTarget(targetUrlStr: string): boolean {
     try {
-      const target = new URL(targetUrlStr);
-      if (target.host.toLowerCase() !== this.baseOriginUrl.host.toLowerCase()) {
+      const target = parseHttpUrl(targetUrlStr, { defaultHttpsIfMissingScheme: false });
+      if (target.host !== this.baseOrigin.host) {
         return false;
       }
       // Never allow protocol downgrade from https: to http:
-      if (this.baseOriginUrl.protocol === 'https:' && target.protocol !== 'https:') {
+      if (this.baseOrigin.protocol === 'https:' && target.protocol !== 'https:') {
         return false;
       }
       return target.protocol === 'https:' || target.protocol === 'http:';
@@ -702,7 +1034,15 @@ export class VikunjaClient {
           if (!location) {
             break;
           }
-          const resolvedRedirect = new URL(location, currentUrl).toString();
+          let resolvedRedirect: string;
+          try {
+            resolvedRedirect = resolveHttpRedirectUrl(location, currentUrl);
+          } catch (_) {
+            throw new VikunjaApiError(
+              response.status,
+              'Blocked cross-origin or protocol-downgrade redirect to protect authentication credentials'
+            );
+          }
           if (!this.isSafeSameOriginTarget(resolvedRedirect)) {
             throw new VikunjaApiError(
               response.status,
@@ -746,12 +1086,20 @@ export class VikunjaClient {
         : '';
 
       let totalPages: number | null = null;
+      let paginationLimit: number | null = null;
       if (hasHeadersApi) {
         const rawTotalPages = response.headers.get('x-pagination-total-pages');
         if (rawTotalPages) {
           const parsedPages = parseInt(rawTotalPages, 10);
           if (!isNaN(parsedPages) && parsedPages >= 0) {
             totalPages = parsedPages;
+          }
+        }
+        const rawLimit = response.headers.get('x-pagination-limit');
+        if (rawLimit) {
+          const parsedLimit = parseInt(rawLimit, 10);
+          if (!isNaN(parsedLimit) && parsedLimit > 0) {
+            paginationLimit = parsedLimit;
           }
         }
       }
@@ -819,10 +1167,13 @@ export class VikunjaClient {
         }
 
         const errorMsg = data?.message || response.statusText || 'API request failed';
-        throw new VikunjaApiError(response.status, errorMsg, data);
+        const isProxy403 =
+          response.status === 403 &&
+          !(data && typeof data === 'object' && typeof data.code === 'number');
+        throw new VikunjaApiError(response.status, errorMsg, data, isProxy403 || undefined);
       }
 
-      return { data: data as T, totalPages };
+      return { data: data as T, totalPages, paginationLimit };
     } catch (err: any) {
       if (isCallerAborted && !isTimedOut) {
         const abortErr = new Error('Request aborted');
@@ -982,6 +1333,37 @@ export class VikunjaClient {
     return null;
   }
 
+  private appendDeduplicatedPageItems<T>(
+    allItems: T[],
+    indexById: Map<number | string, number>,
+    pageItems: T[]
+  ): number {
+    let newUniqueCount = 0;
+    for (const item of pageItems) {
+      const itemId =
+        item && typeof item === 'object' && 'id' in (item as any)
+          ? (item as any).id
+          : undefined;
+      if (
+        (typeof itemId === 'number' && Number.isFinite(itemId) && itemId !== 0) ||
+        (typeof itemId === 'string' && itemId !== '')
+      ) {
+        const existingIdx = indexById.get(itemId);
+        if (existingIdx !== undefined) {
+          allItems[existingIdx] = item;
+        } else {
+          indexById.set(itemId, allItems.length);
+          allItems.push(item);
+          newUniqueCount += 1;
+        }
+      } else {
+        allItems.push(item);
+        newUniqueCount += 1;
+      }
+    }
+    return newUniqueCount;
+  }
+
   /**
    * Fetches either a single explicit page or automatically paginates through all pages.
    * Rethrows any network, timeout, auth, or server error on ANY page so partial results
@@ -1018,40 +1400,47 @@ export class VikunjaClient {
         `${baseEndpoint}${buildQuery(params.page, params.per_page)}`,
         { method: 'GET', signal: params.signal }
       );
-      return this.normalizeListResponse<T>(res);
+      const singlePageItems = this.normalizeListResponse<T>(res);
+      const deduped: T[] = [];
+      this.appendDeduplicatedPageItems(deduped, new Map(), singlePageItems);
+      return deduped;
     }
 
     const perPage = params?.per_page ?? DEFAULT_PER_PAGE;
     const allItems: T[] = [];
+    const indexById = new Map<number | string, number>();
     let page = 1;
 
     while (page <= MAX_PAGINATION_PAGES) {
-      // On page 1 without explicit per_page, preserve clean URL unless paginating further,
-      // while reading x-pagination-total-pages or perPage threshold for subsequent pages.
-      const query =
-        page === 1 && params?.per_page === undefined
-          ? buildQuery(undefined, undefined)
-          : buildQuery(page, perPage);
+      const query = buildQuery(page, perPage);
 
-      const { data: res, totalPages: headerTotalPages } = await this.requestWithMeta<any>(
-        `${baseEndpoint}${query}`,
-        { method: 'GET', signal: params?.signal }
-      );
+      const {
+        data: res,
+        totalPages: headerTotalPages,
+        paginationLimit,
+      } = await this.requestWithMeta<any>(`${baseEndpoint}${query}`, {
+        method: 'GET',
+        signal: params?.signal,
+      });
 
       const items = this.normalizeListResponse<T>(res);
       if (items.length === 0) {
         break;
       }
 
-      allItems.push(...items);
+      const newUniqueCount = this.appendDeduplicatedPageItems(allItems, indexById, items);
 
       const knownTotalPages = headerTotalPages ?? this.extractEnvelopeTotalPages(res);
+      const effectivePageLimit = paginationLimit ?? perPage;
+      if (page > 1 && knownTotalPages === null && newUniqueCount === 0) {
+        break;
+      }
       if (knownTotalPages !== null) {
         if (page >= knownTotalPages) {
           break;
         }
         page += 1;
-      } else if (items.length < perPage) {
+      } else if (items.length < effectivePageLimit) {
         break;
       } else {
         page += 1;
@@ -1277,13 +1666,17 @@ export class VikunjaClient {
       if (params.per_page !== undefined) qParams.set('per_page', params.per_page.toString());
       const query = `?${qParams.toString()}`;
       const { res } = await fetchTasksEndpoint(query, '/tasks');
-      return this.normalizeListResponse<Task>(res.data);
+      const singlePageTasks = this.normalizeListResponse<Task>(res.data);
+      const deduped: Task[] = [];
+      this.appendDeduplicatedPageItems(deduped, new Map(), singlePageTasks);
+      return deduped;
     }
 
     const perPage = params?.per_page ?? DEFAULT_PER_PAGE;
     let page = 1;
     let endpointToUse: '/tasks' | '/tasks/all' = '/tasks';
     const allTasks: Task[] = [];
+    const indexById = new Map<number | string, number>();
 
     while (page <= MAX_PAGINATION_PAGES) {
       const query = `?page=${page}&per_page=${perPage}`;
@@ -1295,15 +1688,19 @@ export class VikunjaClient {
         break;
       }
 
-      allTasks.push(...items);
+      const newUniqueCount = this.appendDeduplicatedPageItems(allTasks, indexById, items);
 
       const knownTotalPages = res.totalPages ?? this.extractEnvelopeTotalPages(res.data);
+      const effectivePageLimit = res.paginationLimit ?? perPage;
+      if (page > 1 && knownTotalPages === null && newUniqueCount === 0) {
+        break;
+      }
       if (knownTotalPages !== null) {
         if (page >= knownTotalPages) {
           break;
         }
         page += 1;
-      } else if (items.length < perPage) {
+      } else if (items.length < effectivePageLimit) {
         break;
       } else {
         page += 1;
@@ -1388,20 +1785,76 @@ export class VikunjaClient {
     });
   }
 
+  /**
+   * Fetches the authoritative task via `GET /tasks/:id` (rethrowing on failure so an empty `{}`
+   * payload NEVER wipes server fields), merges `patch`, sends `POST /tasks/:id`, and preserves
+   * non-null relational slices (`labels`, `assignees`, `reminders`, `related_tasks`) omitted in POST response.
+   */
+  public async patchTask(
+    taskId: number,
+    patch: UpdateTaskInput,
+    fallbackSnapshot?: Partial<Task>
+  ): Promise<Task> {
+    const fresh = await this.getTask(taskId);
+    const hasValidFresh = Boolean(
+      fresh &&
+        typeof fresh === 'object' &&
+        typeof fresh.id === 'number' &&
+        typeof fresh.title === 'string' &&
+        fresh.title.length > 0
+    );
+    const baseSource = hasValidFresh ? fresh : fallbackSnapshot;
+    const merged: UpdateTaskInput = {
+      ...(baseSource ? (baseSource as UpdateTaskInput) : {}),
+      ...patch,
+    };
+    const updated = await this.updateTask(taskId, merged);
+    if (!updated || typeof updated !== 'object') {
+      return updated;
+    }
+
+    const result: Task = { ...updated };
+    const sliceSource = hasValidFresh ? fresh : fallbackSnapshot;
+    if (sliceSource && typeof sliceSource === 'object') {
+      if (
+        (result.labels === null || result.labels === undefined) &&
+        patch.labels === undefined &&
+        Array.isArray(sliceSource.labels)
+      ) {
+        result.labels = sliceSource.labels;
+      }
+      if (
+        (result.assignees === null || result.assignees === undefined) &&
+        patch.assignees === undefined &&
+        Array.isArray(sliceSource.assignees)
+      ) {
+        result.assignees = sliceSource.assignees;
+      }
+      if (
+        (result.reminders === null || result.reminders === undefined) &&
+        patch.reminders === undefined &&
+        Array.isArray(sliceSource.reminders)
+      ) {
+        result.reminders = sliceSource.reminders;
+      }
+      if (
+        (result.related_tasks === null || result.related_tasks === undefined) &&
+        sliceSource.related_tasks &&
+        typeof sliceSource.related_tasks === 'object'
+      ) {
+        result.related_tasks = sliceSource.related_tasks;
+      }
+    }
+
+    return result;
+  }
+
   public async toggleTaskDone(
     taskId: number,
     done: boolean,
     taskSnapshot?: Partial<Task>
   ): Promise<Task> {
-    let base = taskSnapshot ? { ...taskSnapshot } : undefined;
-    if (!base || !base.title) {
-      try {
-        base = await this.getTask(taskId);
-      } catch (_) {
-        base = base || {};
-      }
-    }
-    return this.updateTask(taskId, { ...base, done });
+    return this.patchTask(taskId, { done }, taskSnapshot);
   }
 
   public async moveTask(
@@ -1409,15 +1862,7 @@ export class VikunjaClient {
     targetProjectId: number,
     taskSnapshot?: Partial<Task>
   ): Promise<Task> {
-    let base = taskSnapshot ? { ...taskSnapshot } : undefined;
-    if (!base || !base.title) {
-      try {
-        base = await this.getTask(taskId);
-      } catch (_) {
-        base = base || {};
-      }
-    }
-    return this.updateTask(taskId, { ...base, project_id: targetProjectId });
+    return this.patchTask(taskId, { project_id: targetProjectId }, taskSnapshot);
   }
 
   public async setTaskPosition(
@@ -1465,13 +1910,8 @@ export class VikunjaClient {
       }
     }
 
-    // Never send a bare `{ position }` without a full task snapshot to `updateTask`
-    let snapshot: Partial<Task> | undefined =
-      taskSnapshot && taskSnapshot.title ? { ...taskSnapshot } : undefined;
-    if (!snapshot) {
-      snapshot = await this.getTask(taskId);
-    }
-    return this.updateTask(taskId, { ...snapshot, position });
+    // Fall back to fetch-then-merge `patchTask` so stale local snapshots never wipe concurrent server edits
+    return this.patchTask(taskId, { position }, taskSnapshot);
   }
 
   public async deleteTask(taskId: number): Promise<{ message: string }> {

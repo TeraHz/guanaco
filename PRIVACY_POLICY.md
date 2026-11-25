@@ -1,7 +1,7 @@
 # Privacy Policy for Guanaco
 
 **Effective Date:** October 4, 2026  
-**Last Updated:** November 22, 2026  
+**Last Updated:** November 25, 2026  
 **Application:** Guanaco — Self-Hosted Vikunja Client (`com.geodar.guanaco`)
 
 ---
@@ -26,24 +26,24 @@ Guanaco adheres to a strict zero-telemetry policy:
 - **Direct Server Connection:** All network traffic (tasks, notes, labels, projects, assignees, schedules) travels directly and exclusively between your device and the Vikunja server instance URL you configure (HTTPS enforced by default; cleartext HTTP requires explicit user confirmation for local/LAN servers).
 - **Hardware-Backed Token Security:** On mobile devices, your authentication token (session JWT or Personal API Token) and username are encrypted locally using hardware-backed secure storage (`expo-secure-store` — Android Keystore / iOS Keychain), while your server URL is stored in local app storage. On Web builds where hardware keystores do not exist, browser local storage is used.
 - **Offline Cache & Cloud Backup Protection (`android:allowBackup="false"`):** Tasks, projects, and pending offline mutations are cached locally in protected application storage for 0ms offline-first operation. Android Cloud Auto-Backup and device-to-device app data extraction are explicitly disabled (`android:allowBackup="false"`) so your local cache is never silently uploaded to cloud backup servers.
-- **100% On-Device Contextual Organization:** Smart task categorization and aisle grouping run locally on your device (using local heuristics or Android on-device AICore where supported). Zero task content is sent to external AI services.
+- **100% On-Device Contextual Organization:** Smart task categorization and aisle grouping run locally on your device using deterministic on-device heuristics across all supported phones and tablets. Zero task content is sent to external AI services.
 - **Google Play In-App Updates (Android Play Store builds):** On Android devices with Google Play Services, Guanaco queries the official Google Play In-App Updates API solely to check whether a newer app build is available and initiate user-approved updates.
 
 ---
 
 ### 4. Device Permissions & Biometrics
 Guanaco requests only the minimal permissions required for user-facing functionality:
-- **`INTERNET` & `ACCESS_NETWORK_STATE`:** Required to communicate directly with your configured Vikunja server and detect online/offline connectivity for synchronization and Google Play In-App Updates.
+- **`INTERNET`:** Used solely to communicate directly with your configured Vikunja server (when connected to a server) and check for user-approved Google Play In-App Updates. Standalone Local Mode operates completely offline with zero network requests, and Guanaco performs no background connectivity tracking.
 - **`POST_NOTIFICATIONS` (Optional):** Used exclusively to schedule and display **100% local on-device task reminder notifications**. Guanaco never registers for remote push tokens (dormant FCM/DataTransport manifest components are stripped at build time) and does not request exact-alarm privileges (`SCHEDULE_EXACT_ALARM`).
 - **`RECEIVE_BOOT_COMPLETED` & `WAKE_LOCK`:** Used exclusively by the local notification scheduler (`expo-notifications`) and Play Core update installer to restore and reliably deliver pending on-device task reminders after a device reboot or while the screen is off. Guanaco does not start background tracking or external network connections on boot.
-- **`USE_BIOMETRIC` / `USE_FINGERPRINT` (Optional):** Used solely for local biometric app lock protection. Biometric verification is performed entirely by native OS secure hardware; Guanaco never accesses, stores, or transmits biometric templates or raw biometric data.
+- **`USE_BIOMETRIC` / `USE_FINGERPRINT` (Optional):** Used solely for local biometric and device-credential app lock protection. Verification is performed entirely by native OS secure hardware; Guanaco never accesses, stores, or transmits biometric templates, PINs, or raw biometric data.
 - **`VIBRATE`:** Used exclusively for local tactile haptic feedback during task completions and gesture interactions.
 
 ---
 
 ### 5. Data Retention & Deletion
 - Because the developer does not operate any centralized servers or databases for Guanaco, we never possess a copy of your data.
-- Tapping **"Log Out"** or uninstalling the app immediately purges locally stored authentication tokens, cached tasks/projects, scheduled local notifications, AI category cache, and session state from your device.
+- Tapping **"Log Out"** or uninstalling the app immediately purges locally stored authentication tokens, cached tasks/projects, scheduled local notifications, smart-grouping category cache, and session state from your device.
 - Remote task data on your Vikunja server is governed solely by the retention settings and administration of your Vikunja instance.
 
 ---

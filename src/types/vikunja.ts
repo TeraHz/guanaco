@@ -214,3 +214,23 @@ export interface UpdateProjectInput {
 export interface AuthTokens {
   token: string;
 }
+
+export interface SyncFailureRecord {
+  id: string;
+  timestamp: number;
+  source: 'sync' | 'migration';
+  mutationType: string;
+  status?: number;
+  message: string;
+  taskTitle: string;
+  projectId?: number;
+  /** Preserved task snapshot so rejected/skipped tasks can be recovered in one tap */
+  taskSnapshot?: Partial<Task>;
+}
+
+export interface SkippedMigrationTask {
+  localTask: Task;
+  serverProjectId: number;
+  errorMessage: string;
+  status?: number;
+}

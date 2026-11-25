@@ -41,6 +41,7 @@ interface SwipeableTaskItemProps {
   isLarge?: boolean;
   scale?: number;
   textScale?: number;
+  readOnly?: boolean;
 }
 
 function getPriorityStripColor(priority: number, theme: ThemeTokens): string {
@@ -89,6 +90,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
   isLarge: isLargeProp,
   scale: scaleProp,
   textScale: textScaleProp,
+  readOnly = false,
 }) => {
   const theme = useAppTheme();
   const { t } = useTranslation();
@@ -241,24 +243,28 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
   const showPriorityStrip = task.priority > 0 || Boolean(customTaskColor);
 
   const handleToggle = () => {
+    if (readOnly) return;
     safeHaptics.notification(Haptics.NotificationFeedbackType.Success);
     swipeableRef.current?.close?.();
     onToggle(task.id);
   };
 
   const handleMove = () => {
+    if (readOnly) return;
     safeHaptics.selection();
     swipeableRef.current?.close?.();
     onMove(task.id);
   };
 
   const handleDelete = () => {
+    if (readOnly) return;
     safeHaptics.notification(Haptics.NotificationFeedbackType.Warning);
     swipeableRef.current?.close?.();
     onDelete(task.id);
   };
 
   const handleSwipeableOpen = (direction: 'left' | 'right') => {
+    if (readOnly) return;
     if (direction === 'left') {
       // Swiped right -> reveals Move & Delete buttons safely without instant accidental deletion!
       safeHaptics.selection();
@@ -428,6 +434,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         onPress(task);
       }}
       onLongPress={() => {
+        if (readOnly) return;
         if (onLongPress) {
           onLongPress(task);
         } else if (drag) {
@@ -466,11 +473,17 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
                 : 'transparent',
             borderColor: task.done ? theme.colors.success : theme.colors.checkboxBorder,
           },
+          readOnly && styles.checkboxReadOnly,
         ]}
         onPress={handleToggle}
+        disabled={readOnly ? true : undefined}
         activeOpacity={0.7}
         accessibilityRole="checkbox"
-        accessibilityState={{ checked: Boolean(task.done) }}
+        accessibilityState={
+          readOnly
+            ? { checked: Boolean(task.done), disabled: true }
+            : { checked: Boolean(task.done) }
+        }
         accessibilityLabel={
           task.done
             ? t('tasks.cardMarkIncompleteA11y', { title: task.title })
@@ -821,7 +834,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
       })()}
 
       {/* "+#" Quick Label Button or Drag Handle / Reorder Controls */}
-      {isReordering ? (
+      {isReordering && !readOnly ? (
         <View style={styles.reorderControls}>
           {drag ? (
             <TouchableOpacity
@@ -928,6 +941,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
           ) : null}
         </View>
       ) : (
+        !readOnly &&
         onEditLabels && (
           <TouchableOpacity
             testID={`task-edit-labels-${task.id}`}
@@ -961,56 +975,58 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
       )}
 
       {/* Web visible actions / Native hidden test hooks (strictly hidden from screen readers on native) */}
-      <View
-        style={isWeb ? styles.webActions : styles.embeddedActions}
-        accessible={false}
-        importantForAccessibility={isWeb ? 'auto' : 'no-hide-descendants'}
-        accessibilityElementsHidden={!isWeb}
-      >
-        <TouchableOpacity
-          testID={`task-move-action-${task.id}`}
-          accessible={isWeb}
-          importantForAccessibility={isWeb ? 'yes' : 'no'}
-          accessibilityRole={isWeb ? 'button' : undefined}
-          accessibilityLabel={
-            isWeb ? t('tasks.cardWebMoveA11y', { title: task.title }) : undefined
-          }
-          style={
-            isWeb
-              ? [styles.webActionBtn, { backgroundColor: theme.colors.surfaceSecondary }]
-              : styles.hiddenAction
-          }
-          onPress={handleMove}
+      {!readOnly && (
+        <View
+          style={isWeb ? styles.webActions : styles.embeddedActions}
+          accessible={false}
+          importantForAccessibility={isWeb ? 'auto' : 'no-hide-descendants'}
+          accessibilityElementsHidden={!isWeb}
         >
-          {isWeb ? (
-            <Text style={[styles.webActionText, { color: theme.colors.textSecondary }]}>
-              {t('tasks.moveSwipe')}
-            </Text>
-          ) : null}
-        </TouchableOpacity>
-        <TouchableOpacity
-          testID={`task-delete-action-${task.id}`}
-          accessible={isWeb}
-          importantForAccessibility={isWeb ? 'yes' : 'no'}
-          accessibilityRole={isWeb ? 'button' : undefined}
-          accessibilityLabel={
-            isWeb ? t('tasks.cardDeleteA11y', { title: task.title }) : undefined
-          }
-          style={
-            isWeb
-              ? [
-                styles.webActionBtn,
-                { backgroundColor: hexToRgba(theme.colors.danger, 0.15) },
-              ]
-              : styles.hiddenAction
-          }
-          onPress={handleDelete}
-        >
-          {isWeb ? (
-            <Text style={[styles.webActionText, { color: theme.colors.danger }]}>✕</Text>
-          ) : null}
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            testID={`task-move-action-${task.id}`}
+            accessible={isWeb}
+            importantForAccessibility={isWeb ? 'yes' : 'no'}
+            accessibilityRole={isWeb ? 'button' : undefined}
+            accessibilityLabel={
+              isWeb ? t('tasks.cardWebMoveA11y', { title: task.title }) : undefined
+            }
+            style={
+              isWeb
+                ? [styles.webActionBtn, { backgroundColor: theme.colors.surfaceSecondary }]
+                : styles.hiddenAction
+            }
+            onPress={handleMove}
+          >
+            {isWeb ? (
+              <Text style={[styles.webActionText, { color: theme.colors.textSecondary }]}>
+                {t('tasks.moveSwipe')}
+              </Text>
+            ) : null}
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID={`task-delete-action-${task.id}`}
+            accessible={isWeb}
+            importantForAccessibility={isWeb ? 'yes' : 'no'}
+            accessibilityRole={isWeb ? 'button' : undefined}
+            accessibilityLabel={
+              isWeb ? t('tasks.cardDeleteA11y', { title: task.title }) : undefined
+            }
+            style={
+              isWeb
+                ? [
+                    styles.webActionBtn,
+                    { backgroundColor: hexToRgba(theme.colors.danger, 0.15) },
+                  ]
+                : styles.hiddenAction
+            }
+            onPress={handleDelete}
+          >
+            {isWeb ? (
+              <Text style={[styles.webActionText, { color: theme.colors.danger }]}>✕</Text>
+            ) : null}
+          </TouchableOpacity>
+        </View>
+      )}
     </TouchableOpacity>
   );
 
@@ -1023,7 +1039,7 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
   return (
     <Swipeable
       ref={swipeableRef}
-      enabled={!isReordering && !isDragging}
+      enabled={!readOnly && !isReordering && !isDragging}
       friction={2.5}
       leftThreshold={Math.round(115 * boxScale)}
       rightThreshold={Math.round(65 * boxScale)}
@@ -1033,8 +1049,8 @@ const SwipeableTaskItemComponent: React.FC<SwipeableTaskItemProps> = ({
         speed: 40,
         bounciness: 0,
       }}
-      renderLeftActions={renderLeftActions}
-      renderRightActions={renderRightActions}
+      renderLeftActions={readOnly ? undefined : renderLeftActions}
+      renderRightActions={readOnly ? undefined : renderRightActions}
       onSwipeableOpen={handleSwipeableOpen}
     >
       {cardContent}
@@ -1090,6 +1106,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 2,
     marginRight: 12,
+  },
+  checkboxReadOnly: {
+    opacity: 0.45,
   },
   checkmark: {
     color: '#FFFFFF',

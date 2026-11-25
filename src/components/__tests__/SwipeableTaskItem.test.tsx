@@ -646,4 +646,61 @@ describe('SwipeableTaskItem', () => {
     );
     expect(getByText('Fix leaky kitchen faucet').props.numberOfLines).toBe(3);
   });
+
+  it('disables mutations (swipe, checkbox, +#, long-press, web actions) when readOnly=true while keeping onPress active', () => {
+    const mockOnEditLabels = jest.fn();
+    const mockOnLongPress = jest.fn();
+    const mockDrag = jest.fn();
+
+    const { getByTestId, queryByTestId, UNSAFE_getByType, rerender } = render(
+      <SwipeableTaskItem
+        task={mockTask}
+        readOnly={true}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+        onEditLabels={mockOnEditLabels}
+        onLongPress={mockOnLongPress}
+        drag={mockDrag}
+        isReordering={true}
+      />
+    );
+
+    expect(UNSAFE_getByType(Swipeable).props.enabled).toBe(false);
+
+    const checkbox = getByTestId('task-checkbox-10');
+    expect(checkbox.props.accessibilityState).toEqual({ checked: false, disabled: true });
+    expect(ReactNative.StyleSheet.flatten(checkbox.props.style).opacity).toBeLessThan(1);
+    fireEvent.press(checkbox);
+    expect(mockOnToggle).not.toHaveBeenCalled();
+
+    expect(queryByTestId('task-edit-labels-10')).toBeNull();
+    expect(queryByTestId('drag-handle-10')).toBeNull();
+    expect(queryByTestId('task-move-action-10', { includeHiddenElements: true })).toBeNull();
+    expect(queryByTestId('task-delete-action-10', { includeHiddenElements: true })).toBeNull();
+
+    fireEvent(getByTestId('task-item-10'), 'longPress');
+    expect(mockOnLongPress).not.toHaveBeenCalled();
+    expect(mockDrag).not.toHaveBeenCalled();
+
+    // Tapping card still opens task details so user can read notes/subtasks
+    fireEvent.press(getByTestId('task-item-10'));
+    expect(mockOnPress).toHaveBeenCalledWith(mockTask);
+
+    // Web platform also hides move/delete action buttons when readOnly=true
+    ReactNative.Platform.OS = 'web';
+    rerender(
+      <SwipeableTaskItem
+        task={mockTask}
+        readOnly={true}
+        onToggle={mockOnToggle}
+        onMove={mockOnMove}
+        onDelete={mockOnDelete}
+        onPress={mockOnPress}
+      />
+    );
+    expect(queryByTestId('task-move-action-10')).toBeNull();
+    expect(queryByTestId('task-delete-action-10')).toBeNull();
+  });
 });
